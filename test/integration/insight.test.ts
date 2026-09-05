@@ -7,7 +7,7 @@ import { migrate } from '../../src/db/migrate.js';
 import { attest } from '../../src/domain/attest.js';
 import { seal, check, reevaluate } from '../../src/domain/seal.js';
 import { sourceReliability, quadrant, cliffs, VOLUME_FLOOR } from '../../src/domain/insight.js';
-import { freshWorkspace, STRENGTHS } from '../helpers.js';
+import { actors, STRENGTHS, type Actors } from '../helpers.js';
 import type { ClawRule } from '../../src/domain/authority.js';
 
 const CLAW: ClawRule = { authority: 'operator', evidenceFloor: 'internal', coolingOffSeconds: 0 };
@@ -22,28 +22,28 @@ after(async () => { await closePool(); });
 const who = (tag: string) => [{ type: 'card_fp', value: `c-${tag}` }];
 
 /** Seal a determination about `tag`, optionally from a nominated carrier source. */
-async function sealFor(ws: string, tag: string, opts: {
+async function sealFor(A: Actors, tag: string, opts: {
   delivered?: boolean; refunds?: number; carrierSource?: string;
 } = {}) {
-  await attest({ workspaceId: ws, aliases: who(tag), facts: [
+  await attest(A.agent, { aliases: who(tag), facts: [
     { fact: 'carrier.delivered', type: 'bool', value: opts.delivered ?? false,
       source: opts.carrierSource ?? 'carrier_api' },
     { fact: 'prior_refunds_90d', type: 'int', value: opts.refunds ?? 1, source: 'core_ledger' },
   ] }, STRENGTHS);
-  return seal({ workspaceId: ws, aliases: who(tag), scope: 'refund',
-    disposition: 'bind', rule: RULE, sealedBy: 'agent', claw: CLAW }, STRENGTHS);
+  return seal(A.agent, { aliases: who(tag), scope: 'refund',
+    disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 }
 
 /** Make a seal lapse by reversing the carrier's scan. */
-async function lapse(ws: string, tag: string, source = 'carrier_api') {
-  await attest({ workspaceId: ws, aliases: who(tag),
+async function lapse(A: Actors, tag: string, source = 'carrier_api') {
+  await attest(A.agent, { aliases: who(tag),
     facts: [{ fact: 'carrier.delivered', type: 'bool', value: true, source }] }, STRENGTHS);
 }
 
-async function press(ws: string, tag: string, sessions: number, per = 4) {
+async function press(A: Actors, tag: string, sessions: number, per = 4) {
   for (let s = 0; s < sessions; s++) {
     for (let i = 0; i < per; i++) {
-      await check({ workspaceId: ws, aliases: who(tag), scope: 'refund.issue',
+      await check(A.agent, { aliases: who(tag), scope: 'refund.issue',
         session: `${s}`.repeat(32).slice(0, 32).replace(/[^0-9a-f]/g, 'a') }, STRENGTHS);
     }
   }
@@ -51,8 +51,9 @@ async function press(ws: string, tag: string, sessions: number, per = 4) {
 
 describe('source reliability', () => {
   test('reports a rate only above the volume floor', async () => {
-    const ws = await freshWorkspace();
-    for (let i = 0; i < 3; i++) await sealFor(ws, `sr-small-${i}`);
+    const A = await actors();
+    const ws = A.ws;
+    for (let i = 0; i < 3; i++) await sealFor(A, `sr-small-${i}`);
     const out = await sourceReliability(getPool(), ws);
     const carrier = out.find((r) => r.source === 'carrier_api');
     assert.equal(carrier?.seals, 3);
@@ -61,12 +62,13 @@ describe('source reliability', () => {
   });
 
   test('a source whose facts keep collapsing shows an elevated lapse rate', async () => {
-    const ws = await freshWorkspace();
+    const A = await actors();
+    const ws = A.ws;
     // `carrier_api` backs every seal. Half of them will have their ground
     // withdrawn; `core_ledger` backs the same seals and shares the blame.
     const n = VOLUME_FLOOR + 4;
-    for (let i = 0; i < n; i++) await sealFor(ws, `sr-${i}`);
-    for (let i = 0; i < n / 2; i++) await lapse(ws, `sr-${i}`);
+    for (let i = 0; i < n; i++) await sealFor(A, `sr-${i}`);
+    for (let i = 0; i < n / 2; i++) await lapse(A, `sr-${i}`);
     await reevaluate(ws, 1000);
 
     const out = await sourceReliability(getPool(), ws);
@@ -84,9 +86,10 @@ describe('source reliability', () => {
   });
 
   test('a source nothing has collapsed under reads zero', async () => {
-    const ws = await freshWorkspace();
+    const A = await actors();
+    const ws = A.ws;
     for (let i = 0; i < VOLUME_FLOOR + 1; i++) {
-      await sealFor(ws, `sr-clean-${i}`, { carrierSource: 'state_registry' });
+      await sealFor(A, `sr-clean-${i}`, { carrierSource: 'state_registry' });
     }
     const out = await sourceReliability(getPool(), ws);
     assert.equal(out.find((r) => r.source === 'state_registry')?.lapseRate, 0);
@@ -95,17 +98,18 @@ describe('source reliability', () => {
 
 describe('the wrongful-denial quadrant', () => {
   test('separates all four cells', async () => {
-    const ws = await freshWorkspace();
+    const A = await actors();
+    const ws = A.ws;
 
-    await sealFor(ws, 'q-normal');                       // nothing happens
-    await sealFor(ws, 'q-contested');                    // pressure, premises hold
-    await sealFor(ws, 'q-quiet');                        // premises fail, silence
-    await sealFor(ws, 'q-resisted');                     // premises fail AND pressure
+    await sealFor(A, 'q-normal');                       // nothing happens
+    await sealFor(A, 'q-contested');                    // pressure, premises hold
+    await sealFor(A, 'q-quiet');                        // premises fail, silence
+    await sealFor(A, 'q-resisted');                     // premises fail AND pressure
 
-    await press(ws, 'q-contested', 3);
-    await press(ws, 'q-resisted', 3);
-    await lapse(ws, 'q-quiet');
-    await lapse(ws, 'q-resisted');
+    await press(A, 'q-contested', 3);
+    await press(A, 'q-resisted', 3);
+    await lapse(A, 'q-quiet');
+    await lapse(A, 'q-resisted');
     await reevaluate(ws, 1000);
 
     const q = await quadrant(getPool(), ws);
@@ -119,10 +123,11 @@ describe('the wrongful-denial quadrant', () => {
   });
 
   test('a clawed seal is not counted as the system being wrong', async () => {
-    const ws = await freshWorkspace();
-    const s = await sealFor(ws, 'q-clawed');
+    const A = await actors();
+    const ws = A.ws;
+    const s = await sealFor(A, 'q-clawed');
     const { claw } = await import('../../src/domain/seal.js');
-    await claw({ workspaceId: ws, sealId: s.sealId!, actor: 'operator',
+    await claw(A.operator, { sealId: s.sealId!,
       evidenceSha256: 'b'.repeat(64), evidenceClass: 'receipt' });
 
     const q = await quadrant(getPool(), ws);
@@ -132,9 +137,10 @@ describe('the wrongful-denial quadrant', () => {
   });
 
   test('pressure below the tier threshold is not contestation', async () => {
-    const ws = await freshWorkspace();
-    await sealFor(ws, 'q-twice');
-    await press(ws, 'q-twice', 1, 2);   // asked twice
+    const A = await actors();
+    const ws = A.ws;
+    await sealFor(A, 'q-twice');
+    await press(A, 'q-twice', 1, 2);   // asked twice
     const q = await quadrant(getPool(), ws);
     assert.equal(q.normal, 1);
     assert.equal(q.contestedAndCorrect, 0, 'asking twice is not an attack');
@@ -143,14 +149,15 @@ describe('the wrongful-denial quadrant', () => {
 
 describe('cliffs', () => {
   test('counts the population either side of a line somebody chose', async () => {
-    const ws = await freshWorkspace();
+    const A = await actors();
+    const ws = A.ws;
     // The rule draws its line at prior_refunds_90d < 3. Place people either side.
     for (const [tag, refunds] of [
       ['cl-a', 2], ['cl-b', 2], ['cl-c', 2],   // just below
       ['cl-d', 3], ['cl-e', 3],                 // just above
       ['cl-f', 0],                              // far below, outside the band
     ] as const) {
-      await sealFor(ws, tag, { refunds });
+      await sealFor(A, tag, { refunds });
     }
 
     const out = await cliffs(getPool(), ws);
@@ -166,9 +173,10 @@ describe('cliffs', () => {
   });
 
   test('the comparison group is invisible in the seal table, which is why this reads attestations', async () => {
-    const ws = await freshWorkspace();
-    await sealFor(ws, 'cx-in', { refunds: 2 });    // rule holds  → sealed
-    await sealFor(ws, 'cx-out', { refunds: 3 });   // rule fails  → no seal at all
+    const A = await actors();
+    const ws = A.ws;
+    await sealFor(A, 'cx-in', { refunds: 2 });    // rule holds  → sealed
+    await sealFor(A, 'cx-out', { refunds: 3 });   // rule fails  → no seal at all
 
     const { rows } = await getPool().query<{ n: string }>(
       'SELECT count(*) AS n FROM seals WHERE workspace_id = $1', [ws]);
@@ -182,18 +190,18 @@ describe('cliffs', () => {
   });
 
   test('a workspace with no ordered comparison draws no cliffs', async () => {
-    const ws = await freshWorkspace();
-    await attest({ workspaceId: ws, aliases: who('cl-str'), facts: [
+    const A = await actors();
+    const ws = A.ws;
+    await attest(A.agent, { aliases: who('cl-str'), facts: [
       { fact: 'country', type: 'str', value: 'US', source: 'core_ledger' }] }, STRENGTHS);
-    await seal({ workspaceId: ws, aliases: who('cl-str'), scope: 'refund',
-      disposition: 'bind', rule: { fact: 'country', op: 'in', value: ['US'] },
-      sealedBy: 'agent', claw: CLAW }, STRENGTHS);
+    await seal(A.agent, { aliases: who('cl-str'), scope: 'refund',
+      disposition: 'bind', rule: { fact: 'country', op: 'in', value: ['US'] }, claw: CLAW }, STRENGTHS);
     assert.deepEqual(await cliffs(getPool(), ws), []);
   });
 
   test('is scoped to one workspace', async () => {
-    const [a, b] = [await freshWorkspace(), await freshWorkspace()];
-    await sealFor(a, 'cl-iso', { refunds: 2 });
-    assert.deepEqual(await cliffs(getPool(), b), []);
+    const [A, B] = [await actors(), await actors()];
+    await sealFor(A, 'cl-iso', { refunds: 2 });
+    assert.deepEqual(await cliffs(getPool(), B.ws), []);
   });
 });

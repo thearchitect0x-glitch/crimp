@@ -23,17 +23,23 @@ import {
   validateClawRule, mayClaw, isAuthority, type Authority, type ClawRule,
 } from './authority.js';
 import { meetsFloor, type Admissibility } from './admissibility.js';
+import { requireScope, type Principal } from './auth.js';
 import { classify, tierOf, harden, PRESSURE_WINDOW_DAYS, type Pressure } from './lifecycle.js';
 
 export type Disposition = 'bind' | 'permit' | 'commit';
 
+/**
+ * Note what is absent: `workspaceId` and `sealedBy`.
+ *
+ * Both are properties of the credential and neither may be stated by a caller.
+ * Every invariant here rests on authority being true, and an authority a
+ * request can assert is not an authority.
+ */
 export interface SealInput {
-  workspaceId: string;
   aliases: unknown;
   scope: string;
   disposition: Disposition;
   rule: unknown;
-  sealedBy: Authority;
   claw: ClawRule;
   maxUses?: number | null;
   /** Fact classes policy requires this effect type's rules to reference. */
@@ -143,19 +149,20 @@ function valueDigest(r: FactRow): string {
 
 /* ── Seal ────────────────────────────────────────────────────────────── */
 
-export async function seal(input: SealInput, strengths: Readonly<Record<string, MergeStrength>>)
-: Promise<SealResult> {
+export async function seal(
+  p: Principal, input: SealInput, strengths: Readonly<Record<string, MergeStrength>>,
+): Promise<SealResult> {
+  requireScope(p, 'seals:write');
+  const workspaceId = p.workspaceId;
+  const sealedBy = p.authority;
   const scope = validateScope(input.scope);
   if (!['bind', 'permit', 'commit'].includes(input.disposition)) {
     throw new ApiError(400, 'invalid_request', 'disposition must be bind, permit or commit.');
   }
-  if (!isAuthority(input.sealedBy)) {
-    throw new ApiError(400, 'invalid_request', 'sealed_by must be a known authority level.');
-  }
   if (input.maxUses != null && input.disposition !== 'permit') {
     throw new ApiError(400, 'invalid_request', 'max_uses applies only to a permit.');
   }
-  const clawRule = validateClawRule(input.sealedBy, input.claw);
+  const clawRule = validateClawRule(sealedBy, input.claw);
   const referenced = validateRule(input.rule);
   const rule = input.rule as Rule;
 
@@ -171,11 +178,11 @@ export async function seal(input: SealInput, strengths: Readonly<Record<string, 
   }
 
   const ruleHash = sha256Hex(canonicalRule(rule));
-  const aliases = blindAliases(input.workspaceId, input.aliases, strengths);
+  const aliases = blindAliases(workspaceId, input.aliases, strengths);
 
   return withTx(async (tx) => {
-    const { subjectId } = await resolveSubject(tx, input.workspaceId, aliases);
-    const { facts, rows } = await loadFacts(tx, input.workspaceId, subjectId, [...referenced]);
+    const { subjectId } = await resolveSubject(tx, workspaceId, aliases);
+    const { facts, rows } = await loadFacts(tx, workspaceId, subjectId, [...referenced]);
 
     // Throws RuleTypeError (400) on a literal that cannot be compared with the
     // fact it names. That is a bug in the rule, not missing data, and it must
@@ -205,8 +212,8 @@ export async function seal(input: SealInput, strengths: Readonly<Record<string, 
       `INSERT INTO seals (id, workspace_id, subject_id, scope, disposition, rule, rule_hash,
                           sealed_by, claw_authority, claw_evidence_floor, claw_cooling_off_s, max_uses)
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12)`,
-      [sealId, input.workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
-        ruleHash, input.sealedBy, clawRule.authority, clawRule.evidenceFloor,
+      [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
+        ruleHash, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null],
     );
 
@@ -221,7 +228,7 @@ export async function seal(input: SealInput, strengths: Readonly<Record<string, 
     await tx.query(
       `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, detail)
        VALUES ($1,$2,'sealed',$3,$4::jsonb)`,
-      [sealId, input.workspaceId, input.sealedBy,
+      [sealId, workspaceId, sealedBy,
         JSON.stringify({ scope, disposition: input.disposition, rule_hash: ruleHash })],
     );
 
@@ -262,21 +269,22 @@ const CHECK_REASONS = {
  * nobody anywhere records how many times somebody tried to get past a decision
  * and was stopped.
  */
-export async function check(args: {
-  workspaceId: string;
+export async function check(p: Principal, args: {
   aliases: unknown;
   scope: string;
   session?: string;
 }, strengths: Readonly<Record<string, MergeStrength>>): Promise<CheckResult> {
+  requireScope(p, 'bindings:check');
+  const workspaceId = p.workspaceId;
   const scope = validateScope(args.scope);
-  const aliases = blindAliases(args.workspaceId, args.aliases, strengths);
+  const aliases = blindAliases(workspaceId, args.aliases, strengths);
 
   return withTx(async (tx) => {
     const { rows: sub } = await tx.query<{ subject_id: string }>(
       `SELECT DISTINCT subject_id FROM subject_aliases
         WHERE workspace_id = $1 AND (alias_type, blinded) IN (
           SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-      [args.workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
+      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
     );
     if (sub.length === 0) {
       return { bound: false, reason: CHECK_REASONS.clear, bindingToken: mintToken(scope) };
@@ -297,7 +305,7 @@ export async function check(args: {
         WHERE workspace_id = $1 AND subject_id = $2 AND scope = ANY($3::text[])
           AND state IN ('sealed', 'tainted')
         ORDER BY sealed_at`,
-      [args.workspaceId, subjectId, ancestors(scope)],
+      [workspaceId, subjectId, ancestors(scope)],
     );
 
     // A bind anywhere in the covering set refuses, even a tainted one. Tainted
@@ -328,7 +336,7 @@ export async function check(args: {
       }
       await tx.query(
         `INSERT INTO seal_events (seal_id, workspace_id, kind) VALUES ($1,$2,'exercised')`,
-        [permit.id, args.workspaceId]);
+        [permit.id, workspaceId]);
       return {
         bound: false, reason: CHECK_REASONS.granted, sealId: permit.id,
         disposition: 'permit', bindingToken: mintToken(scope),
@@ -372,16 +380,14 @@ export async function pressureOf(db: Db, sealId: string): Promise<Pressure> {
 
 /* ── Claw ────────────────────────────────────────────────────────────── */
 
-export async function claw(args: {
-  workspaceId: string;
+export async function claw(p: Principal, args: {
   sealId: string;
-  actor: Authority;
   evidenceSha256: string;
   evidenceClass: Admissibility;
 }): Promise<{ state: 'clawed' }> {
-  if (!isAuthority(args.actor)) {
-    throw new ApiError(400, 'invalid_request', 'actor must be a known authority level.');
-  }
+  requireScope(p, 'seals:claw');
+  const workspaceId = p.workspaceId;
+  const actor = p.authority;
   if (!/^[0-9a-f]{64}$/.test(args.evidenceSha256)) {
     throw new ApiError(400, 'invalid_request', 'evidence_sha256 must be 64 hex characters.');
   }
@@ -393,7 +399,7 @@ export async function claw(args: {
     }>(
       `SELECT id, state, disposition, sealed_at, claw_authority, claw_evidence_floor, claw_cooling_off_s
          FROM seals WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
-      [args.sealId, args.workspaceId]);
+      [args.sealId, workspaceId]);
     const s = rows[0];
     // A cross-tenant lookup is a 404, never a hint that the record exists elsewhere.
     if (!s) throw new ApiError(404, 'not_found', 'No such seal.');
@@ -412,11 +418,11 @@ export async function claw(args: {
     const tier = tierOf(await pressureOf(tx, s.id));
     const { rule: required, hardened } = harden(s.disposition, base, tier);
 
-    if (!mayClaw(args.actor, required.authority)) {
+    if (!mayClaw(actor, required.authority)) {
       throw new ApiError(403, 'insufficient_authority',
         `Reversing this determination requires "${required.authority}"; the caller is `
-        + `"${args.actor}".${hardened ? ' This seal has hardened under sustained pressure.' : ''}`,
-        { required: required.authority, actor: args.actor, hardened, pressureTier: tier });
+        + `"${actor}".${hardened ? ' This seal has hardened under sustained pressure.' : ''}`,
+        { required: required.authority, actor, hardened, pressureTier: tier });
     }
     if (!meetsFloor(args.evidenceClass, required.evidenceFloor)) {
       throw new ApiError(403, 'insufficient_evidence',
@@ -440,7 +446,7 @@ export async function claw(args: {
     await tx.query(
       `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, evidence_sha256, evidence_class, detail)
        VALUES ($1,$2,'clawed',$3,$4,$5,$6::jsonb)`,
-      [s.id, args.workspaceId, args.actor, args.evidenceSha256, args.evidenceClass,
+      [s.id, workspaceId, actor, args.evidenceSha256, args.evidenceClass,
         JSON.stringify({ hardened, pressure_tier: tier, required })]);
 
     return { state: 'clawed' as const };

@@ -22,6 +22,7 @@ import { withTx } from '../db/pool.js';
 import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
 import { FACT_TYPES, type FactType } from './rule.js';
+import { requireScope, type Principal } from './auth.js';
 
 const FACT_NAME = /^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,3}$/;
 const MAX_STRING = 256;
@@ -35,15 +36,16 @@ export interface AttestInput {
   expiresAt?: Date | null;
 }
 
-export async function attest(args: {
-  workspaceId: string;
+export async function attest(p: Principal, args: {
   aliases: unknown;
   facts: readonly AttestInput[];
 }, strengths: Readonly<Record<string, MergeStrength>>): Promise<{ subjectId: string; count: number }> {
+  requireScope(p, 'attestations:write');
+  const workspaceId = p.workspaceId;
   if (!Array.isArray(args.facts) || args.facts.length === 0) {
     throw new ApiError(400, 'invalid_request', 'At least one fact must be attested.');
   }
-  const aliases = blindAliases(args.workspaceId, args.aliases, strengths);
+  const aliases = blindAliases(workspaceId, args.aliases, strengths);
 
   for (const f of args.facts) {
     if (typeof f?.fact !== 'string' || !FACT_NAME.test(f.fact)) {
@@ -75,7 +77,7 @@ export async function attest(args: {
       `SELECT DISTINCT subject_id FROM subject_aliases
         WHERE workspace_id = $1 AND (alias_type, blinded) IN (
           SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-      [args.workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)]);
+      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)]);
     if (existing.length > 1) {
       throw new ApiError(409, 'merge_required',
         'These aliases identify several subjects; resolve the merge before attesting.');
@@ -85,19 +87,19 @@ export async function attest(args: {
     if (subjectId === undefined) {
       subjectId = `sub_${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`;
       await tx.query('INSERT INTO subjects (id, workspace_id) VALUES ($1,$2)',
-        [subjectId, args.workspaceId]);
+        [subjectId, workspaceId]);
     }
     await tx.query(
       `INSERT INTO subject_aliases (workspace_id, alias_type, blinded, subject_id, merge_strength)
        SELECT $1, t, b, $4, s FROM UNNEST($2::text[], $3::text[], $5::text[]) AS u(t,b,s)
        ON CONFLICT (workspace_id, alias_type, blinded) DO NOTHING`,
-      [args.workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded), subjectId,
+      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded), subjectId,
         aliases.map((a) => a.strength)]);
 
     for (const f of args.facts) {
       const { rows: src } = await tx.query<{ admissibility: string }>(
         'SELECT admissibility FROM fact_sources WHERE workspace_id = $1 AND source = $2',
-        [args.workspaceId, f.source]);
+        [workspaceId, f.source]);
       const admissibility = src[0]?.admissibility;
       if (admissibility === undefined) {
         throw new ApiError(400, 'unknown_source',
@@ -116,7 +118,7 @@ export async function attest(args: {
            source = EXCLUDED.source, admissibility = EXCLUDED.admissibility,
            asserted_at = EXCLUDED.asserted_at, expires_at = EXCLUDED.expires_at,
            received_at = now()`,
-        [args.workspaceId, subjectId, f.fact, f.type,
+        [workspaceId, subjectId, f.fact, f.type,
           f.type === 'bool' ? f.value : null,
           f.type === 'int' || f.type === 'time' ? f.value : null,
           f.type === 'str' ? f.value : null,

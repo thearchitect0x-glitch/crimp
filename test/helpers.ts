@@ -2,7 +2,9 @@
 // Copyright 2026 Deimos.MX
 import { getPool } from '../src/db/pool.js';
 import { newId } from '../src/lib/ids.js';
+import { mintKey, verifyKey, SCOPES, type Principal } from '../src/domain/auth.js';
 import type { MergeStrength } from '../src/lib/blind.js';
+import type { Authority } from '../src/domain/authority.js';
 
 export const STRENGTHS: Record<string, MergeStrength> = {
   card_fp: 'strong',
@@ -24,6 +26,41 @@ export async function freshWorkspace(): Promise<string> {
        ($1,'state_registry','authority')`,
     [id]);
   return id;
+}
+
+/**
+ * Real minted keys, verified through the real path.
+ *
+ * Tests hold principals rather than fabricating them, so every assertion below
+ * is also an assertion that authority survives the round trip through
+ * mint → present → verify. A test that constructs its own Principal would
+ * prove the domain works while saying nothing about whether authority can be
+ * forged, which is the question that matters.
+ */
+export interface Actors {
+  ws: string;
+  agent: Principal;
+  operator: Principal;
+  principal: Principal;
+  custodian: Principal;
+}
+
+export async function actors(): Promise<Actors> {
+  const ws = await freshWorkspace();
+  const made: Record<string, Principal> = {};
+  for (const level of ['custodian', 'principal', 'operator', 'agent'] as Authority[]) {
+    const k = await mintKey({
+      workspaceId: ws, authority: level, scopes: [...SCOPES], label: level, by: null,
+    });
+    made[level] = await verifyKey(k.key);
+  }
+  return {
+    ws,
+    agent: made['agent']!,
+    operator: made['operator']!,
+    principal: made['principal']!,
+    custodian: made['custodian']!,
+  };
 }
 
 export const person = (tag: string) => [

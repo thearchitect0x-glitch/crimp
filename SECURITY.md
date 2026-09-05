@@ -24,6 +24,19 @@ in the report.
 - Any cross-tenant read or write.
 - Any path that recovers a raw subject value from a stored blinded identifier.
 
+## Properties the test suite does not enforce
+
+Stated because a reader is entitled to know which guarantees are checked and
+which are only intended.
+
+- **Constant-time key comparison.** `verifyKey` runs the MAC comparison even
+  for an unknown prefix, and a mutation that replaces `timingSafeEqual` with
+  `===` passes the whole suite. A timing assertion sensitive enough to catch it
+  would be flaky, and a flaky security test is worse than a documented gap. The
+  testable precondition IS enforced: `DECOY_MAC` must match a real MAC in
+  length, or the length guard short-circuits and the comparison is skipped
+  entirely. Review changes to that function by reading them.
+
 ## What is not
 
 - The attestation trust root. Crimp holds no credentials and never reaches into
