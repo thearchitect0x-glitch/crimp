@@ -37,6 +37,10 @@ jobs:
         run: npm run test:integration
         env:
           DATABASE_URL: postgres://crimp:crimp@localhost:5434/crimp
+      - name: End-to-end tests
+        run: npm run test:e2e
+        env:
+          DATABASE_URL: postgres://crimp:crimp@localhost:5434/crimp
       - name: Property-based tests
         run: npm run fuzz
         env: { FUZZ_RUNS: '20000' }

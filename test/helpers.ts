@@ -25,6 +25,10 @@ export async function freshWorkspace(): Promise<string> {
        ($1,'carrier_api','receipt'),
        ($1,'state_registry','authority')`,
     [id]);
+  await pool.query(
+    `INSERT INTO alias_types (workspace_id, alias_type, merge_strength) VALUES
+       ($1,'card_fp','strong'), ($1,'gov_id','strong'),
+       ($1,'email','medium'), ($1,'device','weak')`, [id]);
   return id;
 }
 
