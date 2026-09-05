@@ -1,0 +1,47 @@
+{
+  "name": "crimp",
+  "version": "0.0.1",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "Crimp — a decision gate for AI agents. An agent submits the rule it is applying and the facts it applies to; Crimp derives the outcome, seals the rule before the outcome is known, and measures how often that rule was wrong.",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "tsx watch src/api/server.ts",
+    "dev:db": "bash scripts/dev-db.sh up",
+    "dev:db:down": "bash scripts/dev-db.sh down",
+    "build": "tsc -p tsconfig.json && rm -rf dist/db/migrations && mkdir -p dist/db && cp -r src/db/migrations dist/db/migrations",
+    "start": "node dist/api/server.js",
+    "migrate": "tsx src/db/migrate.ts up",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "lint": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "bash scripts/test.sh",
+    "test:unit": "node --test --import tsx test/unit/*.test.ts",
+    "test:integration": "node --test --test-concurrency=1 --import tsx test/integration/*.test.ts",
+    "test:e2e": "node --test --test-concurrency=1 --import tsx test/e2e/*.test.ts",
+    "coverage": "bash scripts/test.sh --coverage",
+    "fuzz": "FUZZ_RUNS=${FUZZ_RUNS:-25000} tsx --test test/unit/fuzz-*.test.ts",
+    "audit": "npm audit --omit=dev --audit-level=high"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/cors": "11.3.0",
+    "@fastify/rate-limit": "11.2.0",
+    "@fastify/static": "10.1.3",
+    "@fastify/swagger": "9.8.1",
+    "dotenv": "17.4.2",
+    "fastify": "5.12.1",
+    "fastify-plugin": "^6.0.0",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "@types/pg": "8.23.1",
+    "c8": "^12.0.0",
+    "fast-check": "^4.9.0",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2"
+  }
+}
