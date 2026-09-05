@@ -14,7 +14,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fc from 'fast-check';
 import {
-  validateRule, canonicalRule, factsReferenced,
+  validateRule, canonicalRule, factsReferenced, LIMITS,
   TRUE, FALSE, UNKNOWN,
   type Rule, type Facts, type Fact, type Truth,
 } from '../../src/domain/rule.js';
@@ -43,15 +43,44 @@ const comparison: fc.Arbitrary<Rule> = fc.oneof(
   }),
 ) as fc.Arbitrary<Rule>;
 
+/**
+ * The generator is capped well inside the grammar's own limits.
+ *
+ * It was not, originally, and 4 runs in 12 failed — fast-check picks a fresh
+ * seed each run, and some seeds produced rules deeper than `LIMITS.maxDepth`,
+ * which the grammar correctly refused and the properties below wrongly counted
+ * as a failure. An intermittently red pipeline is worse than a red one, because
+ * a team learns to re-run it rather than read it.
+ *
+ * The cap belongs on the generator rather than on the properties: these
+ * properties exist to exercise VALID rules, and a rule the grammar refuses has
+ * already been tested by `validateRule always … refuses with a 400`. The guard
+ * immediately below keeps this honest if anyone widens the generator later.
+ */
 const rule: fc.Arbitrary<Rule> = fc.letrec<{ node: Rule }>((tie) => ({
   node: fc.oneof(
-    { depthSize: 'small', withCrossShrink: true },
+    { maxDepth: 3, depthSize: 'small', withCrossShrink: true },
     comparison,
     fc.record({ all: fc.array(tie('node'), { minLength: 1, maxLength: 3 }) }),
     fc.record({ any: fc.array(tie('node'), { minLength: 1, maxLength: 3 }) }),
     fc.record({ not: tie('node') }),
   ) as fc.Arbitrary<Rule>,
 })).node;
+
+function shape(r: Rule): { depth: number; nodes: number } {
+  if ('all' in r || 'any' in r) {
+    const kids = ('all' in r ? r.all : r.any).map(shape);
+    return {
+      depth: 1 + Math.max(...kids.map((k) => k.depth)),
+      nodes: 1 + kids.reduce((n, k) => n + k.nodes, 0),
+    };
+  }
+  if ('not' in r) {
+    const k = shape(r.not);
+    return { depth: 1 + k.depth, nodes: 1 + k.nodes };
+  }
+  return { depth: 1, nodes: 1 };
+}
 
 const factValue: fc.Arbitrary<Fact> = fc.oneof(
   fc.record({ type: fc.constant('bool' as const), value: fc.boolean() }),
@@ -74,6 +103,21 @@ function tryEval(r: Rule, f: Facts): Truth | typeof TYPE_ERROR {
 }
 
 /* ── Properties ─────────────────────────────────────────────────────── */
+
+describe('fuzz: the generator itself stays inside the grammar', () => {
+  /**
+   * Regression guard. Without this, widening the generator silently
+   * reintroduces a flake that only shows up in roughly one CI run in three —
+   * which is exactly the kind of failure a team stops reading.
+   */
+  test('every generated rule is within the declared limits', () => {
+    fc.assert(fc.property(rule, (r) => {
+      const { depth, nodes } = shape(r);
+      assert.ok(depth <= LIMITS.maxDepth, `generated depth ${depth} exceeds ${LIMITS.maxDepth}`);
+      assert.ok(nodes <= LIMITS.maxNodes, `generated nodes ${nodes} exceeds ${LIMITS.maxNodes}`);
+    }), opts);
+  });
+});
 
 describe('fuzz: the grammar is total', () => {
   test('validateRule always returns a fact set or refuses with a 400 — it never crashes', () => {
