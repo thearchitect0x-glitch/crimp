@@ -42,6 +42,11 @@ export const config = {
   blindSecret: env('BLIND_SECRET', DEV_SECRET),
 
   corsOrigins: (process.env['CORS_ORIGINS'] ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+
+  dbPoolMax: Number(process.env['DB_POOL_MAX'] ?? 10),
+  dbSsl: process.env['DB_SSL'] === 'true',
+  statementTimeoutMs: Number(process.env['STATEMENT_TIMEOUT_MS'] ?? 10_000),
+  idleInTxTimeoutMs: Number(process.env['IDLE_IN_TX_TIMEOUT_MS'] ?? 15_000),
 } as const;
 
 export function assertProductionSafety(cfg: typeof config = config): void {

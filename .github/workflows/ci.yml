@@ -8,6 +8,17 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crimp
+          POSTGRES_PASSWORD: crimp
+          POSTGRES_DB: crimp
+        ports: ['5434:5432']
+        options: >-
+          --health-cmd "pg_isready -U crimp"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
@@ -18,6 +29,14 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm run test:unit
+      - name: Migrations apply to an empty database
+        run: npm run migrate
+        env:
+          DATABASE_URL: postgres://crimp:crimp@localhost:5434/crimp
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgres://crimp:crimp@localhost:5434/crimp
       - name: Property-based tests
         run: npm run fuzz
         env: { FUZZ_RUNS: '20000' }
