@@ -239,42 +239,71 @@ export async function seal(
   });
 }
 
-/* ── Check: the hot path ─────────────────────────────────────────────── */
+/* ── Lookup: a query, not a gate ─────────────────────────────────────── */
 
-export interface CheckResult {
-  bound: boolean;
-  reason: string;
-  sealId?: string;
-  disposition?: Disposition;
-  /** Only issued when nothing binds. The effect gate requires it. */
-  bindingToken?: string;
+/**
+ * One standing determination about a subject.
+ *
+ * WHY THIS IS A QUERY AND NOT AN AUTHORIZATION.
+ *
+ * Crimp holds no credentials, has no outbound access and executes nothing. It
+ * cannot stop an action and never could. An earlier version of this returned
+ * `{ bound: true|false }` and a scoped token for a downstream gate to require,
+ * which described a system that does not exist here — and described, fairly
+ * precisely, the pre-action authorization category that OPA, Cedar, the OAP
+ * draft and at least one granted patent already occupy.
+ *
+ * What Crimp actually has that none of them do is the determination itself.
+ * So it reports determinations and the caller decides. That is honest about
+ * the boundary, and it makes Crimp compose with those gates rather than
+ * duplicate them: they evaluate policy written in advance, and none of them
+ * has a runtime determination to evaluate against.
+ *
+ * The distinction is not cosmetic. "You may not proceed" is a claim Crimp is
+ * not entitled to make. "There is a standing refusal, sealed under this rule,
+ * reversible only by this authority" is a fact it holds.
+ */
+export interface Determination {
+  sealId: string;
+  scope: string;
+  disposition: Disposition;
+  state: 'sealed' | 'tainted';
+  /** Machine-readable; agents branch on this, never on prose. */
+  code: string;
+  /** `permit` only: uses remaining, or null when unbounded. */
+  remaining?: number | null;
 }
 
-const CHECK_REASONS = {
-  clear: 'no_determination',
-  bind: 'bound.refusal_standing',
-  tainted: 'bound.tainted',
-  spent: 'permit.already_exercised',
-  granted: 'permit.exercised',
+export interface LookupResult {
+  /** Empty means nothing has been decided. It does not mean "allowed". */
+  determinations: Determination[];
+}
+
+export const CODES = {
+  refusalStanding: 'bind.refusal_standing',
+  refusalTainted: 'bind.tainted',
+  permitAvailable: 'permit.available',
+  permitExhausted: 'permit.exhausted',
+  commitMade: 'commit.made',
 } as const;
 
 /**
- * Is this action bound?
+ * What has been determined about this subject in this scope?
  *
- * Sits in front of every agent action, so it is one indexed scan over the
- * bounded ancestor set of the requested scope. A slow answer is a bypassed
- * answer.
+ * Reads. Does not consume a permit — an earlier version spent a use merely by
+ * being asked, so a caller checking whether a one-time grant was available
+ * destroyed it in the process. Spending is now an explicit act; see `exercise`.
  *
- * A refusal increments pressure. That is the observable nothing else can have:
- * nobody anywhere records how many times somebody tried to get past a decision
- * and was stopped.
+ * A standing refusal records pressure, which is the one write this path makes.
+ * That is deliberate: refused attempts are the observable nothing else has, and
+ * the whole product is downstream of counting them.
  */
-export async function check(p: Principal, args: {
+export async function lookup(p: Principal, args: {
   aliases: unknown;
   scope: string;
   session?: string;
-}, strengths: Readonly<Record<string, MergeStrength>>): Promise<CheckResult> {
-  requireScope(p, 'bindings:check');
+}, strengths: Readonly<Record<string, MergeStrength>>): Promise<LookupResult> {
+  requireScope(p, 'determinations:read');
   const workspaceId = p.workspaceId;
   const scope = validateScope(args.scope);
   const aliases = blindAliases(workspaceId, args.aliases, strengths);
@@ -286,18 +315,16 @@ export async function check(p: Principal, args: {
           SELECT * FROM UNNEST($2::text[], $3::text[]))`,
       [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
     );
-    if (sub.length === 0) {
-      return { bound: false, reason: CHECK_REASONS.clear, bindingToken: mintToken(scope) };
-    }
+    if (sub.length === 0) return { determinations: [] };
     if (sub.length > 1) {
       throw new ApiError(409, 'merge_required',
-        'These aliases identify several subjects; resolve the merge before checking.',
+        'These aliases identify several subjects; resolve the merge before asking.',
         { subjects: sub.length });
     }
     const subjectId = sub[0]!.subject_id;
 
     const { rows: found } = await tx.query<{
-      id: string; scope: string; disposition: Disposition; state: string;
+      id: string; scope: string; disposition: Disposition; state: 'sealed' | 'tainted';
       max_uses: number | null; uses: number;
     }>(
       `SELECT id, scope, disposition, state, max_uses, uses
@@ -308,42 +335,77 @@ export async function check(p: Principal, args: {
       [workspaceId, subjectId, ancestors(scope)],
     );
 
-    // A bind anywhere in the covering set refuses, even a tainted one. Tainted
-    // means the ground is gone, not that the claim was disproved, and lifting
-    // on an unknown is exactly the guess a gate must never make.
-    const binding = found.find((s) => s.disposition === 'bind' && covers(s.scope, scope));
-    if (binding) {
-      await bumpPressure(tx, binding.id, args.session);
-      return {
-        bound: true,
-        reason: binding.state === 'tainted' ? CHECK_REASONS.tainted : CHECK_REASONS.bind,
-        sealId: binding.id,
-        disposition: 'bind',
-      };
-    }
-
-    const permit = found.find((s) => s.disposition === 'permit' && covers(s.scope, scope));
-    if (permit) {
-      // At-most-N enforced by the database, not by application logic — the
-      // same reasoning as Ratchet's unique index. Two concurrent callers
-      // cannot both win the last use.
-      const { rowCount } = await tx.query(
-        `UPDATE seals SET uses = uses + 1
-          WHERE id = $1 AND (max_uses IS NULL OR uses < max_uses)`, [permit.id]);
-      if (rowCount === 0) {
-        await bumpPressure(tx, permit.id, args.session);
-        return { bound: true, reason: CHECK_REASONS.spent, sealId: permit.id, disposition: 'permit' };
+    const out: Determination[] = [];
+    for (const s of found) {
+      if (!covers(s.scope, scope)) continue;
+      if (s.disposition === 'bind') {
+        // A tainted bind still stands. Tainted means the ground is gone, not
+        // that the claim was disproved, and lifting on an unknown is the guess
+        // a gate must never make.
+        await bumpPressure(tx, s.id, args.session);
+        out.push({
+          sealId: s.id, scope: s.scope, disposition: 'bind', state: s.state,
+          code: s.state === 'tainted' ? CODES.refusalTainted : CODES.refusalStanding,
+        });
+      } else if (s.disposition === 'permit') {
+        const remaining = s.max_uses === null ? null : s.max_uses - s.uses;
+        out.push({
+          sealId: s.id, scope: s.scope, disposition: 'permit', state: s.state,
+          code: remaining !== null && remaining <= 0 ? CODES.permitExhausted : CODES.permitAvailable,
+          remaining,
+        });
+      } else {
+        out.push({
+          sealId: s.id, scope: s.scope, disposition: 'commit', state: s.state,
+          code: CODES.commitMade,
+        });
       }
-      await tx.query(
-        `INSERT INTO seal_events (seal_id, workspace_id, kind) VALUES ($1,$2,'exercised')`,
-        [permit.id, workspaceId]);
-      return {
-        bound: false, reason: CHECK_REASONS.granted, sealId: permit.id,
-        disposition: 'permit', bindingToken: mintToken(scope),
-      };
+    }
+    return { determinations: out };
+  });
+}
+
+/**
+ * Spend one use of a permit.
+ *
+ * Separate from `lookup` because it is a mutation and asking a question should
+ * never cost you the answer. At-most-N is enforced by the database — the
+ * conditional UPDATE returning zero rows IS the refusal — so two concurrent
+ * callers cannot both win the last use.
+ */
+export async function exercise(p: Principal, args: { sealId: string })
+: Promise<{ exercised: boolean; remaining: number | null; code: string }> {
+  requireScope(p, 'permits:exercise');
+  return withTx(async (tx) => {
+    const { rows } = await tx.query<{
+      disposition: Disposition; state: string; max_uses: number | null; uses: number;
+    }>(
+      `SELECT disposition, state, max_uses, uses FROM seals
+        WHERE id = $1 AND workspace_id = $2`, [args.sealId, p.workspaceId]);
+    const s = rows[0];
+    if (!s) throw new ApiError(404, 'not_found', 'No such determination.');
+    if (s.disposition !== 'permit') {
+      throw new ApiError(409, 'not_a_permit',
+        `Only a permit can be exercised; this determination is a ${s.disposition}.`);
+    }
+    if (s.state !== 'sealed' && s.state !== 'tainted') {
+      throw new ApiError(409, 'already_settled', `This permit is ${s.state}.`);
     }
 
-    return { bound: false, reason: CHECK_REASONS.clear, bindingToken: mintToken(scope) };
+    const { rowCount } = await tx.query(
+      `UPDATE seals SET uses = uses + 1
+        WHERE id = $1 AND (max_uses IS NULL OR uses < max_uses)`, [args.sealId]);
+    if (rowCount === 0) {
+      return { exercised: false, remaining: 0, code: CODES.permitExhausted };
+    }
+    await tx.query(
+      `INSERT INTO seal_events (seal_id, workspace_id, kind) VALUES ($1,$2,'exercised')`,
+      [args.sealId, p.workspaceId]);
+    return {
+      exercised: true,
+      remaining: s.max_uses === null ? null : s.max_uses - s.uses - 1,
+      code: 'permit.exercised',
+    };
   });
 }
 
@@ -360,11 +422,6 @@ async function bumpPressure(tx: pg.PoolClient, sealId: string, session?: string)
      ON CONFLICT (seal_id, session)
      DO UPDATE SET attempts = pressure.attempts + 1, last_at = now()`,
     [sealId, declared ? session : '0'.repeat(32), declared]);
-}
-
-/** Placeholder until the effect-gate join lands; shape is stable, signing is not. */
-function mintToken(scope: string): string {
-  return `bt_${sha256Hex(`${newId('n')}:${scope}`).slice(0, 32)}`;
 }
 
 export async function pressureOf(db: Db, sealId: string): Promise<Pressure> {

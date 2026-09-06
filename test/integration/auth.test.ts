@@ -8,7 +8,7 @@ import {
   mintKey, verifyKey, revokeKey, requireScope, AGENT_SCOPES, SCOPES, DECOY_MAC,
   type Principal,
 } from '../../src/domain/auth.js';
-import { seal, check, claw } from '../../src/domain/seal.js';
+import { seal, lookup, claw } from '../../src/domain/seal.js';
 import { attest } from '../../src/domain/attest.js';
 import { ApiError } from '../../src/lib/errors.js';
 import { actors, freshWorkspace, person, STRENGTHS, hash64 } from '../helpers.js';
@@ -204,7 +204,7 @@ describe('scopes', () => {
   test('a key without seals:write cannot seal, whatever its authority', async () => {
     const ws = await freshWorkspace();
     const k = await mintKey({ workspaceId: ws, authority: 'custodian',
-      scopes: ['bindings:check'], label: 'reader', by: null });
+      scopes: ['determinations:read'], label: 'reader', by: null });
     const reader = await verifyKey(k.key);
     await refuses(() => seal(reader, { aliases: person('s1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS),
@@ -214,7 +214,7 @@ describe('scopes', () => {
   test('a key without attestations:write cannot attest', async () => {
     const ws = await freshWorkspace();
     const k = await mintKey({ workspaceId: ws, authority: 'operator',
-      scopes: ['bindings:check'], label: 'reader', by: null });
+      scopes: ['determinations:read'], label: 'reader', by: null });
     const reader = await verifyKey(k.key);
     await refuses(() => attest(reader, { aliases: person('s2'),
       facts: [{ fact: 'x', type: 'bool', value: true, source: 'core_ledger' }] }, STRENGTHS),
@@ -268,7 +268,8 @@ describe('authority cannot be asserted', () => {
     await seal(A.agent, { aliases: person('z3'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
-    const out = await check(B.agent, { aliases: person('z3'), scope: 'refund' }, STRENGTHS);
-    assert.equal(out.bound, false, 'the workspace comes from the key, so there is nothing to spoof');
+    const out = await lookup(B.agent, { aliases: person('z3'), scope: 'refund' }, STRENGTHS);
+    assert.deepEqual(out.determinations, [],
+      'the workspace comes from the key, so there is nothing to spoof');
   });
 });

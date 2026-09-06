@@ -116,7 +116,7 @@ export const sealBody = {
   },
 } as const;
 
-export const checkBody = {
+export const lookupBody = {
   type: 'object',
   required: ['aliases', 'scope'],
   additionalProperties: false,

@@ -33,7 +33,8 @@ export interface Principal {
 export const SCOPES = [
   'attestations:write',
   'seals:write',
-  'bindings:check',
+  'determinations:read',
+  'permits:exercise',
   'seals:claw',
   'insight:read',
   'keys:mint',
@@ -49,7 +50,7 @@ export type Scope = (typeof SCOPES)[number];
  * the default here from the first commit, not a later correction.
  */
 export const AGENT_SCOPES: readonly Scope[] = [
-  'attestations:write', 'seals:write', 'bindings:check',
+  'attestations:write', 'seals:write', 'determinations:read', 'permits:exercise',
 ];
 
 const PREFIX_CHARS = 'abcdefghijkmnpqrstuvwxyz23456789';
