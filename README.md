@@ -57,15 +57,87 @@ person to have the resources to fight.
 
 ## Status
 
-**Early. Not usable yet.** What exists today is the predicate grammar and its
-evaluator — the component whose semantics can never change once a rule has been
-sealed under them, and therefore the only sensible thing to build first.
+**Early, but it runs.** The grammar, the evaluator, attestation, the seal
+lifecycle, pressure, the three measurements, keys and the HTTP surface all
+work end to end against Postgres. There is no deployment, no billing and no
+customer. Subject merge deliberately fails closed; see
+[the handover note](docs/HANDOVER.md) for what else is unfinished on purpose.
+
+### Requirements
+
+- **Node 20.11 or newer** (`node --version`)
+- **Docker**, for the local Postgres. The test suite drops and recreates its
+  database on every run, so it needs a real one — the design depends on
+  `FOR UPDATE`, `SKIP LOCKED`, partial indexes and advisory locks, and SQLite
+  cannot express them.
+- **git**
+
+### Quick start
 
 ```bash
 npm install
-npm run typecheck
-npm run test:unit
-npm run fuzz          # property-based; FUZZ_RUNS=100000 to go deeper
+bash scripts/dev-db.sh up     # Postgres on :5434, in Docker
+npm run migrate               # applies every migration to an empty database
+npm test                      # typecheck + unit + integration + e2e
+```
+
+Then run it:
+
+```bash
+cp .env.example .env          # the defaults work for local development
+npm run dev                   # control plane on :8788
+curl -s localhost:8788/healthz
+```
+
+### The loop, end to end
+
+Crimp is key-only, so mint one first. There is no signup yet, so this goes
+through a script rather than an endpoint:
+
+```bash
+npm run mint -- --authority operator --label "my first key"
+```
+
+Then, with `CRIMP_KEY` set to what that printed:
+
+```bash
+# 1. Attest what you know. Crimp never fetches; you push.
+curl -s localhost:8788/v1/attestations -H "Authorization: Bearer $CRIMP_KEY" \
+  -H 'content-type: application/json' -d '{
+    "aliases": [{"type":"card_fp","value":"4242"}],
+    "facts": [
+      {"fact":"carrier.delivered","type":"bool","value":false,"source":"carrier_api"},
+      {"fact":"prior_refunds_90d","type":"int","value":1,"source":"core_ledger"}
+    ]}'
+
+# 2. Submit the RULE you are applying. Note there is no field for an outcome.
+curl -s localhost:8788/v1/seals -H "Authorization: Bearer $CRIMP_KEY" \
+  -H 'content-type: application/json' -d '{
+    "aliases": [{"type":"card_fp","value":"4242"}],
+    "scope": "refund",
+    "disposition": "bind",
+    "rule": {"all":[
+      {"fact":"carrier.delivered","op":"eq","value":false},
+      {"fact":"prior_refunds_90d","op":"lt","value":3}]},
+    "claw": {"authority":"principal","evidence_floor":"receipt"}}'
+
+# 3. Ask whether an action is bound.
+curl -s localhost:8788/v1/bindings/check -H "Authorization: Bearer $CRIMP_KEY" \
+  -H 'content-type: application/json' -d '{
+    "aliases": [{"type":"card_fp","value":"4242"}], "scope": "refund.issue"}'
+```
+
+Re-attest `carrier.delivered` as `true` and the rule stops holding: the seal
+**lapses** on the next re-evaluation, with no authority involved and nobody
+having won an argument.
+
+### Other commands
+
+```bash
+npm run typecheck             # src, test and scripts
+npm run coverage              # the suite, with the floors enforced
+npm run fuzz                  # property-based; FUZZ_RUNS=100000 to go deeper
+npm run dev:db:down           # stop the local Postgres
 ```
 
 ## What Crimp will never be
