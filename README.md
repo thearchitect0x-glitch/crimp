@@ -170,7 +170,10 @@ npm run dev:db:down           # stop the local Postgres
 
 | | |
 |---|---|
-| [Governance](GOVERNANCE.md) | Who decides, who succeeds, and which part of continuity is still unrehearsed |
+| [Roadmap](ROADMAP.md) | What the next year holds, and what will never be built |
+| [Architecture](docs/ARCHITECTURE.md) | The high-level design, and what it deliberately is not |
+| [Assurance case](ASSURANCE_CASE.md) | The threat model and the argument for each guarantee — including what is *not* defended |
+| [Governance](GOVERNANCE.md) | Who decides, who succeeds, and the rehearsal record |
 | [Handover](docs/HANDOVER.md) | What to know in the first hour, and what must stay true |
 | [Restore rehearsal](docs/RESTORE_REHEARSAL.md) | The drill, and the rule that the maintainer does not help |
 | [Contributing](CONTRIBUTING.md) | DCO, coding standards, and the testing policy |
