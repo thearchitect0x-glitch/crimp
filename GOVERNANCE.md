@@ -33,27 +33,61 @@ that grammar forever; there is no such thing as a small change to it.
 
 ## Continuity plan
 
-**Status: two of three done, and the missing one is the one that matters.**
-
-A successor is named and holds the credentials. What has NOT happened is a
-rehearsal — nobody has restored this system from the runbooks without the
-maintainer in the room. Until that has been done once, the plan is a belief,
-and the whole premise of this product is the difference between a belief and a
-record. Claiming continuity here while the restore is untested would be exactly
-the kind of unfalsifiable assertion Crimp exists to refuse.
+**Status: rehearsed.** All three, and the third is the one that makes the other
+two mean anything.
 
 | Step | Status |
 |---|---|
 | A named successor with a published role | **Done** — [@mlimano5](https://github.com/mlimano5), 5 September 2026 |
-| Credential escrow reachable without the maintainer | **Done** — successor holds credentials and is admin on the sibling Ratchet repository |
-| One rehearsed restore, from the runbooks alone | **Not done** |
+| Credential escrow reachable without the maintainer | **Done** — holds credentials, admin here and on the sibling Ratchet repository |
+| One rehearsed restore, from the runbooks alone | **Done** — 6 September 2026, 1h 30m, 4 findings |
 
-**Do the rehearsal now, while it is cheap.** Crimp has no production database,
-no deployment and no customers — restoring it today means cloning a repository
-and running migrations. Every commit makes that harder. See
-[docs/RESTORE_REHEARSAL.md](docs/RESTORE_REHEARSAL.md); the rule is that if the
-successor has to ask a question, the runbook is wrong and the runbook gets
-fixed rather than the question answered.
+### The rehearsal, 6 September 2026
+
+Performed by @mlimano5 in the successor role, 22:45 to 00:15 — **one hour and
+thirty minutes**. The maintainer was not consulted at any point. Claude Code
+was used and that was explicitly allowed: the rule is *don't ask the person who
+built it*, and a successor in a real emergency has every tool available except
+him.
+
+**Outcome: the system restores.** Migrations applied to an empty database, the
+service started, and one real decision path ran end to end — key minted, fact
+attested, determination sealed, binding confirmed with
+`{"bound":true,"reason":"bound.refusal_standing"}`.
+
+**Four findings, all of them defects in the documents rather than the code.**
+None was findable by the person who wrote them.
+
+1. **A harmless startup warning that reads like a crash.** An ajv strict-mode
+   line printed on every boot, in the one step whose correct outcome is "it
+   sits there and does nothing" — indistinguishable from a failure to somebody
+   who has not seen a Node service start. Fixed in
+   [#3](https://github.com/thearchitect0x-glitch/crimp/pull/3).
+2. **`curl -s` hides curl's own error.** A server that was not up produced a
+   blank line and no explanation, with no way to tell which earlier step to
+   return to. Fixed in [#3](https://github.com/thearchitect0x-glitch/crimp/pull/3).
+3. **The two runbooks disagreed on step numbers.** "Stuck at step 8" meant
+   *start the service* in one document and *confirm the domain* in the other —
+   during the one exercise whose entire purpose is communicating a problem
+   accurately. Both now number 00 to 11 identically, and the runbook says why
+   renumbering is not a cosmetic change.
+4. **`git pull` does not restart a running server.** The merged fix appeared to
+   do nothing until the process was stopped and started again. Obvious once
+   known; ten confusing minutes if not. Now called out beside the start step.
+
+**Step 10, the domain.** Registrar access confirmed under sole control — his
+own password, no code required from anyone else's device. The DNS controls were
+present and nothing was changed. Two observations recorded rather than acted on:
+the registrar is password-only, so **adding 2FA there is worthwhile hardening**
+(not a continuity gap, since he can already get in unaided); and the domain has
+**no DNS records configured at all**, which is consistent with there being no
+deployment. Today "confirm the domain" means *I can control it*. Once something
+is deployed, this step has to grow into *the records point at the running
+service*, and there is nothing yet to check that against.
+
+**Re-rehearse when the shape of the system changes** — specifically when a
+production database or a deployment exists. A rehearsal that covered less than
+the current system has stopped being a rehearsal.
 
 What is already true:
 
@@ -69,14 +103,14 @@ What is already true:
   credentials, so the access path is one somebody has actually used rather than
   one that exists on paper.
 
-Still outstanding, and neither is code:
-
-1. **Admin on this repository.** Crimp has no remote yet. The successor gets
-   admin at the same moment the remote is created, not afterwards.
-2. **The rehearsal.** Recorded here with its date and duration when it happens.
+- The successor has admin on this repository and has exercised it — he has
+  reviewed, approved and merged three pull requests, so the access path is one
+  somebody has used rather than one that exists on paper.
 
 A continuity plan that is documented but never exercised is the same failure
-mode as an audit log nobody reads.
+mode as an audit log nobody reads. This one has now been exercised once, and it
+produced four defects — which is the argument for doing it again rather than
+filing it as complete.
 
 ## Review
 
