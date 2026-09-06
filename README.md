@@ -173,6 +173,7 @@ npm run dev:db:down           # stop the local Postgres
 | [Governance](GOVERNANCE.md) | Who decides, who succeeds, and which part of continuity is still unrehearsed |
 | [Handover](docs/HANDOVER.md) | What to know in the first hour, and what must stay true |
 | [Restore rehearsal](docs/RESTORE_REHEARSAL.md) | The drill, and the rule that the maintainer does not help |
+| [Releasing](docs/RELEASING.md) | How a release is cut, and how to verify one |
 | [Contributing](CONTRIBUTING.md) | DCO, coding standards, and the testing policy |
 | [Security policy](SECURITY.md) | How to report a vulnerability, and what is out of scope |
 | [Code of conduct](CODE_OF_CONDUCT.md) | What is expected |

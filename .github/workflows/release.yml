@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+#
+# Cut a release when a v* tag is pushed, and attest what was built.
+#
+# WHY KEYLESS, AND NOT A GPG-SIGNED TAG.
+#
+# A GPG key is one more secret to escrow, one more thing a successor can be
+# missing, and one more way for a release to become unverifiable because
+# somebody lost a laptop. This project's own governance names continuity as its
+# largest risk; adding a private key that must survive the maintainer works
+# directly against that.
+#
+# Sigstore keyless signing binds the artifact to the GitHub OIDC identity of
+# this exact workflow run and commit. There is nothing to store, nothing to
+# leak, and nothing to lose. Ratchet reaches the same conclusion by a different
+# route — it publishes to npm with --provenance, which is the same machinery.
+#
+# WHAT IT PROVES, AND WHAT IT DOES NOT. Provenance answers "which workflow, at
+# which commit, built this file". It does not answer "was that commit any
+# good". A perfectly genuine attestation over a bad commit is still an
+# attestation over a bad commit; the review requirement on `main` is what
+# addresses that, not this file.
+
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release
+      id-token: write        # what lets Sigstore issue a keyless certificate
+      attestations: write    # record the provenance
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crimp
+          POSTGRES_PASSWORD: crimp
+          POSTGRES_DB: crimp
+        ports: ['5434:5432']
+        options: >-
+          --health-cmd "pg_isready -U crimp"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-node@v5
+        with: { node-version: '22', cache: npm }
+
+      - run: npm ci
+
+      # Nothing ships untested. A release is the one artifact somebody might
+      # run without reading, so the gate is the full suite rather than a subset.
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgres://crimp:crimp@localhost:5434/crimp
+      - name: End-to-end tests
+        run: npm run test:e2e
+        env:
+          DATABASE_URL: postgres://crimp:crimp@localhost:5434/crimp
+      - name: Production dependency audit
+        run: npm run audit
+
+      # The tag must name the version in package.json. A release labelled
+      # v0.2.0 containing 0.1.0 is a lie that is very hard to notice later.
+      - name: Tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"
+            exit 1
+          fi
+          echo "tag $GITHUB_REF_NAME matches package.json $pkg"
+
+      - name: Build the source archive
+        run: |
+          name="crimp-${GITHUB_REF_NAME}.tar.gz"
+          git archive --format=tar.gz --prefix="crimp-${GITHUB_REF_NAME}/" \
+            -o "$name" "$GITHUB_REF_NAME"
+          sha256sum "$name" | tee "$name.sha256"
+          echo "ARCHIVE=$name" >> "$GITHUB_ENV"
+
+      - name: Attest what was built
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ env.ARCHIVE }}
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes-file - "$ARCHIVE" "$ARCHIVE.sha256" <<NOTES
+
+          ## Verifying this release
+
+          The archive carries a Sigstore attestation bound to the workflow run
+          and commit that produced it. There is no signing key, so there is
+          none to lose or leak.
+
+          \`\`\`
+          gh attestation verify $ARCHIVE --repo $GITHUB_REPOSITORY
+          \`\`\`
+
+          That answers *which workflow, at which commit, built this file*. It
+          does not answer whether that commit was any good — every commit on
+          \`main\` requires review by somebody other than its author, and that
+          is what addresses the second question.
+          NOTES
