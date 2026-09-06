@@ -14,6 +14,7 @@ import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength, type BlindedAlias } from '../lib/blind.js';
 import {
   validateRule, canonicalRule, factsReferenced,
+  GRAMMAR_VERSION, SUPPORTED_GRAMMAR_VERSIONS,
   TRUE, FALSE, UNKNOWN,
   type Rule, type Facts, type Fact, type FactType,
 } from './rule.js';
@@ -36,20 +37,31 @@ export type Disposition = 'bind' | 'permit' | 'commit';
  * request can assert is not an authority.
  */
 export interface SealInput {
+  /**
+   * Required, not optional.
+   *
+   * An at-most-once guarantee a caller can forget to opt into is not a
+   * guarantee. A retried request replays the original determination rather
+   * than creating a second one — which for a `permit` is the difference
+   * between one grant and two.
+   */
+  idempotencyKey: string;
   aliases: unknown;
   scope: string;
   disposition: Disposition;
   rule: unknown;
   claw: ClawRule;
   maxUses?: number | null;
+  /** When this determination stops standing on its own. Null means never. */
+  expiresAt?: Date | null;
   /** Fact classes policy requires this effect type's rules to reference. */
   requiredFacts?: readonly string[];
 }
 
 export interface SealResult {
   sealId: string | null;
-  /** `sealed` when the rule held; `not_applicable` when it did not. */
-  outcome: 'sealed' | 'not_applicable';
+  /** `replayed` is a retry finding its own earlier determination, not a new one. */
+  outcome: 'sealed' | 'not_applicable' | 'replayed';
   disposition: Disposition;
   ruleHash: string;
   reason: string;
@@ -162,6 +174,27 @@ export async function seal(
   if (input.maxUses != null && input.disposition !== 'permit') {
     throw new ApiError(400, 'invalid_request', 'max_uses applies only to a permit.');
   }
+  if (typeof input.idempotencyKey !== 'string'
+      || !/^[\w.:-]{1,128}$/.test(input.idempotencyKey)) {
+    throw new ApiError(400, 'invalid_request',
+      'idempotency_key is required: 1 to 128 characters of letters, digits, '
+      + '. : _ or -. A retry without one creates a second determination.');
+  }
+  if (input.expiresAt != null) {
+    if (!(input.expiresAt instanceof Date) || Number.isNaN(input.expiresAt.getTime())) {
+      throw new ApiError(400, 'invalid_request', 'expires_at must be a timestamp.');
+    }
+    // A determination that is born expired binds nothing, and the caller is
+    // told it was sealed. That is the same silent failure as an unparseable
+    // expiry, and it is nearly always a unit or timezone mistake rather than
+    // an intention. Refuse it while somebody is still looking at the response.
+    if (input.expiresAt.getTime() <= Date.now()) {
+      throw new ApiError(400, 'expiry_in_the_past',
+        'expires_at is already past, so this determination would bind nothing while reporting '
+        + 'itself sealed. Check the units and the timezone.',
+        { expiresAt: input.expiresAt.toISOString() });
+    }
+  }
   const clawRule = validateClawRule(sealedBy, input.claw);
   const referenced = validateRule(input.rule);
   const rule = input.rule as Rule;
@@ -181,6 +214,27 @@ export async function seal(
   const aliases = blindAliases(workspaceId, input.aliases, strengths);
 
   return withTx(async (tx) => {
+    // Replay before doing any work. A retry must be cheap and must not
+    // re-resolve subjects or re-evaluate anything.
+    const { rows: prior } = await tx.query<{
+      id: string; disposition: Disposition; rule_hash: string;
+    }>(`SELECT id, disposition, rule_hash FROM seals
+         WHERE workspace_id = $1 AND idempotency_key = $2`,
+      [workspaceId, input.idempotencyKey]);
+    if (prior[0]) {
+      if (prior[0].rule_hash !== ruleHash) {
+        throw new ApiError(409, 'idempotency_key_reuse',
+          'This idempotency key was already used for a different rule. Reusing one '
+          + 'across different determinations would make the first unfindable.',
+          { idempotencyKey: input.idempotencyKey });
+      }
+      return {
+        sealId: prior[0].id, outcome: 'replayed' as const,
+        disposition: prior[0].disposition, ruleHash,
+        reason: 'This determination already exists. Returning the original.',
+      };
+    }
+
     const { subjectId } = await resolveSubject(tx, workspaceId, aliases);
     const { facts, rows } = await loadFacts(tx, workspaceId, subjectId, [...referenced]);
 
@@ -210,11 +264,13 @@ export async function seal(
     const sealId = newId('seal');
     await tx.query(
       `INSERT INTO seals (id, workspace_id, subject_id, scope, disposition, rule, rule_hash,
-                          sealed_by, claw_authority, claw_evidence_floor, claw_cooling_off_s, max_uses)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12)`,
+                          grammar_version, sealed_by, claw_authority, claw_evidence_floor,
+                          claw_cooling_off_s, max_uses, idempotency_key, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
-        ruleHash, sealedBy, clawRule.authority, clawRule.evidenceFloor,
-        clawRule.coolingOffSeconds, input.maxUses ?? null],
+        ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
+        clawRule.coolingOffSeconds, input.maxUses ?? null,
+        input.idempotencyKey, input.expiresAt ?? null],
     );
 
     for (const r of rows) {
@@ -331,6 +387,9 @@ export async function lookup(p: Principal, args: {
          FROM seals
         WHERE workspace_id = $1 AND subject_id = $2 AND scope = ANY($3::text[])
           AND state IN ('sealed', 'tainted')
+          -- An expired determination stops standing the moment it expires,
+          -- without waiting for a sweep to notice.
+          AND (expires_at IS NULL OR expires_at > now())
         ORDER BY sealed_at`,
       [workspaceId, subjectId, ancestors(scope)],
     );
@@ -526,29 +585,44 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Reev
   const pool = (await import('../db/pool.js')).getPool();
   const { rows } = await pool.query<{
     id: string; subject_id: string; rule: Rule; state: string;
+    grammar_version: string; expired: boolean;
   }>(
-    `SELECT id, subject_id, rule, state FROM seals
+    `SELECT id, subject_id, rule, state, grammar_version,
+            (expires_at IS NOT NULL AND expires_at <= now()) AS expired
+       FROM seals
       WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')
       ORDER BY sealed_at LIMIT $2`,
     [workspaceId, limit]);
 
   const changes: Reevaluation[] = [];
   for (const s of rows) {
-    const names = [...factsReferenced(s.rule)];
-    const { facts } = await loadFacts(pool, workspaceId, s.subject_id, names);
     let next: string;
-    try {
-      next = classify(evaluate(s.rule, facts));
-    } catch {
-      // A type mismatch against changed attestations means the ground moved in
-      // a way the rule cannot read. That is lost ground, not a disproof.
+    if (s.expired) {
+      // Ran out. NOT an error — collapsing this into `lapsed` would count
+      // every expiry as the institution having been wrong.
+      next = 'expired';
+    } else if (!SUPPORTED_GRAMMAR_VERSIONS.has(s.grammar_version)) {
+      // Cannot reproduce the semantics this was sealed under, so cannot check
+      // it. Lost ground, not a disproof — and never a silent re-decision under
+      // rules nobody agreed to.
       next = 'tainted';
+    } else {
+      const names = [...factsReferenced(s.rule)];
+      const { facts } = await loadFacts(pool, workspaceId, s.subject_id, names);
+      try {
+        next = classify(evaluate(s.rule, facts));
+      } catch {
+        // A type mismatch against changed attestations means the ground moved
+        // in a way the rule cannot read. Lost ground, not a disproof.
+        next = 'tainted';
+      }
     }
     if (next === s.state) continue;
 
     await withTx(async (tx) => {
       const { rowCount } = await tx.query(
-        `UPDATE seals SET state = $2, settled_at = CASE WHEN $2 = 'lapsed' THEN now() ELSE settled_at END
+        `UPDATE seals SET state = $2,
+                settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END
           WHERE id = $1 AND state = $3`,
         [s.id, next, s.state]);
       if (rowCount === 0) return;  // somebody clawed it first; their record wins

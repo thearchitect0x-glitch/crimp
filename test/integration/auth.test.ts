@@ -206,7 +206,7 @@ describe('scopes', () => {
     const k = await mintKey({ workspaceId: ws, authority: 'custodian',
       scopes: ['determinations:read'], label: 'reader', by: null });
     const reader = await verifyKey(k.key);
-    await refuses(() => seal(reader, { aliases: person('s1'), scope: 'refund',
+    await refuses(() => seal(reader, { idempotencyKey: 'idem-s1', aliases: person('s1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS),
     'forbidden', 'authority and permission are different questions');
   });
@@ -233,6 +233,7 @@ describe('authority cannot be asserted', () => {
     // error at compile time and an ignored property at runtime; either way it
     // cannot reach the row. The proof is what actually got stored.
     const s = await seal(A.agent, {
+      idempotencyKey: 'idem-z1',
       aliases: person('z1'), scope: 'refund', disposition: 'bind', rule: RULE, claw: CLAW,
       ...({ sealedBy: 'custodian' } as object),
     } as never, STRENGTHS);
@@ -248,7 +249,7 @@ describe('authority cannot be asserted', () => {
     await attest(A.agent, { aliases: person('z2'),
       facts: [{ fact: 'carrier.delivered', type: 'bool', value: false, source: 'carrier_api' }] },
     STRENGTHS);
-    const s = await seal(A.agent, { aliases: person('z2'), scope: 'refund',
+    const s = await seal(A.agent, { idempotencyKey: 'idem-z2', aliases: person('z2'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     // There is no `actor` parameter either. The agent key claws as an agent.
@@ -265,7 +266,7 @@ describe('authority cannot be asserted', () => {
     await attest(A.agent, { aliases: person('z3'),
       facts: [{ fact: 'carrier.delivered', type: 'bool', value: false, source: 'carrier_api' }] },
     STRENGTHS);
-    await seal(A.agent, { aliases: person('z3'), scope: 'refund',
+    await seal(A.agent, { idempotencyKey: 'idem-z3', aliases: person('z3'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     const out = await lookup(B.agent, { aliases: person('z3'), scope: 'refund' }, STRENGTHS);

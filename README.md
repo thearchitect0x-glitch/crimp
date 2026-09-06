@@ -130,8 +130,11 @@ curl -sS localhost:8788/v1/attestations -H "Authorization: Bearer $CRIMP_KEY" \
     ]}'
 
 # 2. Submit the RULE you are applying. Note there is no field for an outcome.
+#    idempotency_key is required: a retry must replay this determination, not
+#    create a second one.
 curl -sS localhost:8788/v1/seals -H "Authorization: Bearer $CRIMP_KEY" \
   -H 'content-type: application/json' -d '{
+    "idempotency_key": "quickstart-1",
     "aliases": [{"type":"card_fp","value":"4242"}],
     "scope": "refund",
     "disposition": "bind",

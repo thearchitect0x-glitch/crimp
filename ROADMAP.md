@@ -70,6 +70,12 @@ below.
 - **`commit` at scale.** The disposition exists and is tested. What is missing
   is the ingestion path for what an agent told a customer, which is a different
   integration problem from the rest of the product.
+- **The cohort aggregate.** The schema, the blinding, the write paths and the
+  refusals are in. The query that answers "whose errors go uncorrected" is not,
+  and it waits for a design partner who needs it — building the read path
+  before somebody has a real question to ask it is how a measurement quietly
+  becomes a targeting tool. When it lands it returns null below a k-anonymity
+  floor, and it never answers about an individual.
 
 ## Explicitly not doing
 

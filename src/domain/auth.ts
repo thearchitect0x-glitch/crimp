@@ -38,6 +38,10 @@ export const SCOPES = [
   'seals:claw',
   'insight:read',
   'keys:mint',
+  // Deliberately absent from AGENT_SCOPES. Placing a person in a cohort is a
+  // configuration act, and an agent that could do it could shape the very
+  // measurement that exists to catch it.
+  'cohorts:write',
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 

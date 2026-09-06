@@ -103,7 +103,7 @@ describe('validation refuses rather than silently drops', () => {
 
     const r = await app.inject({ method: 'POST', url: '/v1/seals',
       headers: bearer(k.agent),
-      payload: { aliases: person('auth'), scope: 'refund', disposition: 'bind',
+      payload: { idempotency_key: 'idem-auth', aliases: person('auth'), scope: 'refund', disposition: 'bind',
         rule: RULE, claw: CLAW, sealed_by: 'custodian' } });
     assert.equal(r.statusCode, 400, 'the schema has no sealed_by, so this is a typo, not a bypass');
   });
@@ -112,7 +112,7 @@ describe('validation refuses rather than silently drops', () => {
     const k = await keys();
     const r = await app.inject({ method: 'POST', url: '/v1/seals',
       headers: bearer(k.agent),
-      payload: { aliases: person('r'), scope: 'refund', disposition: 'bind',
+      payload: { idempotency_key: 'idem-r', aliases: person('r'), scope: 'refund', disposition: 'bind',
         rule: { all: [] }, claw: CLAW } });
     assert.equal(r.statusCode, 400);
     assert.equal(r.json().error.code, 'invalid_rule');
@@ -140,7 +140,7 @@ describe('the full loop over HTTP', () => {
 
     const s = await app.inject({ method: 'POST', url: '/v1/seals',
       headers: bearer(k.agent),
-      payload: { aliases: person('loop'), scope: 'refund', disposition: 'bind',
+      payload: { idempotency_key: 'idem-loop', aliases: person('loop'), scope: 'refund', disposition: 'bind',
         rule: RULE, claw: CLAW } });
     assert.equal(s.statusCode, 201, 'a determination now exists');
     const sealed = s.json();
@@ -179,7 +179,7 @@ describe('the full loop over HTTP', () => {
       headers: bearer(k.agent), payload: { aliases: person('na'), facts: FACTS(false, 9) } });
     const s = await app.inject({ method: 'POST', url: '/v1/seals',
       headers: bearer(k.agent),
-      payload: { aliases: person('na'), scope: 'refund', disposition: 'bind',
+      payload: { idempotency_key: 'idem-na', aliases: person('na'), scope: 'refund', disposition: 'bind',
         rule: RULE, claw: CLAW } });
     assert.equal(s.statusCode, 200, 'the agent applied its rule and the rule did not hold');
     assert.equal(s.json().outcome, 'not_applicable');
@@ -190,12 +190,72 @@ describe('the full loop over HTTP', () => {
     const k = await keys();
     const s = await app.inject({ method: 'POST', url: '/v1/seals',
       headers: bearer(k.agent),
-      payload: { aliases: person('miss'), scope: 'refund', disposition: 'bind',
+      payload: { idempotency_key: 'idem-miss', aliases: person('miss'), scope: 'refund', disposition: 'bind',
         rule: RULE, claw: CLAW } });
     assert.equal(s.statusCode, 409);
     assert.equal(s.json().error.code, 'facts_not_attested');
     assert.deepEqual(s.json().error.detail.missing.sort(),
       ['carrier.delivered', 'prior_refunds_90d']);
+  });
+});
+
+describe('the contract fields', () => {
+  test('a seal without an idempotency key is refused at the schema', async () => {
+    const k = await keys();
+    const r = await app.inject({ method: 'POST', url: '/v1/seals',
+      headers: bearer(k.agent),
+      payload: { aliases: person('nk'), scope: 'refund', disposition: 'bind',
+        rule: RULE, claw: CLAW } });
+    assert.equal(r.statusCode, 400,
+      'an at-most-once guarantee a caller can forget to opt into is not a guarantee');
+    assert.equal(r.json().error.code, 'invalid_request');
+  });
+
+  test('a retried POST is 200 and replayed, not 201 and a second determination', async () => {
+    const k = await keys();
+    await app.inject({ method: 'POST', url: '/v1/attestations',
+      headers: bearer(k.agent), payload: { aliases: person('rp'), facts: FACTS() } });
+    const body = { idempotency_key: 'idem-rp', aliases: person('rp'), scope: 'refund',
+      disposition: 'bind', rule: RULE, claw: CLAW };
+
+    const first = await app.inject({ method: 'POST', url: '/v1/seals',
+      headers: bearer(k.agent), payload: body });
+    const again = await app.inject({ method: 'POST', url: '/v1/seals',
+      headers: bearer(k.agent), payload: body });
+
+    assert.equal(first.statusCode, 201);
+    assert.equal(again.statusCode, 200, '201 would claim something was created');
+    assert.equal(again.json().outcome, 'replayed');
+    assert.equal(again.json().seal_id, first.json().seal_id);
+  });
+
+  test('an unparseable expires_at is refused rather than treated as no expiry', async () => {
+    const k = await keys();
+    await app.inject({ method: 'POST', url: '/v1/attestations',
+      headers: bearer(k.agent), payload: { aliases: person('bx'), facts: FACTS() } });
+    const r = await app.inject({ method: 'POST', url: '/v1/seals',
+      headers: bearer(k.agent),
+      payload: { idempotency_key: 'idem-bx', expires_at: 'next tuesday',
+        aliases: person('bx'), scope: 'refund', disposition: 'bind', rule: RULE, claw: CLAW } });
+    assert.equal(r.statusCode, 400, 'silently binding forever is the worst reading of this');
+    assert.equal(r.json().error.code, 'invalid_request');
+  });
+
+  test('a cohort placement echoes the subject and never the band', async () => {
+    const k = await keys();
+    await app.inject({ method: 'POST', url: '/v1/attestations',
+      headers: bearer(k.agent), payload: { aliases: person('co'), facts: FACTS() } });
+    const d = await app.inject({ method: 'POST', url: '/v1/cohorts',
+      headers: bearer(k.operator), payload: { cohort: 'region', description: 'service region' } });
+    assert.equal(d.statusCode, 201);
+
+    const pl = await app.inject({ method: 'POST', url: '/v1/cohorts/placements',
+      headers: bearer(k.operator),
+      payload: { aliases: person('co'), cohort: 'region', band: 'north' } });
+    assert.equal(pl.statusCode, 201);
+    assert.match(pl.json().subject_id, /^sub_/);
+    assert.equal(JSON.stringify(pl.json()).includes('north'), false,
+      'echoing the band back would make this a read path for the value it blinds');
   });
 });
 
@@ -206,6 +266,9 @@ describe('scopes are enforced at the route', () => {
       ['POST', '/v1/seals/seal_x/claw', { evidence_sha256: hash64('e'), evidence_class: 'internal' }],
       ['GET', '/v1/insight/quadrant', undefined],
       ['POST', '/v1/keys', { authority: 'agent', scopes: ['seals:write'], label: 'x' }],
+      ['POST', '/v1/cohorts', { cohort: 'region' }],
+      ['POST', '/v1/cohorts/placements',
+        { aliases: person('sc'), cohort: 'region', band: 'north' }],
     ] as const) {
       const r = await app.inject({ method, url, headers: bearer(k.narrow),
         ...(payload ? { payload } : {}) });
@@ -237,7 +300,7 @@ describe('the measurements over HTTP', () => {
     await app.inject({ method: 'POST', url: '/v1/attestations',
       headers: bearer(k.agent), payload: { aliases: person('m1'), facts: FACTS() } });
     await app.inject({ method: 'POST', url: '/v1/seals', headers: bearer(k.agent),
-      payload: { aliases: person('m1'), scope: 'refund', disposition: 'bind',
+      payload: { idempotency_key: 'idem-m1', aliases: person('m1'), scope: 'refund', disposition: 'bind',
         rule: RULE, claw: CLAW } });
 
     const q = await app.inject({ method: 'GET', url: '/v1/insight/quadrant',

@@ -72,6 +72,7 @@ src/
 | `seal_facts` | What it rested on — **digest only**, plus source and admissibility |
 | `seal_events` | Append-only history. Clawing records, never deletes |
 | `pressure` | Refused attempts, per seal, per declared session |
+| `cohort_types`, `subject_cohorts` | Blinded cohort membership. **Write-only** — see below |
 | `api_keys`, `key_events` | Credentials and every mint and revoke |
 
 ## Three values, not two
@@ -86,7 +87,14 @@ That single decision produces the whole lifecycle for free:
 | still `TRUE` | `sealed` | nothing happened |
 | now `FALSE` | **`lapsed`** | reality withdrew its own support |
 | now `UNKNOWN` | **`tainted`** | ground gone, claim not disproved — still binding, surfaced, never auto-lifted |
+| grammar unsupported | **`tainted`** | this build cannot reproduce the semantics it was sealed under, so it does not re-decide |
+| past `expires_at` | **`expired`** | it ran out. Checked *before* the rule, so a lapse is never invented after the fact |
 | authority acted | `clawed` | a person overruled it, on the record |
+
+`expired` is deliberately not `lapsed`. Lapsed means the institution was wrong;
+expired means the determination simply ended. Collapsing them would count every
+expiry as an error and corrupt the quadrant, which is the measurement the
+product exists for.
 
 `lapsed` is the unbiased correction channel: the institution discovering it was
 wrong about somebody who never said a word. Every other measurement of wrongful
@@ -94,6 +102,36 @@ denial is computed only on the population that fought back.
 
 There is no `unless` mechanism separate from the rule. The rule *is* the
 falsification condition — re-evaluating it is what produces a lapse.
+
+## Three fields the contract requires, and why
+
+| Field | Required | Because |
+|---|---|---|
+| `idempotency_key` | yes | A retried POST must replay its determination, not create a second. For a `permit` with `max_uses: 1` that is the difference between one grant and two. Enforced by a unique index on `(workspace_id, idempotency_key)`, never by application logic. Reusing a key for a *different* rule is a 409, not a silent replay. |
+| `grammar_version` | recorded | Stamped on every seal. The reproducibility claim is "re-run the sealed rule and get the same answer", and that is unprovable unless the seal says which semantics produced it. |
+| `expires_at` | optional | Null means it stands until something ends it. A value already in the past is refused at seal time: it would bind nothing while reporting itself sealed. |
+
+## Cohorts: a table with no read path
+
+`subject_cohorts` exists so a workspace can ask *whose* errors go uncorrected —
+80.7% of appealed denials are overturned and 6.2% are appealed, and the 6.2%
+are not a random draw. That measurement is also the one thing here that could
+be turned into a discrimination tool, so the constraints are structural rather
+than procedural:
+
+- Membership is blinded like an alias, under a different domain prefix, so a
+  band can never be presented as an alias.
+- **There is no per-subject cohort read anywhere in this codebase.** Not gated,
+  not permissioned — not implemented. Nothing to abuse and nothing to subpoena.
+- A declared cohort may not be attested as a fact, and an attested fact name
+  may not be declared a cohort. A cohort therefore cannot reach the grammar and
+  cannot appear in a rule.
+- `cohorts:write` is deliberately absent from `AGENT_SCOPES`.
+- Erasure takes cohort membership with it — a row with no read path is exactly
+  the row an erasure quietly leaves behind.
+
+The aggregate query is not built yet. When it is, it returns null below a
+k-anonymity floor, the same discipline as every other measurement here.
 
 ## Two orders, and the difference matters
 
