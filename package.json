@@ -4,7 +4,7 @@
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
-  "description": "Crimp — a decision gate for AI agents. An agent submits the rule it is applying and the facts it applies to; Crimp derives the outcome, seals the rule before the outcome is known, and measures how often that rule was wrong.",
+  "description": "Crimp \u2014 a decision gate for AI agents. An agent submits the rule it is applying and the facts it applies to; Crimp derives the outcome, seals the rule before the outcome is known, and measures how often that rule was wrong.",
   "engines": {
     "node": ">=20.11"
   },
@@ -23,7 +23,8 @@
     "test:e2e": "node --test --test-concurrency=1 --import tsx test/e2e/*.test.ts",
     "coverage": "bash scripts/test.sh --coverage",
     "fuzz": "FUZZ_RUNS=${FUZZ_RUNS:-25000} tsx --test test/unit/fuzz-*.test.ts",
-    "audit": "npm audit --omit=dev --audit-level=high"
+    "audit": "npm audit --omit=dev --audit-level=high",
+    "mint": "tsx scripts/mint.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.2",
