@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2026 Deimos.MX
+// Copyright 2026 Deimos AI LLC
 /**
  * The one place `snake_case` on the wire meets `camelCase` in the domain.
  *

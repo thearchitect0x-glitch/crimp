@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright 2026 Deimos AI LLC -->
+
 # Code of conduct
 
 Ratchet is maintained by one person. This is short because a solo project

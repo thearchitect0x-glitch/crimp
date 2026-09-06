@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright 2026 Deimos AI LLC -->
+
 # Crimp
 
 **A decision gate for AI agents.** An agent does not tell Crimp what it decided —

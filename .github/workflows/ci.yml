@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
 name: CI
 on:
   push: { branches: [main] }
@@ -46,6 +48,13 @@ jobs:
         env: { FUZZ_RUNS: '20000' }
       - name: Production dependency audit
         run: npm run audit
+
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Every file declares its licence
+        uses: fsfe/reuse-action@v5
 
   dco:
     runs-on: ubuntu-latest

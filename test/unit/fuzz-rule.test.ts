@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2026 Deimos.MX
+// Copyright 2026 Deimos AI LLC
 /**
  * Property-based tests over the grammar — the one component whose semantics can
  * never be changed once a rule has been sealed under them.

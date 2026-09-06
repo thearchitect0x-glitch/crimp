@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2026 Deimos.MX
+// Copyright 2026 Deimos AI LLC
 /**
  * The app factory. Stateless, so it scales horizontally and is trivially
  * testable through `app.inject` without a socket.
