@@ -54,7 +54,14 @@ export function buildApp(): FastifyInstance {
     },
     genReqId: () => `req_${Math.random().toString(36).slice(2, 12)}`,
     // A caller's typo is refused rather than silently dropped.
-    ajv: { customOptions: { removeAdditional: false, coerceTypes: false } },
+    //
+    // allowUnionTypes is on for one schema that genuinely needs it: an attested
+    // fact's `value` really can be a boolean, an integer or a string, because
+    // the fact's declared `type` says which. Without this, ajv prints a
+    // strict-mode warning on every boot that reads like a stack trace and sends
+    // a newcomer looking for a failure that is not there. Found by the first
+    // restore rehearsal.
+    ajv: { customOptions: { removeAdditional: false, coerceTypes: false, allowUnionTypes: true } },
     bodyLimit: 256 * 1024,
     trustProxy: true,
   });

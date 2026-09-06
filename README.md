@@ -86,8 +86,21 @@ Then run it:
 ```bash
 cp .env.example .env          # the defaults work for local development
 npm run dev                   # control plane on :8788
-curl -s localhost:8788/healthz
 ```
+
+`npm run dev` does not exit — it prints `Server listening at http://127.0.0.1:8788`
+and then stays running. That is correct. Leave it, and open a second terminal:
+
+```bash
+curl -sS localhost:8788/healthz
+# {"ok":true}
+```
+
+`-sS` rather than `-s` deliberately: plain `-s` silences curl's own error as well
+as its progress meter, so a server that is not running produces a blank line and
+no explanation. With `-sS` you get
+`curl: (7) Failed to connect to localhost port 8788`, which tells you the first
+terminal is the thing to look at.
 
 ### The loop, end to end
 
@@ -102,7 +115,7 @@ Then, with `CRIMP_KEY` set to what that printed:
 
 ```bash
 # 1. Attest what you know. Crimp never fetches; you push.
-curl -s localhost:8788/v1/attestations -H "Authorization: Bearer $CRIMP_KEY" \
+curl -sS localhost:8788/v1/attestations -H "Authorization: Bearer $CRIMP_KEY" \
   -H 'content-type: application/json' -d '{
     "aliases": [{"type":"card_fp","value":"4242"}],
     "facts": [
@@ -111,7 +124,7 @@ curl -s localhost:8788/v1/attestations -H "Authorization: Bearer $CRIMP_KEY" \
     ]}'
 
 # 2. Submit the RULE you are applying. Note there is no field for an outcome.
-curl -s localhost:8788/v1/seals -H "Authorization: Bearer $CRIMP_KEY" \
+curl -sS localhost:8788/v1/seals -H "Authorization: Bearer $CRIMP_KEY" \
   -H 'content-type: application/json' -d '{
     "aliases": [{"type":"card_fp","value":"4242"}],
     "scope": "refund",
@@ -122,7 +135,7 @@ curl -s localhost:8788/v1/seals -H "Authorization: Bearer $CRIMP_KEY" \
     "claw": {"authority":"principal","evidence_floor":"receipt"}}'
 
 # 3. Ask whether an action is bound.
-curl -s localhost:8788/v1/bindings/check -H "Authorization: Bearer $CRIMP_KEY" \
+curl -sS localhost:8788/v1/bindings/check -H "Authorization: Bearer $CRIMP_KEY" \
   -H 'content-type: application/json' -d '{
     "aliases": [{"type":"card_fp","value":"4242"}], "scope": "refund.issue"}'
 ```
