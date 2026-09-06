@@ -14,7 +14,7 @@ one or it will not be answered at all.
 | Role | Holder | Responsibility |
 |---|---|---|
 | **Maintainer** | thearchitect0x-glitch | Merges changes, cuts releases, owns the roadmap, holds production credentials |
-| **Successor** | **UNFILLED — see below** | Assumes all maintainer duties on invocation of the continuity plan |
+| **Successor** | [@mlimano5](https://github.com/mlimano5) | Assumes all maintainer duties on invocation of the continuity plan |
 | **Security contact** | See [SECURITY.md](SECURITY.md) | Receives and triages vulnerability reports |
 
 ## Decisions
@@ -30,10 +30,27 @@ that grammar forever; there is no such thing as a small change to it.
 
 ## Continuity plan
 
-**Status: incomplete, and deliberately visible.** The bus factor is 1. The
-OpenSSF silver criteria require that the project continue with minimal
-interruption if any one person is lost, and that transitions complete within
-one week. Crimp does not meet that yet.
+**Status: two of three done, and the missing one is the one that matters.**
+
+A successor is named and holds the credentials. What has NOT happened is a
+rehearsal — nobody has restored this system from the runbooks without the
+maintainer in the room. Until that has been done once, the plan is a belief,
+and the whole premise of this product is the difference between a belief and a
+record. Claiming continuity here while the restore is untested would be exactly
+the kind of unfalsifiable assertion Crimp exists to refuse.
+
+| Step | Status |
+|---|---|
+| A named successor with a published role | **Done** — [@mlimano5](https://github.com/mlimano5), 5 September 2026 |
+| Credential escrow reachable without the maintainer | **Done** — successor holds credentials and is admin on the sibling Ratchet repository |
+| One rehearsed restore, from the runbooks alone | **Not done** |
+
+**Do the rehearsal now, while it is cheap.** Crimp has no production database,
+no deployment and no customers — restoring it today means cloning a repository
+and running migrations. Every commit makes that harder. See
+[docs/RESTORE_REHEARSAL.md](docs/RESTORE_REHEARSAL.md); the rule is that if the
+successor has to ask a question, the runbook is wrong and the runbook gets
+fixed rather than the question answered.
 
 What is already true:
 
@@ -45,18 +62,31 @@ What is already true:
 - The grammar and evaluator carry no external dependencies, so the component
   with permanent semantics has no supply chain that can rot underneath it.
 
-What is not, and what closing it requires — none of which is code:
+- The successor is admin on the sibling Ratchet repository and holds its
+  credentials, so the access path is one somebody has actually used rather than
+  one that exists on paper.
 
-1. **A named successor** with commit rights and a published handover note.
-2. **Credential escrow**: production database, DNS, registry and signing keys
-   held such that the successor can reach them without the maintainer.
-3. **One rehearsal.** An untested restore is a belief. The successor performs a
-   full restore into a scratch environment, from the runbooks alone, without
-   the maintainer answering questions.
+Still outstanding, and neither is code:
 
-Until all three are done this section says so, and the badge claim will say so
-too. A continuity plan that is documented but never exercised is the same
-failure mode as an audit log nobody reads.
+1. **Admin on this repository.** Crimp has no remote yet. The successor gets
+   admin at the same moment the remote is created, not afterwards.
+2. **The rehearsal.** Recorded here with its date and duration when it happens.
+
+A continuity plan that is documented but never exercised is the same failure
+mode as an audit log nobody reads.
+
+## Review
+
+Every change to `main` requires a pull request with an approving review from
+somebody other than its author, enforced by a branch ruleset with **no bypass
+actors** — the maintainer included.
+
+This is in place from the ninth commit, which is the whole reason to do it now.
+Ratchet adopted the same rule on 5 September 2026, by which point 244 of its 247
+commits had already reached `main` unreviewed; that history does not disappear
+and it complicates an otherwise clean answer to the OpenSSF gold
+`two_person_review` criterion. Crimp has eight such commits and can simply not
+have that problem.
 
 ## Changing this file
 

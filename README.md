@@ -82,7 +82,9 @@ npm run fuzz          # property-based; FUZZ_RUNS=100000 to go deeper
 
 | | |
 |---|---|
-| [Governance](GOVERNANCE.md) | Who decides — and the continuity plan, which is honestly incomplete |
+| [Governance](GOVERNANCE.md) | Who decides, who succeeds, and which part of continuity is still unrehearsed |
+| [Handover](docs/HANDOVER.md) | What to know in the first hour, and what must stay true |
+| [Restore rehearsal](docs/RESTORE_REHEARSAL.md) | The drill, and the rule that the maintainer does not help |
 | [Contributing](CONTRIBUTING.md) | DCO, coding standards, and the testing policy |
 | [Security policy](SECURITY.md) | How to report a vulnerability, and what is out of scope |
 | [Code of conduct](CODE_OF_CONDUCT.md) | What is expected |
