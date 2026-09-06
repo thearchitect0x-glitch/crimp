@@ -73,6 +73,7 @@ src/
 | `seal_events` | Append-only history. Clawing records, never deletes |
 | `pressure` | Refused attempts, per seal, per declared session |
 | `cohort_types`, `subject_cohorts` | Blinded cohort membership. **Write-only** — see below |
+| `subject_events`, `alias_carve_outs` | Merges, refused merges, and the carve-outs that correct them |
 | `api_keys`, `key_events` | Credentials and every mint and revoke |
 
 ## Three values, not two
@@ -102,6 +103,58 @@ denial is computed only on the population that fought back.
 
 There is no `unless` mechanism separate from the rule. The rule *is* the
 falsification condition — re-evaluating it is what produces a lapse.
+
+## Who is this? — resolution, and the union it must not perform
+
+One rule, and it is the one the subject graph is shaped around:
+
+> **A write resolves identity from merge-capable aliases alone. A read looks at
+> everything.**
+
+A weak alias — a device, an IP, a household — must be able to *carry* a
+determination, or a refusal is escaped by presenting a different phone. It must
+never be able to *create* one, or presenting your own card alongside a shared
+tablet unions you with whoever else uses it. Those are different questions and
+they get different code paths: `resolveForWrite` and `resolveForRead` in
+`src/domain/subject.ts`.
+
+Aliases still attach freely on a write, and `ON CONFLICT DO NOTHING` is what
+keeps that safe: an alias already bound to somebody stays bound to them. The
+shared tablet does not move, so its owner is not dragged along.
+
+| | Decides identity | Attaches | May cause a union |
+|---|---|---|---|
+| `strong` — card fingerprint, government id | yes | yes | yes |
+| `medium` — email, phone | only if the workspace lowers `merge_threshold` | yes | only then |
+| `weak` — device, IP, household | never | yes, if free | **never, at any setting** |
+
+When a write finds several subjects it refuses with `merge_required` and names
+the endpoint. It does not guess, and it does not union implicitly.
+
+## Merge, and the carve-out that corrects it
+
+`POST /v1/subjects/merge` is the most dangerous operation in the system: a union
+is monotone, so a wrong one is permanent. Four bounds, none of them a policy
+document:
+
+1. **Every** subject drawn in must be reached by a merge-capable alias — not
+   just "the presentation contains one somewhere".
+2. At most `MAX_SUBJECTS_PER_MERGE` subjects, and at most
+   `MAX_ALIASES_PER_SUBJECT` in the union.
+3. `principal` authority *and* evidence dominating `internal`. An agent's own
+   word — `self`, `signed` — can never union two people.
+4. A standing carve-out blocks the merge that would walk around it.
+
+The body takes aliases and never subject ids: a caller that could name the
+subjects could union two it never demonstrated any connection to.
+
+**A refused merge is recorded, on its own connection.** The refusal is written
+outside the transaction that then rolls back, because otherwise "we record
+refusals" is a comment rather than a fact. A workspace being probed for
+poisonable subjects is visible precisely in the attempts that failed.
+
+`POST /v1/subjects/carve-out` is the only correction, and it is deliberately
+weaker than an undo — see ASSURANCE_CASE.md §4 for exactly how weak.
 
 ## Three fields the contract requires, and why
 

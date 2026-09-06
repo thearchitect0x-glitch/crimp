@@ -21,6 +21,7 @@
 import { withTx } from '../db/pool.js';
 import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
+import { resolveForWrite } from './subject.js';
 import { FACT_TYPES, type FactType } from './rule.js';
 import { requireScope, type Principal } from './auth.js';
 
@@ -73,28 +74,8 @@ export async function attest(p: Principal, args: {
   }
 
   return withTx(async (tx) => {
-    const { rows: existing } = await tx.query<{ subject_id: string }>(
-      `SELECT DISTINCT subject_id FROM subject_aliases
-        WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-          SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)]);
-    if (existing.length > 1) {
-      throw new ApiError(409, 'merge_required',
-        'These aliases identify several subjects; resolve the merge before attesting.');
-    }
-
-    let subjectId = existing[0]?.subject_id;
-    if (subjectId === undefined) {
-      subjectId = `sub_${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`;
-      await tx.query('INSERT INTO subjects (id, workspace_id) VALUES ($1,$2)',
-        [subjectId, workspaceId]);
-    }
-    await tx.query(
-      `INSERT INTO subject_aliases (workspace_id, alias_type, blinded, subject_id, merge_strength)
-       SELECT $1, t, b, $4, s FROM UNNEST($2::text[], $3::text[], $5::text[]) AS u(t,b,s)
-       ON CONFLICT (workspace_id, alias_type, blinded) DO NOTHING`,
-      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded), subjectId,
-        aliases.map((a) => a.strength)]);
+    const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
+      { doing: 'attesting a fact' });
 
     // A declared cohort may not be attested as a fact. The guarantee cohorts
     // rest on is that they cannot reach the grammar, and a fact can — so the

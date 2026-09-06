@@ -34,6 +34,7 @@ import { withTx } from '../db/pool.js';
 import { ApiError } from '../lib/errors.js';
 import { blindAliases, blindBand, type MergeStrength } from '../lib/blind.js';
 import { requireScope, type Principal } from './auth.js';
+import { resolveForWrite } from './subject.js';
 
 const COHORT_NAME = /^[a-z][a-z0-9_]{0,30}$/;
 const MAX_BAND_LENGTH = 256;
@@ -109,23 +110,11 @@ export async function placeInCohort(p: Principal, args: {
         `Cohort "${args.cohort}" is not declared in this workspace.`, { cohort: args.cohort });
     }
 
-    const { rows: found } = await tx.query<{ subject_id: string }>(
-      `SELECT DISTINCT subject_id FROM subject_aliases
-        WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-          SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)]);
-    if (found.length > 1) {
-      throw new ApiError(409, 'merge_required',
-        'These aliases identify several subjects; resolve the merge before placing.');
-    }
     // No subject is created here. A cohort placement is a statement about
-    // somebody the system already knows; creating a subject from one would
+    // somebody the system already knows; creating one from a placement would
     // make this table the way people enter Crimp, which is backwards.
-    const subjectId = found[0]?.subject_id;
-    if (subjectId === undefined) {
-      throw new ApiError(404, 'unknown_subject',
-        'No subject matches these aliases. Attest something about them first.');
-    }
+    const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
+      { create: false, doing: 'placing a subject in a cohort' });
 
     await tx.query(
       `INSERT INTO subject_cohorts (workspace_id, subject_id, cohort, band) VALUES ($1,$2,$3,$4)
