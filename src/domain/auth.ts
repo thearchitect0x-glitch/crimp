@@ -42,6 +42,11 @@ export const SCOPES = [
   // configuration act, and an agent that could do it could shape the very
   // measurement that exists to catch it.
   'cohorts:write',
+  // Merge and its carve-out share one scope. A key that can union two people
+  // and cannot separate them is worse than a key that can do neither. Also
+  // absent from AGENT_SCOPES, and gated on `principal` on top of the scope:
+  // a union is permanent, and permanence is not something a scope conveys.
+  'subjects:merge',
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 
