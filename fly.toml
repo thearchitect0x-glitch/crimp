@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+#
+# Two processes from one image. Read the worker note before changing anything.
+
+app = "crimp"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  api    = "node dist/api/server.js"
+  worker = "node dist/worker/main.js"
+
+[env]
+  PORT = "8788"
+  # The API migrates on boot behind a transaction-scoped advisory lock, so
+  # several instances may start at once. The worker defers to it rather than
+  # racing, and reports any pending migration through /readyz instead.
+  MIGRATE_ON_BOOT = "false"
+
+[http_service]
+  internal_port = 8788
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["api"]
+
+  [[http_service.checks]]
+    # Liveness. Deliberately does not touch the database: a probe that checks a
+    # dependency turns an outage into a restart loop across every replica.
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "2s"
+
+  [[http_service.checks]]
+    # Readiness. This one does check the database, and refuses traffic while a
+    # migration is pending.
+    grace_period = "10s"
+    interval = "10s"
+    method = "GET"
+    path = "/readyz"
+    timeout = "5s"
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE WORKER MUST NOT AUTO-STOP. Read this before "optimising" it.
+#
+# It is the correction channel. A determination lapses when the rule behind it
+# stops holding — no appeal, no authority, nobody having won an argument — and
+# that is the only error signal that does not require the affected person to
+# have the resources to fight. About nine in ten Medicaid denials are never
+# appealed, so it is the only signal that sees them at all.
+#
+# It has no inbound requests, so any autoscaler measuring HTTP traffic will
+# conclude it is idle and suspend it. Nothing breaks visibly. Determinations
+# simply stop being corrected, `sweepLag` climbs, and everyone finds out from
+# a customer. Expiry is time-driven — nothing is attested when a determination
+# merely runs out — so there is no request to wake it either.
+#
+# It is also a condition of enhanced federal funding: 42 CFR 433.112(b)(15)
+# requires evidence that outcomes are met on an ongoing basis, and no reading
+# of "ongoing" survives a process the platform is free to stop.
+# ─────────────────────────────────────────────────────────────────────────
+[[vm]]
+  processes = ["worker"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+[[vm]]
+  processes = ["api"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
