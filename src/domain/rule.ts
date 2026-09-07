@@ -225,9 +225,20 @@ export function canonicalRule(rule: Rule): string {
     if ('any' in node) return { any: node.any.map(norm).map(canonicalize).sort().map((s) => JSON.parse(s)) };
     if ('not' in node) return { not: norm(node.not) };
     const c = node as Comparison;
-    // Set members are compared as a set, so their order carries no meaning.
+    // Set members are compared as a set, so neither their order NOR their
+    // multiplicity carries meaning. Sorting alone was not enough: `in ["CA"]`
+    // and `in ["CA","CA"]` are the same rule and hashed differently, so two
+    // identical policies produced two different determinations and neither
+    // could be found from the other.
+    //
+    // Caught by the published conformance vectors, which were derived from the
+    // specification by an independent implementation rather than from this
+    // code. It is also the last moment this is free to fix: canonical form
+    // decides the rule hash, so changing it after the first real determination
+    // would silently orphan every determination sealed before the change.
     const value = Array.isArray(c.value)
-      ? [...c.value].sort((a, b) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))
+      ? [...new Set(c.value.map((m) => JSON.stringify(m)))]
+        .sort().map((m) => JSON.parse(m) as number | string)
       : c.value;
     return { fact: c.fact, op: c.op, value };
   };

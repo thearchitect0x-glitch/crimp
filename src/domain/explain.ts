@@ -65,6 +65,9 @@ export interface Reason {
    *
    * It is also the invariant that makes over-reporting detectable — see
    * ACCURACY in test/unit/fuzz-explain.test.ts.
+   *
+   * A consumer may check it independently: it is the PARITY of `not` segments
+   * in `path`, so `not.not.all[0]` is direct and `not.all[0]` is negated.
    */
   polarity: 'direct' | 'negated';
 }
@@ -112,6 +115,18 @@ export function reasons(rule: Rule, facts: Facts, target?: Truth): Reason[] {
   return walk(rule, facts, want, '', false);
 }
 
+/**
+ * Append one segment to a path.
+ *
+ * Segments are joined with `.` and never concatenated. The first version built
+ * `${path}${kind}[${i}]` with no separator, so a nested clause landed at
+ * `any[0]not.not` instead of `any[0].not.not` — which makes the polarity
+ * unverifiable by a consumer counting `not` segments, and disagrees with the
+ * example in SPEC.md §7.1. Found by fuzzing, not by the conformance vectors,
+ * because those only nested `not` at the root.
+ */
+const join = (path: string, seg: string): string => (path === '' ? seg : `${path}.${seg}`);
+
 function walk(rule: Rule, facts: Facts, want: Truth, path: string, negated: boolean): Reason[] {
   if ('all' in rule || 'any' in rule) {
     const kind = 'all' in rule ? 'all' : 'any';
@@ -120,7 +135,7 @@ function walk(rule: Rule, facts: Facts, want: Truth, path: string, negated: bool
     const deciding = kind === 'all' ? FALSE : TRUE;
     const out: Reason[] = [];
     children.forEach((child, i) => {
-      const at = `${path}${kind}[${i}]`;
+      const at = join(path, `${kind}[${i}]`);
       const t = evaluate(child, facts);
       // A decided outcome is explained only by the children that decided it.
       // An undecided one is explained by the children that withheld. Otherwise
@@ -139,14 +154,14 @@ function walk(rule: Rule, facts: Facts, want: Truth, path: string, negated: bool
     });
     return out;
   }
-  if ('not' in rule) return walk(rule.not, facts, negate(want), `${path}not.`, !negated);
+  if ('not' in rule) return walk(rule.not, facts, negate(want), join(path, 'not'), !negated);
 
   const c = rule as Comparison;
   const t = evaluate(c, facts);
   // A leaf that does not carry the truth being explained is not a reason for it.
   return t === want
     ? [{
-      path: path || 'rule', fact: c.fact, op: c.op, value: c.value, truth: t,
+      path: path === '' ? 'rule' : path, fact: c.fact, op: c.op, value: c.value, truth: t,
       polarity: negated ? 'negated' as const : 'direct' as const,
     }]
     : [];

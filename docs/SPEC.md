@@ -283,6 +283,31 @@ Stated because a specification that only lists its strengths is marketing.
 - **It does not prevent absence being asserted as fact.** §3.2. It makes it
   attributable, which is a different and smaller claim.
 
+## 10a · Conformance
+
+Machine-readable vectors: `spec/vectors/vectors.json`. Plain JSON, no
+dependency on any implementation.
+
+An implementation claiming conformance MUST pass all of them. They cover
+canonical form and rule hashes (§5), value commitments (§6), three-valued
+evaluation (§4), reason sufficiency, accuracy and path construction (§7.1), and
+the rules the grammar must refuse (§3).
+
+Writing them found two defects in the reference implementation on the first
+run, and a third an hour later:
+
+- set members were sorted but **not de-duplicated**, so `in ["CA"]` and
+  `in ["CA","CA"]` — the same rule — produced different hashes and therefore
+  two determinations neither of which could be found from the other
+- a reason path under `not` carried a **dangling separator** (`not.`)
+- path segments were **concatenated without a separator** when nested, giving
+  `any[0]not.not` instead of `any[0].not.not`, which makes polarity
+  unverifiable by a consumer
+
+Two of those change what a determination *is*, and canonical form decides the
+rule hash — so they were free to fix only because no determination has been
+sealed in production yet. **After the first one, they would not have been.**
+
 ## 11 · Reference implementation
 
 Crimp — `crimpgate.com`. Apache-2.0.

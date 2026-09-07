@@ -43,6 +43,13 @@ jobs:
         run: npm run test:e2e
         env:
           DATABASE_URL: postgres://crimp:crimp@localhost:5434/crimp
+      - name: Conformance vectors
+        # The published vectors were derived from docs/SPEC.md by an
+        # independent implementation, not from this code. They are in CI so
+        # that a change to canonical form or reason paths — either of which
+        # silently changes what a determination IS — cannot merge without
+        # somebody looking at the vector it broke.
+        run: npm run conformance
       - name: Property-based tests
         run: npm run fuzz
         env: { FUZZ_RUNS: '20000' }

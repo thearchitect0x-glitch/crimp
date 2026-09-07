@@ -169,7 +169,7 @@ describe('fuzz: a reason set determines the outcome', () => {
         // PARITY, not presence. `not(not(x))` carries two `not.` segments and
         // is direct — a consumer checking for the substring would state the
         // reason backwards. Found by this property on its first run.
-        const depth = (x.path.match(/not\./g) ?? []).length;
+        const depth = x.path.split('.').filter((seg) => seg === 'not').length;
         assert.equal(x.polarity === 'negated', depth % 2 === 1,
           'polarity must be the parity of the path, so a consumer can check it themselves');
       }
