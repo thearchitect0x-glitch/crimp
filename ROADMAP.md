@@ -63,7 +63,9 @@ below.
   is why a volume floor belongs only on inferential statistics and never on a
   census. Seeded with EE5 (fully automated determinations), EE9 (terminations
   for notice non-response) and EE13 (ex parte redeterminations).
-- **Deployment.** There is none. When it exists, `BLIND_SECRET` must be in
+- **Deployment.** The image, the process topology and the probes exist and are
+  verified locally; nothing is running yet. What remains is an account, a
+  database and secrets in escrow. When it exists, `BLIND_SECRET` must be in
   escrow before the first determination is sealed: a blinded alias cannot be
   re-derived, so losing that secret does not degrade the system, it orphans
   every determination in it permanently.
