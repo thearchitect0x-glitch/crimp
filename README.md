@@ -29,6 +29,12 @@ call.
 rule, and a bad rule is visible, reviewable and reproducible in a way a bad
 conclusion never is.
 
+**Crimp reports; it does not authorise.** It holds no credentials, has no
+outbound access and executes nothing, so "you may not proceed" is a claim it is
+not entitled to make. `lookup` returns the determinations that stand and the
+caller decides what to do with them. An empty list means nothing has been
+decided — it does not mean allowed.
+
 **A decision can withdraw its own support.** Re-evaluate the sealed rule later
 against fresh attestations. If it no longer holds, the seal *lapses* — no
 authority, no appeal, nobody won an argument. A fact changed.
@@ -134,8 +140,8 @@ curl -sS localhost:8788/v1/seals -H "Authorization: Bearer $CRIMP_KEY" \
       {"fact":"prior_refunds_90d","op":"lt","value":3}]},
     "claw": {"authority":"principal","evidence_floor":"receipt"}}'
 
-# 3. Ask whether an action is bound.
-curl -sS localhost:8788/v1/bindings/check -H "Authorization: Bearer $CRIMP_KEY" \
+# 3. Ask what has been determined. Crimp reports; it does not authorise.
+curl -sS localhost:8788/v1/determinations/lookup -H "Authorization: Bearer $CRIMP_KEY" \
   -H 'content-type: application/json' -d '{
     "aliases": [{"type":"card_fp","value":"4242"}], "scope": "refund.issue"}'
 ```

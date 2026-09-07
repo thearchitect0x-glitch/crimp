@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { closePool, getPool } from '../../src/db/pool.js';
 import { migrate } from '../../src/db/migrate.js';
 import { attest } from '../../src/domain/attest.js';
-import { seal, check, reevaluate } from '../../src/domain/seal.js';
+import { seal, lookup, reevaluate } from '../../src/domain/seal.js';
 import { sourceReliability, quadrant, cliffs, VOLUME_FLOOR } from '../../src/domain/insight.js';
 import { actors, STRENGTHS, type Actors } from '../helpers.js';
 import type { ClawRule } from '../../src/domain/authority.js';
@@ -43,7 +43,7 @@ async function lapse(A: Actors, tag: string, source = 'carrier_api') {
 async function press(A: Actors, tag: string, sessions: number, per = 4) {
   for (let s = 0; s < sessions; s++) {
     for (let i = 0; i < per; i++) {
-      await check(A.agent, { aliases: who(tag), scope: 'refund.issue',
+      await lookup(A.agent, { aliases: who(tag), scope: 'refund.issue',
         session: `${s}`.repeat(32).slice(0, 32).replace(/[^0-9a-f]/g, 'a') }, STRENGTHS);
     }
   }

@@ -44,7 +44,7 @@ src/
   domain/            business logic; no HTTP types cross into here
     rule.ts            THE GRAMMAR. Validation, canonical form, introspection.
     evaluate.ts        Three-valued Kleene evaluation. Total, no clock.
-    seal.ts            seal / check / claw / re-evaluate
+    seal.ts            seal / lookup / exercise / claw / re-evaluate
     attest.ts          the customer pushes facts; Crimp never fetches
     lifecycle.ts       classify(), pressure tiers, hardening + its safety valve
     authority.ts       the total order, claw-rule validation, tighten-only
@@ -109,6 +109,28 @@ directions. The consequence that matters falls out of the order rather than
 being special-cased: neither `self` nor `signed` dominates `receipt`, so a claw
 demanding disinterested evidence **cannot be satisfied by the party the
 determination is against talking about itself.**
+
+## Reporting, not authorising
+
+`lookup` answers *what has been determined about this subject in this scope*. It
+returns the determinations that stand and nothing else — no verdict, no boolean,
+no token.
+
+An earlier design returned `{ bound: true|false }` plus a scoped artifact for a
+downstream gate to require. That described a system Crimp is not: it holds no
+credentials, has no outbound access and executes nothing, so *"you may not
+proceed"* is a claim it is not entitled to make. It also described, fairly
+precisely, the pre-action authorization category that OPA, Cedar, the OAP draft
+and at least one granted patent already occupy.
+
+What Crimp has that none of them do is the determination itself. They evaluate
+policy written in advance; none has a runtime determination to evaluate against.
+Reporting rather than gating is both the honest description and the one that
+makes Crimp compose with those systems instead of duplicating them.
+
+`exercise` is separate because spending a permit is a mutation. Asking a
+question must never cost you the answer — an earlier version consumed a use on
+every check, so finding out whether a one-time grant was available destroyed it.
 
 ## Trust boundaries
 

@@ -142,8 +142,12 @@ supplies it, and a caller that lies only misleads itself — but the distinct-
 session count that promotes a seal from `persistent` to `probing` is only as
 honest as the caller.
 
-**There are no signed releases yet**, and no deployment. Nothing has been
-released to verify.
+**There is no deployment**, and nothing has been released yet — the release
+machinery exists and is keyless, but no tag has been cut.
+
+**Crimp cannot stop anything.** It reports determinations; enforcement belongs
+to the caller. A caller that ignores a standing refusal is not prevented from
+acting, and no part of this system claims otherwise.
 
 **Rate limiting is per-key and approximate**, held in process memory. Multiple
 instances do not share a counter.

@@ -3,15 +3,15 @@
 import type { FastifyInstance } from 'fastify';
 import { authorized } from '../app.js';
 import {
-  attestBody, sealBody, checkBody, clawBody, mintKeyBody, windowQuery, errors,
+  attestBody, sealBody, lookupBody, clawBody, mintKeyBody, windowQuery, errors,
 } from '../schemas.js';
 import {
-  clawFromWire, factFromWire, sealToWire, checkToWire,
+  clawFromWire, factFromWire, sealToWire, lookupToWire,
   sourcesToWire, quadrantToWire, cliffsToWire, keyToWire,
   type WireClaw, type WireFact,
 } from '../serialize.js';
 import { attest } from '../../domain/attest.js';
-import { seal, check, claw } from '../../domain/seal.js';
+import { seal, lookup, exercise, claw } from '../../domain/seal.js';
 import { sourceReliability, quadrant, cliffs } from '../../domain/insight.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
@@ -66,16 +66,25 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return sealToWire(out);
   });
 
-  /* ── The hot path ────────────────────────────────────────────────── */
+  /* ── The hot path: a query ───────────────────────────────────────── */
   app.post<{ Body: { aliases: unknown; scope: string; session?: string } }>(
-    '/bindings/check', { schema: { body: checkBody, response: errors } }, async (req) => {
-      const p = await authorized(req, 'bindings:check');
-      return checkToWire(await check(p, {
+    '/determinations/lookup', { schema: { body: lookupBody, response: errors } }, async (req) => {
+      const p = await authorized(req, 'determinations:read');
+      return lookupToWire(await lookup(p, {
         aliases: req.body.aliases,
         scope: req.body.scope,
         ...(req.body.session !== undefined ? { session: req.body.session } : {}),
       }, await loadStrengths(p.workspaceId)));
     });
+
+  // Spending a permit is a mutation and gets its own call. Asking a question
+  // should never cost you the answer.
+  app.post<{ Params: { id: string } }>('/seals/:id/exercise', {
+    schema: { response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'permits:exercise');
+    return exercise(p, { sealId: req.params.id });
+  });
 
   /* ── Claw ────────────────────────────────────────────────────────── */
   app.post<{

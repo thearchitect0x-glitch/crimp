@@ -51,7 +51,7 @@ const CLAW = { authority: 'operator', evidence_floor: 'internal' };
 describe('the door', () => {
   test('every route refuses an absent, malformed or bogus key the same way', async () => {
     for (const headers of [{}, bearer(''), bearer('garbage'), { authorization: 'Basic x' }]) {
-      const r = await app.inject({ method: 'POST', url: '/v1/bindings/check',
+      const r = await app.inject({ method: 'POST', url: '/v1/determinations/lookup',
         headers, payload: { aliases: person('x'), scope: 'refund' } });
       assert.equal(r.statusCode, 401, JSON.stringify(headers));
       assert.equal(r.json().error.code, 'unauthorized');
@@ -73,7 +73,7 @@ describe('the door', () => {
 
   test('API responses are never cacheable by a shared proxy', async () => {
     const k = await keys();
-    const r = await app.inject({ method: 'POST', url: '/v1/bindings/check',
+    const r = await app.inject({ method: 'POST', url: '/v1/determinations/lookup',
       headers: bearer(k.agent), payload: { aliases: person('cache'), scope: 'refund' } });
     assert.equal(r.headers['cache-control'], 'no-store', 'responses are per-key');
   });
@@ -88,7 +88,7 @@ describe('the door', () => {
 describe('validation refuses rather than silently drops', () => {
   test('an unknown body field is rejected, not ignored', async () => {
     const k = await keys();
-    const r = await app.inject({ method: 'POST', url: '/v1/bindings/check',
+    const r = await app.inject({ method: 'POST', url: '/v1/determinations/lookup',
       headers: bearer(k.agent),
       payload: { aliases: person('v'), scope: 'refund', cooling_off_second: 60 } });
     assert.equal(r.statusCode, 400,
@@ -121,7 +121,7 @@ describe('validation refuses rather than silently drops', () => {
 
   test('an undeclared alias type is refused with its own code', async () => {
     const k = await keys();
-    const r = await app.inject({ method: 'POST', url: '/v1/bindings/check',
+    const r = await app.inject({ method: 'POST', url: '/v1/determinations/lookup',
       headers: bearer(k.agent),
       payload: { aliases: [{ type: 'browser_hash', value: 'x' }], scope: 'refund' } });
     assert.equal(r.statusCode, 400);
@@ -150,13 +150,15 @@ describe('the full loop over HTTP', () => {
     assert.equal(Object.keys(sealed).some((x) => /[A-Z]/.test(x)), false,
       'nothing camelCase escapes onto the wire');
 
-    const c = await app.inject({ method: 'POST', url: '/v1/bindings/check',
+    const c = await app.inject({ method: 'POST', url: '/v1/determinations/lookup',
       headers: bearer(k.agent),
       payload: { aliases: person('loop'), scope: 'refund.issue' } });
     assert.equal(c.statusCode, 200);
-    assert.equal(c.json().bound, true);
-    assert.equal(c.json().reason, 'bound.refusal_standing');
-    assert.equal(c.json().binding_token, undefined);
+    const d = c.json().determinations;
+    assert.equal(d.length, 1);
+    assert.equal(d[0].code, 'bind.refusal_standing');
+    assert.equal(c.json().bound, undefined, 'no verdict — Crimp reports, the caller decides');
+    assert.equal(c.json().binding_token, undefined, 'and issues no permission artifact');
 
     const bad = await app.inject({ method: 'POST', url: `/v1/seals/${sealed.seal_id}/claw`,
       headers: bearer(k.agent),
@@ -223,7 +225,7 @@ describe('scopes are enforced at the route', () => {
     assert.equal(r.statusCode, 204,
       'a leaked key must be retirable by whatever noticed the leak');
 
-    const after = await app.inject({ method: 'POST', url: '/v1/bindings/check',
+    const after = await app.inject({ method: 'POST', url: '/v1/determinations/lookup',
       headers: bearer(self.key), payload: { aliases: person('x'), scope: 'refund' } });
     assert.equal(after.statusCode, 401);
   });

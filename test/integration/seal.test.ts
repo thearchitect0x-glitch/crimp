@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { closePool, getPool } from '../../src/db/pool.js';
 import { migrate } from '../../src/db/migrate.js';
 import { attest, eraseSubject } from '../../src/domain/attest.js';
-import { seal, check, claw, reevaluate, pressureOf } from '../../src/domain/seal.js';
+import { seal, lookup, exercise, claw, reevaluate, pressureOf, CODES } from '../../src/domain/seal.js';
 import { tierOf } from '../../src/domain/lifecycle.js';
 import { ApiError } from '../../src/lib/errors.js';
 import { actors, person, countEvents, stateOf, ageSeal, hash64, STRENGTHS,
@@ -112,14 +112,13 @@ describe('seal', () => {
   });
 });
 
-describe('check', () => {
-  test('a subject nobody has decided about is not bound', async () => {
+describe('lookup', () => {
+  test('a subject nobody has decided about yields nothing', async () => {
     const A = await actors();
-    const ws = A.ws;
-    const out = await check(A.agent, { aliases: person('b0'), scope: 'refund.issue' }, STRENGTHS);
-    assert.equal(out.bound, false);
-    assert.equal(out.reason, 'no_determination');
-    assert.ok(out.bindingToken, 'the gate needs a token when nothing binds');
+    const out = await lookup(A.agent, { aliases: person('b0'), scope: 'refund.issue' }, STRENGTHS);
+    assert.deepEqual(out.determinations, [],
+      'empty means nothing has been decided — it does not mean allowed, and there '
+      + 'is no token because Crimp does not authorise anything');
   });
 
   test('a bind refuses, and a broader seal covers a narrower action', async () => {
@@ -129,11 +128,11 @@ describe('check', () => {
     await seal(A.agent, { aliases: person('b1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
-    const narrow = await check(A.agent, { aliases: person('b1'),
+    const narrow = await lookup(A.agent, { aliases: person('b1'),
       scope: 'refund.issue.goodwill' }, STRENGTHS);
-    assert.equal(narrow.bound, true);
-    assert.equal(narrow.reason, 'bound.refusal_standing');
-    assert.equal(narrow.bindingToken, undefined, 'no token is issued when bound');
+    assert.equal(narrow.determinations.length, 1);
+    assert.equal(narrow.determinations[0]?.code, CODES.refusalStanding);
+    assert.equal(narrow.determinations[0]?.scope, 'refund', 'reports which seal reaches it');
   });
 
   test('a narrow seal does not bind a broader action', async () => {
@@ -142,8 +141,9 @@ describe('check', () => {
     await setup(A, 'b2');
     await seal(A.agent, { aliases: person('b2'), scope: 'refund.issue.goodwill',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
-    const broad = await check(A.agent, { aliases: person('b2'), scope: 'refund' }, STRENGTHS);
-    assert.equal(broad.bound, false, 'refusing one way of refunding is not refusing all of them');
+    const broad = await lookup(A.agent, { aliases: person('b2'), scope: 'refund' }, STRENGTHS);
+    assert.deepEqual(broad.determinations, [],
+      'refusing one way of refunding is not refusing all of them');
   });
 
   test('a fresh alias presenting a known card is still bound', async () => {
@@ -153,30 +153,51 @@ describe('check', () => {
     await seal(A.agent, { aliases: person('b3'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
-    const out = await check(A.agent, { scope: 'refund.issue', aliases: [
+    const out = await lookup(A.agent, { scope: 'refund.issue', aliases: [
       { type: 'card_fp', value: 'card-b3' },
       { type: 'email', value: 'brand-new@example.com' },
     ] }, STRENGTHS);
-    assert.equal(out.bound, true, 'you cannot get a new answer by getting a new email address');
+    assert.equal(out.determinations[0]?.code, CODES.refusalStanding,
+      'you cannot get a new answer by getting a new email address');
   });
 
-  test('a permit is spent exactly max_uses times', async () => {
+  test('ASKING about a permit does not spend it', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'b4');
     const s = await seal(A.operator, { aliases: person('b4'), scope: 'goodwill.credit',
       disposition: 'permit', rule: RULE, maxUses: 1,
       claw: { ...CLAW, authority: 'principal' } }, STRENGTHS);
 
-    const first = await check(A.agent, { aliases: person('b4'), scope: 'goodwill.credit' }, STRENGTHS);
-    assert.equal(first.bound, false);
-    assert.equal(first.reason, 'permit.exercised');
+    // An earlier design consumed a use on every check, so a caller finding out
+    // whether a one-time grant was available destroyed it in the process.
+    for (let i = 0; i < 5; i++) {
+      const q = await lookup(A.agent, { aliases: person('b4'), scope: 'goodwill.credit' }, STRENGTHS);
+      assert.equal(q.determinations[0]?.code, CODES.permitAvailable);
+      assert.equal(q.determinations[0]?.remaining, 1, 'still one, after five questions');
+    }
+    assert.equal(await countEvents(s.sealId!, 'exercised'), 0);
+  });
 
-    const second = await check(A.agent, { aliases: person('b4'), scope: 'goodwill.credit' }, STRENGTHS);
-    assert.equal(second.bound, true);
-    assert.equal(second.reason, 'permit.already_exercised',
+  test('a permit is spent exactly max_uses times, and only when spent on purpose', async () => {
+    const A = await actors();
+    await setup(A, 'b4b');
+    const s = await seal(A.operator, { aliases: person('b4b'), scope: 'goodwill.credit',
+      disposition: 'permit', rule: RULE, maxUses: 1,
+      claw: { ...CLAW, authority: 'principal' } }, STRENGTHS);
+
+    const first = await exercise(A.agent, { sealId: s.sealId! });
+    assert.equal(first.exercised, true);
+    assert.equal(first.remaining, 0);
+
+    const second = await exercise(A.agent, { sealId: s.sealId! });
+    assert.equal(second.exercised, false);
+    assert.equal(second.code, CODES.permitExhausted,
       'the same one-time grant issued twice is the loss this prevents');
     assert.equal(await countEvents(s.sealId!, 'exercised'), 1);
+
+    const q = await lookup(A.agent, { aliases: person('b4b'), scope: 'goodwill.credit' }, STRENGTHS);
+    assert.equal(q.determinations[0]?.code, CODES.permitExhausted);
+    assert.equal(q.determinations[0]?.remaining, 0);
   });
 
   test('concurrent callers cannot both win the last use', async () => {
@@ -187,10 +208,11 @@ describe('check', () => {
       disposition: 'permit', rule: RULE, maxUses: 1,
       claw: { ...CLAW, authority: 'principal' } }, STRENGTHS);
 
+    const { rows } = await getPool().query<{ id: string }>(
+      `SELECT id FROM seals WHERE workspace_id = $1 AND disposition = 'permit'`, [A.ws]);
     const results = await Promise.all(Array.from({ length: 8 }, () =>
-      check(A.agent, { aliases: person('b5'), scope: 'goodwill.credit' }, STRENGTHS)));
-    const granted = results.filter((r) => r.reason === 'permit.exercised');
-    assert.equal(granted.length, 1,
+      exercise(A.agent, { sealId: rows[0]!.id })));
+    assert.equal(results.filter((r) => r.exercised).length, 1,
       'at-most-N is enforced by the database, not by application logic');
   });
 
@@ -199,8 +221,8 @@ describe('check', () => {
     await setup(A, 'b6');
     await seal(A.agent, { aliases: person('b6'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
-    const other = await check(B.agent, { aliases: person('b6'), scope: 'refund' }, STRENGTHS);
-    assert.equal(other.bound, false, 'the workspace id is inside the alias MAC');
+    const other = await lookup(B.agent, { aliases: person('b6'), scope: 'refund' }, STRENGTHS);
+    assert.deepEqual(other.determinations, [], 'the workspace id is inside the alias MAC');
   });
 });
 
@@ -213,7 +235,7 @@ describe('pressure', () => {
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     for (let i = 0; i < 4; i++) {
-      await check(A.agent, { aliases: person('c1'), scope: 'refund.issue',
+      await lookup(A.agent, { aliases: person('c1'), scope: 'refund.issue',
         session: 'a'.repeat(32) }, STRENGTHS);
     }
     const p = await pressureOf(getPool(), s.sealId!);
@@ -231,7 +253,7 @@ describe('pressure', () => {
 
     for (let sess = 0; sess < 4; sess++) {
       for (let i = 0; i < 4; i++) {
-        await check(A.agent, { aliases: person('c2'), scope: 'refund.issue',
+        await lookup(A.agent, { aliases: person('c2'), scope: 'refund.issue',
           session: String(sess).repeat(32).slice(0, 32) }, STRENGTHS);
       }
     }
@@ -297,8 +319,8 @@ describe('claw', () => {
     const { A, sealId } = await sealed('d5');
     await claw(A.operator, { sealId,
       evidenceSha256: hash64('p'), evidenceClass: 'internal' });
-    const after = await check(A.agent, { aliases: person('d5'), scope: 'refund.issue' }, STRENGTHS);
-    assert.equal(after.bound, false);
+    const after = await lookup(A.agent, { aliases: person('d5'), scope: 'refund.issue' }, STRENGTHS);
+    assert.deepEqual(after.determinations, []);
     await refuses(() => claw(A.operator, { sealId,
       evidenceSha256: hash64('p'), evidenceClass: 'internal' }), 'already_settled', 'double claw');
   });
@@ -314,7 +336,7 @@ describe('claw', () => {
     const { A, sealId } = await sealed('d7');
     for (let sess = 0; sess < 4; sess++) {
       for (let i = 0; i < 4; i++) {
-        await check(A.agent, { aliases: person('d7'), scope: 'refund.issue',
+        await lookup(A.agent, { aliases: person('d7'), scope: 'refund.issue',
           session: String(sess).repeat(32).slice(0, 32) }, STRENGTHS);
       }
     }
@@ -357,8 +379,9 @@ describe('re-evaluation — the unbiased correction channel', () => {
     assert.equal(await stateOf(s.sealId!), 'lapsed');
     assert.equal(await countEvents(s.sealId!, 'lapsed'), 1);
 
-    const after = await check(A.agent, { aliases: person('e2'), scope: 'refund.issue' }, STRENGTHS);
-    assert.equal(after.bound, false, 'a lapsed determination stops binding, with no authority involved');
+    const after = await lookup(A.agent, { aliases: person('e2'), scope: 'refund.issue' }, STRENGTHS);
+    assert.deepEqual(after.determinations, [],
+      'a lapsed determination stops standing, with no authority involved');
   });
 
   test('TAINT: losing the ability to check is not discovering you were wrong', async () => {
@@ -375,9 +398,9 @@ describe('re-evaluation — the unbiased correction channel', () => {
     const changes = await reevaluate(ws);
     assert.deepEqual(changes, [{ sealId: s.sealId!, from: 'sealed', to: 'tainted' }]);
 
-    const after = await check(A.agent, { aliases: person('e3'), scope: 'refund.issue' }, STRENGTHS);
-    assert.equal(after.bound, true, 'a tainted seal still binds — lifting on an unknown is a guess');
-    assert.equal(after.reason, 'bound.tainted');
+    const after = await lookup(A.agent, { aliases: person('e3'), scope: 'refund.issue' }, STRENGTHS);
+    assert.equal(after.determinations[0]?.code, CODES.refusalTainted,
+      'a tainted seal still stands — lifting on an unknown is a guess');
   });
 
   test('erasure destroys nothing the proof rests on', async () => {

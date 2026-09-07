@@ -12,7 +12,7 @@
  * would silently rename fields nobody intended it to, including fields added
  * later by somebody who never read this file.
  */
-import type { SealResult, CheckResult } from '../domain/seal.js';
+import type { SealResult, LookupResult } from '../domain/seal.js';
 import type { ClawRule } from '../domain/authority.js';
 import type { SourceReliability, QuadrantCounts, Cliff } from '../domain/insight.js';
 import type { MintedKey } from '../domain/auth.js';
@@ -80,13 +80,23 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
   };
 }
 
-export function checkToWire(r: CheckResult): Record<string, unknown> {
+/**
+ * No `bound` boolean and no token.
+ *
+ * Crimp reports what has been determined; whether that permits an action is
+ * the caller's judgement, made with its own policy. An empty list means
+ * nothing has been decided — it does not mean "allowed".
+ */
+export function lookupToWire(r: LookupResult): Record<string, unknown> {
   return {
-    bound: r.bound,
-    reason: r.reason,
-    ...(r.sealId !== undefined ? { seal_id: r.sealId } : {}),
-    ...(r.disposition !== undefined ? { disposition: r.disposition } : {}),
-    ...(r.bindingToken !== undefined ? { binding_token: r.bindingToken } : {}),
+    determinations: r.determinations.map((d) => ({
+      seal_id: d.sealId,
+      scope: d.scope,
+      disposition: d.disposition,
+      state: d.state,
+      code: d.code,
+      ...(d.remaining !== undefined ? { remaining: d.remaining } : {}),
+    })),
   };
 }
 
