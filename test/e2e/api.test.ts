@@ -136,7 +136,8 @@ describe('the full loop over HTTP', () => {
     const a = await app.inject({ method: 'POST', url: '/v1/attestations',
       headers: bearer(k.agent), payload: { aliases: person('loop'), facts: FACTS() } });
     assert.equal(a.statusCode, 200);
-    assert.match(a.json().subject_id, /^sub_/);
+    assert.equal(a.json().subject_id, undefined,
+      'the subject id is the join key; returning it links two identifiers for two writes');
 
     const s = await app.inject({ method: 'POST', url: '/v1/seals',
       headers: bearer(k.agent),
@@ -253,7 +254,7 @@ describe('the contract fields', () => {
       headers: bearer(k.operator),
       payload: { aliases: person('co'), cohort: 'region', band: 'north' } });
     assert.equal(pl.statusCode, 201);
-    assert.match(pl.json().subject_id, /^sub_/);
+    assert.equal(pl.json().subject_id, undefined);
     assert.equal(JSON.stringify(pl.json()).includes('north'), false,
       'echoing the band back would make this a read path for the value it blinds');
   });
