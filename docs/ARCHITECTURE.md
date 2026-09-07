@@ -212,6 +212,71 @@ a proof is about a determination, not a person.
 The artifact carries its own verification instructions, because a proof that
 does not say how to check it will not be checked, and documentation explaining
 it may not still be hosted in 2032.
+## The worker is not optional
+
+```
+src/worker/main.ts    the loop. MUST be long-running
+src/worker/sweep.ts   one pass, across every workspace with due work
+scripts/sweep.ts      one pass, then exit — for cron or a smoke test
+```
+
+Everything this product claims that nothing else does depends on this process.
+A determination lapses when the rule behind it stops holding — no appeal, no
+authority, nobody having won an argument. That is the only error signal that
+does not require the affected person to have the resources to fight, and about
+nine in ten Medicaid denials are never appealed, so it is also the only one
+that sees them.
+
+It is also a condition of enhanced federal funding: 42 CFR 433.112(b)(15) and
+433.116 require evidence that outcomes are met **on an ongoing basis**, and no
+reading of *ongoing* is satisfied by a function nobody schedules.
+
+**A serverless function cannot do this.** Expiry is time-driven — nothing is
+attested when a determination simply runs out, so there is no request to hang
+the work off. Multiple replicas are safe: every state change is a
+compare-and-set against the state the sweep observed, so a race loses cleanly.
+
+### How the sweep picks what to look at
+
+It used to be `ORDER BY sealed_at LIMIT 100`. A determination that does not
+change state stays at the front of that ordering forever, so the sweep
+re-examined the same oldest hundred on every pass and **never reached the
+hundred-and-first**. Measured before the fix: 105 determinations, facts changed
+under the newest, five complete passes, still `sealed`. A sweep that never runs
+is visibly missing; that one ran, returned quickly, reported changes, and
+silently stopped correcting after the hundredth person.
+
+Two columns, and neither is redundant:
+
+| | |
+|---|---|
+| `last_evaluated_at` | Advances on every row **examined**, not every row changed. That is what moves the cursor, and `max(now() - last_evaluated_at)` is a measurable worst-case correction latency rather than an article of faith |
+| `evaluation_due` | Set when the ground under a subject moves, so a determination that actually needs re-checking jumps the queue instead of waiting behind millions of unchanged ones |
+
+Change-driven work alone cannot see expiry — nothing is attested when a
+determination runs out. Time-driven work alone cannot scale — a state with
+seventy million enrollees cannot re-examine everything on a useful cycle. The
+flag carries correction; the cursor carries completeness.
+
+**`markDue()` in `seal.ts` is called by everything that moves ground** —
+attestation and erasure today, and any future path that changes what a
+subject's facts are. It is one function on purpose: four separate defects in
+this codebase have had the shape *principle stated, enforced on one axis,
+silently unenforced on the neighbouring one*, and a rule living in a function is
+enforced where a rule living in a comment is remembered until it isn't.
+
+### And a stale fact is UNKNOWN
+
+`loadFacts` no longer reads an attestation past its `expires_at`. The customer
+declared when it stops being current, and ignoring that meant determinations
+rested on facts their own owner had marked stale. The consequence follows from
+three-valued logic without any special case: the fact is absent, so the rule is
+**unanswered** rather than violated; a determination resting on it becomes
+`tainted` rather than being silently re-decided; and a fresh seal is refused
+with `facts_not_attested`.
+
+That is 42 CFR 435.916 in one clause — if the data on hand is stale you may not
+determine from it, you must go and ask.
 
 ## Three fields the contract requires, and why
 

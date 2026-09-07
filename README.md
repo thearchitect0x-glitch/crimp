@@ -158,6 +158,11 @@ Re-attest `carrier.delivered` as `true` and the rule stops holding: the seal
 **lapses** on the next re-evaluation, with no authority involved and nobody
 having won an argument.
 
+> **The worker is not optional.** `npm run dev:worker` runs the correction
+> channel. Without it, determinations never lapse — the rule that decides
+> whether somebody is still refused is never re-run, and the one error signal
+> that does not require the affected person to complain never fires.
+
 ### Other commands
 
 ```bash
