@@ -44,7 +44,7 @@ describe('seal', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'a1');
-    const out = await seal(A.agent, { aliases: person('a1'), scope: 'refund.issue',
+    const out = await seal(A.agent, { idempotencyKey: 'idem-a1', aliases: person('a1'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE, claw: CLAW,
     }, STRENGTHS);
     assert.equal(out.outcome, 'sealed');
@@ -57,7 +57,7 @@ describe('seal', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'a2');
-    const out = await seal(A.agent, { aliases: person('a2'), scope: 'refund.issue',
+    const out = await seal(A.agent, { idempotencyKey: 'idem-a2', aliases: person('a2'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE, claw: CLAW,
     }, STRENGTHS);
     const { rows } = await getPool().query<{ fact: string; source: string; admissibility: string; value_sha256: string }>(
@@ -74,7 +74,7 @@ describe('seal', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'a3', { refunds: 9 });   // prior_refunds_90d < 3 is false
-    const out = await seal(A.agent, { aliases: person('a3'), scope: 'refund.issue',
+    const out = await seal(A.agent, { idempotencyKey: 'idem-a3', aliases: person('a3'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE, claw: CLAW,
     }, STRENGTHS);
     assert.equal(out.outcome, 'not_applicable');
@@ -87,7 +87,7 @@ describe('seal', () => {
     await attest(A.agent, { aliases: person('a4'),
       facts: [{ fact: 'carrier.delivered', type: 'bool', value: false, source: 'carrier_api' }] },
     STRENGTHS);
-    await refuses(() => seal(A.agent, { aliases: person('a4'), scope: 'refund.issue',
+    await refuses(() => seal(A.agent, { idempotencyKey: 'idem-a4', aliases: person('a4'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE, claw: CLAW,
     }, STRENGTHS), 'facts_not_attested', 'prior_refunds_90d was never attested');
   });
@@ -96,7 +96,7 @@ describe('seal', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'a5');
-    await refuses(() => seal(A.agent, { aliases: person('a5'), scope: 'refund.issue',
+    await refuses(() => seal(A.agent, { idempotencyKey: 'idem-a5', aliases: person('a5'), scope: 'refund.issue',
       disposition: 'bind', rule: { fact: 'carrier.delivered', op: 'eq', value: false }, claw: CLAW, requiredFacts: ['prior_refunds_90d'],
     }, STRENGTHS), 'rule_missing_required_fact', 'the vacuous-rule defence');
   });
@@ -105,7 +105,7 @@ describe('seal', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'a6');
-    await refuses(() => seal(A.agent, { aliases: person('a6'), scope: 'refund.issue',
+    await refuses(() => seal(A.agent, { idempotencyKey: 'idem-a6', aliases: person('a6'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE,
       claw: { ...CLAW, authority: 'custodian' },
     }, STRENGTHS), 'invalid_claw_rule', 'blast-radius cap enforced end to end');
@@ -125,7 +125,7 @@ describe('lookup', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'b1');
-    await seal(A.agent, { aliases: person('b1'), scope: 'refund',
+    await seal(A.agent, { idempotencyKey: 'idem-b1', aliases: person('b1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     const narrow = await lookup(A.agent, { aliases: person('b1'),
@@ -139,7 +139,7 @@ describe('lookup', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'b2');
-    await seal(A.agent, { aliases: person('b2'), scope: 'refund.issue.goodwill',
+    await seal(A.agent, { idempotencyKey: 'idem-b2', aliases: person('b2'), scope: 'refund.issue.goodwill',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
     const broad = await lookup(A.agent, { aliases: person('b2'), scope: 'refund' }, STRENGTHS);
     assert.deepEqual(broad.determinations, [],
@@ -150,7 +150,7 @@ describe('lookup', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'b3');
-    await seal(A.agent, { aliases: person('b3'), scope: 'refund',
+    await seal(A.agent, { idempotencyKey: 'idem-b3', aliases: person('b3'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     const out = await lookup(A.agent, { scope: 'refund.issue', aliases: [
@@ -164,7 +164,7 @@ describe('lookup', () => {
   test('ASKING about a permit does not spend it', async () => {
     const A = await actors();
     await setup(A, 'b4');
-    const s = await seal(A.operator, { aliases: person('b4'), scope: 'goodwill.credit',
+    const s = await seal(A.operator, { idempotencyKey: 'idem-b4', aliases: person('b4'), scope: 'goodwill.credit',
       disposition: 'permit', rule: RULE, maxUses: 1,
       claw: { ...CLAW, authority: 'principal' } }, STRENGTHS);
 
@@ -181,7 +181,8 @@ describe('lookup', () => {
   test('a permit is spent exactly max_uses times, and only when spent on purpose', async () => {
     const A = await actors();
     await setup(A, 'b4b');
-    const s = await seal(A.operator, { aliases: person('b4b'), scope: 'goodwill.credit',
+    const s = await seal(A.operator, { idempotencyKey: 'idem-b4b',
+      aliases: person('b4b'), scope: 'goodwill.credit',
       disposition: 'permit', rule: RULE, maxUses: 1,
       claw: { ...CLAW, authority: 'principal' } }, STRENGTHS);
 
@@ -204,7 +205,7 @@ describe('lookup', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'b5');
-    await seal(A.operator, { aliases: person('b5'), scope: 'goodwill.credit',
+    await seal(A.operator, { idempotencyKey: 'idem-b5', aliases: person('b5'), scope: 'goodwill.credit',
       disposition: 'permit', rule: RULE, maxUses: 1,
       claw: { ...CLAW, authority: 'principal' } }, STRENGTHS);
 
@@ -219,7 +220,7 @@ describe('lookup', () => {
   test('workspaces are isolated', async () => {
     const [A, B] = [await actors(), await actors()];
     await setup(A, 'b6');
-    await seal(A.agent, { aliases: person('b6'), scope: 'refund',
+    await seal(A.agent, { idempotencyKey: 'idem-b6', aliases: person('b6'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
     const other = await lookup(B.agent, { aliases: person('b6'), scope: 'refund' }, STRENGTHS);
     assert.deepEqual(other.determinations, [], 'the workspace id is inside the alias MAC');
@@ -231,7 +232,7 @@ describe('pressure', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'c1');
-    const s = await seal(A.agent, { aliases: person('c1'), scope: 'refund',
+    const s = await seal(A.agent, { idempotencyKey: 'idem-c1', aliases: person('c1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     for (let i = 0; i < 4; i++) {
@@ -248,7 +249,7 @@ describe('pressure', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'c2');
-    const s = await seal(A.agent, { aliases: person('c2'), scope: 'refund',
+    const s = await seal(A.agent, { idempotencyKey: 'idem-c2', aliases: person('c2'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     for (let sess = 0; sess < 4; sess++) {
@@ -268,7 +269,7 @@ describe('claw', () => {
   async function sealed(tag: string, cl: Partial<ClawRule> = {}) {
     const A = await actors();
     await setup(A, tag);
-    const s = await seal(A.agent, { aliases: person(tag), scope: 'refund',
+    const s = await seal(A.agent, { idempotencyKey: `idem-${tag}`, aliases: person(tag), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: { ...CLAW, ...cl } }, STRENGTHS);
     return { A, sealId: s.sealId! };
   }
@@ -356,7 +357,7 @@ describe('re-evaluation — the unbiased correction channel', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'e1');
-    const s = await seal(A.agent, { aliases: person('e1'), scope: 'refund',
+    const s = await seal(A.agent, { idempotencyKey: 'idem-e1', aliases: person('e1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
     assert.deepEqual(await reevaluate(ws), []);
     assert.equal(await stateOf(s.sealId!), 'sealed');
@@ -366,7 +367,7 @@ describe('re-evaluation — the unbiased correction channel', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'e2');
-    const s = await seal(A.agent, { aliases: person('e2'), scope: 'refund',
+    const s = await seal(A.agent, { idempotencyKey: 'idem-e2', aliases: person('e2'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     // The carrier reverses its delivery scan. Nobody appealed; nobody was asked.
@@ -388,7 +389,7 @@ describe('re-evaluation — the unbiased correction channel', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'e3');
-    const s = await seal(A.agent, { aliases: person('e3'), scope: 'refund',
+    const s = await seal(A.agent, { idempotencyKey: 'idem-e3', aliases: person('e3'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 
     const { rows } = await getPool().query<{ subject_id: string }>(
@@ -407,7 +408,7 @@ describe('re-evaluation — the unbiased correction channel', () => {
     const A = await actors();
     const ws = A.ws;
     await setup(A, 'e4');
-    const s = await seal(A.agent, { aliases: person('e4'), scope: 'refund',
+    const s = await seal(A.agent, { idempotencyKey: 'idem-e4', aliases: person('e4'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
     const { rows } = await getPool().query<{ subject_id: string }>(
       'SELECT subject_id FROM seals WHERE id = $1', [s.sealId]);

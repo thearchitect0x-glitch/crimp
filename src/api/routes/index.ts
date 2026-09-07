@@ -3,7 +3,8 @@
 import type { FastifyInstance } from 'fastify';
 import { authorized } from '../app.js';
 import {
-  attestBody, sealBody, lookupBody, clawBody, mintKeyBody, windowQuery, errors,
+  attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mintKeyBody,
+  windowQuery, errors,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
@@ -13,6 +14,7 @@ import {
 import { attest } from '../../domain/attest.js';
 import { seal, lookup, exercise, claw } from '../../domain/seal.js';
 import { sourceReliability, quadrant, cliffs } from '../../domain/insight.js';
+import { declareCohort, placeInCohort } from '../../domain/cohort.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -46,12 +48,20 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /* ── Seal ────────────────────────────────────────────────────────── */
   app.post<{
     Body: {
+      idempotency_key: string; expires_at?: string | null;
       aliases: unknown; scope: string; disposition: 'bind' | 'permit' | 'commit';
       rule: unknown; claw: WireClaw; max_uses?: number | null; required_facts?: string[];
     };
   }>('/seals', { schema: { body: sealBody, response: errors } }, async (req, reply) => {
     const p = await authorized(req, 'seals:write');
+    const expiresAt = req.body.expires_at == null ? null : new Date(req.body.expires_at);
+    if (expiresAt !== null && Number.isNaN(expiresAt.getTime())) {
+      throw new ApiError(400, 'invalid_request',
+        `"${req.body.expires_at}" is not a valid timestamp.`);
+    }
     const out = await seal(p, {
+      idempotencyKey: req.body.idempotency_key,
+      expiresAt,
       aliases: req.body.aliases,
       scope: req.body.scope,
       disposition: req.body.disposition,
@@ -60,8 +70,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       maxUses: req.body.max_uses ?? null,
       requiredFacts: req.body.required_facts ?? [],
     }, await loadStrengths(p.workspaceId));
-    // 201 when a determination now exists; 200 when the rule simply did not
-    // hold, which is an answer rather than a failure.
+    // 201 only when a determination is newly created. A replay is 200: the
+    // retry succeeded, but it did not create anything.
     reply.code(out.outcome === 'sealed' ? 201 : 200);
     return sealToWire(out);
   });
@@ -97,6 +107,33 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       evidenceSha256: req.body.evidence_sha256,
       evidenceClass: req.body.evidence_class as never,
     });
+  });
+
+  /* ── Cohorts: two ways in, no way out ────────────────────────────── */
+  app.post<{ Body: { cohort: string; description?: string | null } }>('/cohorts', {
+    schema: { body: cohortBody, response: errors },
+  }, async (req, reply) => {
+    const p = await authorized(req, 'cohorts:write');
+    reply.code(201);
+    return declareCohort(p, {
+      cohort: req.body.cohort,
+      description: req.body.description ?? null,
+    });
+  });
+
+  app.post<{ Body: { aliases: unknown; cohort: string; band: string } }>('/cohorts/placements', {
+    schema: { body: placeBody, response: errors },
+  }, async (req, reply) => {
+    const p = await authorized(req, 'cohorts:write');
+    const out = await placeInCohort(p, {
+      aliases: req.body.aliases,
+      cohort: req.body.cohort,
+      band: req.body.band,
+    }, await loadStrengths(p.workspaceId));
+    reply.code(201);
+    // The subject id and nothing else. Echoing the band back would make this
+    // endpoint a read path for the value it exists to blind.
+    return { subject_id: out.subjectId };
   });
 
   /* ── The measurements ────────────────────────────────────────────── */

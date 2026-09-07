@@ -91,5 +91,19 @@ export async function ageSeal(sealId: string, seconds: number): Promise<void> {
     [sealId, String(seconds)]);
 }
 
+/**
+ * Push a seal's expiry into the past, measured by the DATABASE's clock.
+ *
+ * Never compute an expiry from `Date.now()` in a test. Expiry is evaluated
+ * against Postgres's `now()`, and the container's clock can sit seconds behind
+ * the host's after the machine sleeps — which turned two of these tests red
+ * for reasons that had nothing to do with the code. One clock decides, so one
+ * clock sets it.
+ */
+export async function expireSeal(sealId: string): Promise<void> {
+  await getPool().query(
+    "UPDATE seals SET expires_at = now() - interval '1 second' WHERE id = $1", [sealId]);
+}
+
 export const hash64 = (s: string): string =>
   [...s].reduce((a, c) => a + c.charCodeAt(0), 0).toString(16).padStart(64, 'a').slice(0, 64);

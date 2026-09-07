@@ -96,6 +96,21 @@ export async function attest(p: Principal, args: {
       [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded), subjectId,
         aliases.map((a) => a.strength)]);
 
+    // A declared cohort may not be attested as a fact. The guarantee cohorts
+    // rest on is that they cannot reach the grammar, and a fact can — so the
+    // two namespaces are kept disjoint in both directions, here and in
+    // `declareCohort`. Checked once for the whole batch.
+    const { rows: cohorts } = await tx.query<{ cohort: string }>(
+      `SELECT cohort FROM cohort_types
+        WHERE workspace_id = $1 AND cohort = ANY($2::text[])`,
+      [workspaceId, args.facts.map((f) => f.fact)]);
+    if (cohorts[0]) {
+      throw new ApiError(409, 'fact_is_a_cohort',
+        `"${cohorts[0].cohort}" is a declared cohort in this workspace. Attesting it as a fact `
+        + 'would let it appear in a rule, and a cohort must never decide about a person.',
+        { name: cohorts[0].cohort });
+    }
+
     for (const f of args.facts) {
       const { rows: src } = await tx.query<{ admissibility: string }>(
         'SELECT admissibility FROM fact_sources WHERE workspace_id = $1 AND source = $2',
@@ -142,6 +157,12 @@ export async function eraseSubject(workspaceId: string, subjectId: string): Prom
   return withTx(async (tx) => {
     const { rowCount } = await tx.query(
       'DELETE FROM attestations WHERE workspace_id = $1 AND subject_id = $2',
+      [workspaceId, subjectId]);
+    // Cohort membership is personal data about the same subject, and it is not
+    // reachable through any read path — which makes it exactly the kind of row
+    // an erasure quietly leaves behind. It goes with the attestations.
+    await tx.query(
+      'DELETE FROM subject_cohorts WHERE workspace_id = $1 AND subject_id = $2',
       [workspaceId, subjectId]);
     return rowCount ?? 0;
   });

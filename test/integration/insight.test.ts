@@ -30,7 +30,7 @@ async function sealFor(A: Actors, tag: string, opts: {
       source: opts.carrierSource ?? 'carrier_api' },
     { fact: 'prior_refunds_90d', type: 'int', value: opts.refunds ?? 1, source: 'core_ledger' },
   ] }, STRENGTHS);
-  return seal(A.agent, { aliases: who(tag), scope: 'refund',
+  return seal(A.agent, { idempotencyKey: `idem-${tag}`, aliases: who(tag), scope: 'refund',
     disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
 }
 
@@ -194,7 +194,7 @@ describe('cliffs', () => {
     const ws = A.ws;
     await attest(A.agent, { aliases: who('cl-str'), facts: [
       { fact: 'country', type: 'str', value: 'US', source: 'core_ledger' }] }, STRENGTHS);
-    await seal(A.agent, { aliases: who('cl-str'), scope: 'refund',
+    await seal(A.agent, { idempotencyKey: 'idem-cl-str', aliases: who('cl-str'), scope: 'refund',
       disposition: 'bind', rule: { fact: 'country', op: 'in', value: ['US'] }, claw: CLAW }, STRENGTHS);
     assert.deepEqual(await cliffs(getPool(), ws), []);
   });

@@ -33,6 +33,19 @@
 import { canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
 
+/**
+ * The semantics a sealed rule was evaluated under.
+ *
+ * Every seal records this. Widening the grammar in a way that leaves existing
+ * rules' meaning unchanged does NOT bump it; anything that could change how an
+ * already-sealed rule evaluates MUST, and the evaluator must then keep the old
+ * semantics reachable. A version it cannot reproduce yields UNKNOWN, so the
+ * determination becomes `tainted` rather than being silently re-decided under
+ * rules nobody agreed to.
+ */
+export const GRAMMAR_VERSION = '1';
+export const SUPPORTED_GRAMMAR_VERSIONS: ReadonlySet<string> = new Set([GRAMMAR_VERSION]);
+
 /** Three-valued result. UNKNOWN is first-class, for the same reason Ratchet's `indeterminate` is. */
 export const TRUE = 'true' as const;
 export const FALSE = 'false' as const;

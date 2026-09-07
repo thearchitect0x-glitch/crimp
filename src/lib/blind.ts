@@ -173,3 +173,19 @@ export function aliasMatches(
   const b = Buffer.from(stored, 'utf8');
   return a.length === b.length && timingSafeEqual(a, b);
 }
+
+/**
+ * A cohort band, blinded.
+ *
+ * Same construction as an alias and a deliberately different domain prefix, so
+ * a band and an alias can never produce the same 128 bits. Without that
+ * separation, "is this subject in band X" could be answered by presenting X as
+ * an alias — a read path through the front door of a table that has no read
+ * path by design.
+ */
+export function blindBand(workspaceId: string, cohort: string, band: string): string {
+  return createHmac('sha256', config.blindSecret)
+    .update(`cohort:v1:${workspaceId}:${cohort}:${normalizeText(band)}`)
+    .digest('hex')
+    .slice(0, 32);
+}
