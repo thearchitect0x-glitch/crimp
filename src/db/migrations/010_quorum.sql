@@ -42,11 +42,54 @@ ALTER TABLE seals ADD COLUMN claw_quorum SMALLINT NOT NULL DEFAULT 1
 ALTER TABLE seals ADD COLUMN claw_jurisdiction TEXT
   CHECK (claw_jurisdiction IS NULL OR claw_jurisdiction ~ '^[A-Z]{2}(-[A-Z0-9]{1,3})?$');
 
--- A signature that is not yet a reversal.
+-- ─────────────────────────────────────────────────────────────────────────
+-- 3 · A signature that is not yet a reversal — and the reason this is a table.
+--
+-- `claw_pending` is a new event kind, and adding one used to mean dropping the
+-- CHECK constraint and re-adding it with the full list. Three migrations did
+-- that, written on parallel branches, and each listed only the kinds it knew
+-- about. Whichever ran last silently DELETED the others' kinds. Found by
+-- integrating the branches and running the suite: four disclosure tests failed
+-- with `violates check constraint "seal_events_kind_check"`, because this
+-- migration — written on a branch that predates `disclosed` — removed it.
+--
+-- Each migration was correct against its own base. The combination was not,
+-- and nothing about a green CI run on either branch could have shown it.
+--
+-- So the constraint becomes a reference table with a foreign key, which is
+-- what `authority_levels` and `admissibility_classes` have always been.
+-- Adding a kind is now an INSERT, and an INSERT cannot clobber. The seed
+-- lists a superset deliberately — naming a kind no branch emits yet is
+-- harmless, and absorbing whatever is already in the table means no branch's
+-- history is lost whichever order these land in.
+-- ─────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE seal_event_kinds (
+  kind        TEXT PRIMARY KEY,
+  description TEXT
+);
+
+INSERT INTO seal_event_kinds (kind, description) VALUES
+  ('sealed',        'A determination was created'),
+  ('tainted',       'The ground was lost — not a disproof'),
+  ('lapsed',        'The premises withdrew their own support'),
+  ('expired',       'It ran out. Not an error'),
+  ('clawed',        'A person overruled it, on the record'),
+  ('exercised',     'A permit was spent'),
+  ('hardened',      'Reversal requirements rose under pressure'),
+  ('carve_out',     'An alias was detached from a subject'),
+  ('merge_refused', 'A merge was refused. The refusal is the signal'),
+  ('claw_pending',  'One signature of a quorum, not yet a reversal'),
+  ('disclosed',     'Somebody asked why a person was refused')
+ON CONFLICT (kind) DO NOTHING;
+
+-- Absorb anything already recorded, whatever branch introduced it.
+INSERT INTO seal_event_kinds (kind)
+  SELECT DISTINCT kind FROM seal_events ON CONFLICT (kind) DO NOTHING;
+
 ALTER TABLE seal_events DROP CONSTRAINT seal_events_kind_check;
-ALTER TABLE seal_events ADD CONSTRAINT seal_events_kind_check
-  CHECK (kind IN ('sealed', 'tainted', 'lapsed', 'clawed', 'expired', 'exercised',
-                  'hardened', 'carve_out', 'merge_refused', 'claw_pending'));
+ALTER TABLE seal_events ADD CONSTRAINT seal_events_kind_fk
+  FOREIGN KEY (kind) REFERENCES seal_event_kinds(kind);
 
 -- Finding the standing half of a quorum is a hot lookup on the claw path.
 CREATE INDEX seal_events_pending_idx ON seal_events (seal_id, occurred_at DESC)
