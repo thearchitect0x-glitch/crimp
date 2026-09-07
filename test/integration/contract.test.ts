@@ -151,7 +151,7 @@ describe('grammar version', () => {
       facts: [{ fact: 'prior_refunds_90d', type: 'int', value: 7, source: 'core_ledger' }] },
     STRENGTHS);
 
-    const changes = await reevaluate(A.ws);
+    const { changes } = await reevaluate(A.ws);
     assert.equal(changes[0]?.to, 'tainted', 'lost ground, not a disproof');
     assert.equal(await stateOf(s.sealId!), 'tainted');
   });
@@ -186,7 +186,7 @@ describe('expiry', () => {
         expiresAt: new Date(Date.now() + 3_600_000) }, STRENGTHS);
       await expireSeal(s.sealId!);
 
-      const changes = await reevaluate(A.ws);
+      const { changes } = await reevaluate(A.ws);
       assert.equal(changes[0]?.to, 'expired',
         'running out is not the institution having been wrong');
       assert.equal(await countEvents(s.sealId!, 'expired'), 1);

@@ -46,6 +46,11 @@ below.
   stays valid — widening is safe, which is why this order.
 - **MCP tools and a published OpenAPI document**, so an agent can discover the
   surface rather than be told about it.
+- **A metrics export in Operational Report Workbook shape.** CMS takes
+  numerator and denominator per metric and does its own interpretation, which
+  is why a volume floor belongs only on inferential statistics and never on a
+  census. Seeded with EE5 (fully automated determinations), EE9 (terminations
+  for notice non-response) and EE13 (ex parte redeterminations).
 - **Deployment.** There is none. When it exists, `BLIND_SECRET` must be in
   escrow before the first determination is sealed: a blinded alias cannot be
   re-derived, so losing that secret does not degrade the system, it orphans

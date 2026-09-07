@@ -24,7 +24,10 @@
     "coverage": "bash scripts/test.sh --coverage",
     "fuzz": "FUZZ_RUNS=${FUZZ_RUNS:-25000} tsx --test test/unit/fuzz-*.test.ts",
     "audit": "npm audit --omit=dev --audit-level=high",
-    "mint": "tsx scripts/mint.ts"
+    "mint": "tsx scripts/mint.ts",
+    "dev:worker": "tsx watch src/worker/main.ts",
+    "start:worker": "node dist/worker/main.js",
+    "sweep": "tsx scripts/sweep.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.2",

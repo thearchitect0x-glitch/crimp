@@ -134,6 +134,17 @@ already belong to several subjects, Crimp refuses with `merge_required`. This is
 correct-but-incomplete: merges are monotone and permanent, and a wrong one drags
 strangers under somebody else's determination with no way back.
 
+**The correction channel is only as current as the sweep.** A determination
+lapses when the worker reaches it, not the instant a fact changes. An
+attestation or an erasure marks it due so it jumps the queue, but the latency
+is real and it is bounded by worker cadence and backlog rather than by
+anything stronger. `sweepLag()` reports it; do not assume it is zero.
+
+**A single worker is a single point of failure for correction.** Multiple
+replicas are safe — every transition is a compare-and-set — but nothing yet
+alerts if the worker stops. A silently dead worker looks exactly like a
+workspace where nothing has changed.
+
 **Scopes are a tree, not a DAG.** A seal on `money.out` does not catch a refund
 today. Widening later is safe; the gap is real now.
 

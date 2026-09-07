@@ -23,6 +23,7 @@ import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
 import { FACT_TYPES, type FactType } from './rule.js';
 import { requireScope, type Principal } from './auth.js';
+import { markDue } from './seal.js';
 
 const FACT_NAME = /^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,3}$/;
 const MAX_STRING = 256;
@@ -139,6 +140,13 @@ export async function attest(p: Principal, args: {
           f.type === 'str' ? f.value : null,
           f.source, admissibility, f.assertedAt ?? new Date(), f.expiresAt ?? null]);
     }
+    // What makes correction prompt rather than eventual: without it, a
+    // determination whose facts just changed waits its turn behind every other
+    // open determination in the workspace. Keyed by subject rather than by
+    // which facts each rule reads — a subject has few determinations, and
+    // re-evaluating one whose inputs did not move is idempotent and cheap.
+    await markDue(tx, workspaceId, subjectId);
+
     return { subjectId, count: args.facts.length };
   });
 }
@@ -158,6 +166,11 @@ export async function eraseSubject(workspaceId: string, subjectId: string): Prom
     const { rowCount } = await tx.query(
       'DELETE FROM attestations WHERE workspace_id = $1 AND subject_id = $2',
       [workspaceId, subjectId]);
+    // Erasure moves the ground more completely than any attestation — it
+    // removes it. Every determination resting on these facts is now
+    // unverifiable and must become `tainted` promptly rather than whenever the
+    // cursor comes round, because an erasure is a legal event with a clock on it.
+    await markDue(tx, workspaceId, subjectId);
     // Cohort membership is personal data about the same subject, and it is not
     // reachable through any read path — which makes it exactly the kind of row
     // an erasure quietly leaves behind. It goes with the attestations.
