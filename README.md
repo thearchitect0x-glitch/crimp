@@ -42,13 +42,18 @@ authority, no appeal, nobody won an argument. A fact changed.
 ## The measurement this exists for
 
 Medicare Advantage publishes the only large-scale public data on how often an
-automated adverse decision turns out to be wrong. **80.7% of appealed denials
-are overturned. 6.2% of denials are ever appealed.**
+automated adverse decision turns out to be wrong. In 2022 it denied **7.4%** of
+prior authorization requests, about **10%** of those denials were appealed, and
+**83.2%** of the appeals were overturned.[^kff]
 
-Four in five of the decisions somebody fought were wrong. Nobody can tell you
-the rate among the other 93.8%, because if nobody appealed, nobody looked. Every
+Five in six of the decisions somebody fought were wrong. Nobody can tell you the
+rate among the other ~90%, because if nobody appealed, nobody looked. Every
 existing measurement of wrongful denial is computed only on the population that
 fought back — systematically the better-resourced one.
+
+[^kff]: KFF analysis of CMS data for 2022. These figures move year to year and
+    the denial, appeal and overturn rates each vary widely between insurers;
+    quote the year with the number.
 
 Crimp has two correction channels, and the difference between them is the point:
 

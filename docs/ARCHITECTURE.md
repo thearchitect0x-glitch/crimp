@@ -224,8 +224,9 @@ it may not still be hosted in 2032.
 ## Cohorts: a table with no read path
 
 `subject_cohorts` exists so a workspace can ask *whose* errors go uncorrected —
-80.7% of appealed denials are overturned and 6.2% are appealed, and the 6.2%
-are not a random draw. That measurement is also the one thing here that could
+83.2% of appealed Medicare Advantage denials were overturned in 2022 and only
+about 10% of denials were appealed (KFF analysis of CMS data). The ~90% who
+never appealed are not a random draw. That measurement is also the one thing here that could
 be turned into a discrimination tool, so the constraints are structural rather
 than procedural:
 

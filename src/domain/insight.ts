@@ -122,9 +122,10 @@ export interface QuadrantCounts {
  *   high pressure     contested & correct  WRONG AND RESISTED
  *
  * `quietError` is the population every existing measurement of wrongful denial
- * cannot see. Medicare Advantage overturns 80.7% of appealed denials and only
- * 6.2% of denials are ever appealed; the error rate among the other 93.8% is
- * structurally unobservable, because if nobody appealed then nobody looked.
+ * cannot see. In 2022 Medicare Advantage overturned 83.2% of appealed denials,
+ * and only about 10% of denials were ever appealed (KFF analysis of CMS data).
+ * The error rate among the other ~90% is structurally unobservable, because if
+ * nobody appealed then nobody looked.
  * A lapse is the institution discovering it was wrong about somebody who never
  * said a word.
  *
