@@ -308,9 +308,18 @@ Two of those change what a determination *is*, and canonical form decides the
 rule hash — so they were free to fix only because no determination has been
 sealed in production yet. **After the first one, they would not have been.**
 
-## 11 · Reference implementation
+## 11 · Implementations
 
-Crimp — `crimpgate.com`. Apache-2.0.
+| | |
+|---|---|
+| **Reference** | Crimp, `crimpgate.com`. Apache-2.0 |
+| **Independent verifier** | `spec/verifier.mjs` — no dependencies, no imports from the reference, runs in Node and in a browser. `spec/verifier.html` is the same code as a keyless offline page |
 
-Alternative implementations are welcome and are the point of publishing this.
+The second exists to test **this document**, not the software. A specification
+is only a standard if a stranger can implement it from the text, and the only
+way to find out whether the text is sufficient is to write a second
+implementation and see whether the two agree. They pass the same vectors. If
+they ever disagree, at least one is wrong, and establishing which is the point.
+
+Alternative implementations are welcome and are the reason this is published.
 A determination produced by one implementation MUST verify under another.

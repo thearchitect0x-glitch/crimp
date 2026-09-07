@@ -1,0 +1,1023 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright 2026 Deimos AI LLC -->
+<title>Determination Verifier</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#F4F6F5; --surface:#FFFFFF; --sunk:#EBEEED; --rule:#D8DEDC; --rule-soft:#E6EAE9;
+  --ink:#14191B; --ink-soft:#56605F; --ink-faint:#7C8785;
+  --copper:#A85B33;
+  --ok:#2F6B52; --ok-bg:#E6EFEA; --bad:#9B3B3B; --bad-bg:#F5E7E6;
+  --skip:#6B7472; --skip-bg:#E9ECEB;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --ground:#101414; --surface:#171C1C; --sunk:#1D2322; --rule:#2B3332; --rule-soft:#232A29;
+  --ink:#E7EBE9; --ink-soft:#9AA5A2; --ink-faint:#75807D;
+  --copper:#D18A5F;
+  --ok:#6FBF97; --ok-bg:#16261F; --bad:#E08585; --bad-bg:#2A1B1B;
+  --skip:#8A9391; --skip-bg:#1F2524;
+}}
+:root[data-theme="dark"]{
+  --ground:#101414; --surface:#171C1C; --sunk:#1D2322; --rule:#2B3332; --rule-soft:#232A29;
+  --ink:#E7EBE9; --ink-soft:#9AA5A2; --ink-faint:#75807D;
+  --copper:#D18A5F;
+  --ok:#6FBF97; --ok-bg:#16261F; --bad:#E08585; --bad-bg:#2A1B1B;
+  --skip:#8A9391; --skip-bg:#1F2524;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);
+  font-family:ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;line-height:1.55}
+.wrap{max-width:1240px;margin:0 auto;padding:0 22px 70px}
+h1,h2,h3,.disp{font-family:Archivo,sans-serif;text-wrap:balance}
+.mono,code,pre,textarea,.chip,.step .k{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+
+header{padding:34px 0 22px;border-bottom:2px solid var(--ink);margin-bottom:26px}
+.brand{display:flex;align-items:center;gap:11px;margin-bottom:22px}
+.brand svg{width:30px;height:30px;color:var(--ink);flex:none}
+.brand b{font-family:Archivo;font-weight:600;font-size:18px;letter-spacing:-.4px}
+.brand span{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-faint);border-left:1px solid var(--rule);padding-left:11px}
+h1{font-size:clamp(26px,4vw,40px);line-height:1.06;font-weight:700;letter-spacing:-1.2px;margin:0 0 12px;max-width:20ch}
+.sub{font-size:16px;color:var(--ink-soft);max-width:70ch;margin:0}
+.sub b{color:var(--ink);font-weight:600}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+.panel > h2{font-size:12px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-faint);
+  font-weight:500;margin:0;padding:12px 16px;background:var(--sunk);border-bottom:1px solid var(--rule);
+  font-family:"IBM Plex Mono",monospace;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.panel .body{padding:14px 16px}
+textarea{width:100%;background:var(--sunk);color:var(--ink);border:1px solid var(--rule);
+  border-radius:4px;padding:11px 12px;font-size:12px;line-height:1.5;resize:vertical;tab-size:2}
+textarea:focus-visible{outline:2px solid var(--copper);outline-offset:1px}
+label{display:block;font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-faint);margin:0 0 6px;font-family:"IBM Plex Mono",monospace}
+.field + .field{margin-top:14px}
+
+.verdict{display:flex;align-items:center;gap:11px;padding:14px 16px;border-bottom:1px solid var(--rule)}
+.dot{width:11px;height:11px;border-radius:50%;flex:none}
+.verdict .t{font-family:Archivo;font-weight:600;font-size:17px;letter-spacing:-.3px}
+.verdict .n{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink-faint)}
+.step{display:grid;grid-template-columns:auto 1fr;gap:11px;padding:10px 16px;border-bottom:1px solid var(--rule-soft);align-items:start}
+.step:last-child{border-bottom:0}
+.step .m{width:18px;height:18px;border-radius:4px;display:grid;place-items:center;
+  font-size:11px;font-weight:700;margin-top:1px;flex:none}
+.step .k{font-size:12.5px;font-weight:500}
+.step .d{font-size:12px;color:var(--ink-soft);word-break:break-word;margin-top:2px}
+.ok .m{background:var(--ok-bg);color:var(--ok)} .bad .m{background:var(--bad-bg);color:var(--bad)}
+.skip .m{background:var(--skip-bg);color:var(--skip)}
+
+.tamper{display:flex;flex-wrap:wrap;gap:7px;padding:12px 16px;border-top:1px solid var(--rule);background:var(--sunk)}
+button{font-family:"IBM Plex Mono",monospace;font-size:11.5px;background:var(--surface);
+  color:var(--ink);border:1px solid var(--rule);border-radius:4px;padding:6px 10px;cursor:pointer}
+button:hover{border-color:var(--copper);color:var(--copper)}
+button:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+button.reset{border-color:var(--copper);color:var(--copper)}
+
+.note{margin-top:22px;background:var(--surface);border:1px solid var(--rule);
+  border-left:3px solid var(--copper);border-radius:4px;padding:16px 18px}
+.note p{margin:0 0 10px}.note p:last-child{margin:0}
+.note .lbl{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--copper);display:block;margin-bottom:7px;font-weight:500}
+.chip{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;
+  background:var(--ok-bg);color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 26%,transparent)}
+footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--ink-faint)}
+a{color:var(--copper)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.4">
+        <path d="M7 11 H16 C20.5 11 21 19 24 19 C27 19 27.5 11 32 11 H41"/>
+        <path d="M7 37 H16 C20.5 37 21 29 24 29 C27 29 27.5 37 32 37 H41"/>
+        <path d="M7 11 V37"/><path d="M41 11 V37"/>
+      </g>
+      <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
+        <path d="M12 17 Q20 24 24 24" stroke-width="2.6"/>
+        <path d="M12 31 Q20 24 24 24" stroke-width="2.6"/>
+        <path d="M24 24 H36" stroke-width="3.2"/>
+      </g>
+    </svg>
+    <b>crimp</b><span>Determination Format v0.1</span>
+  </div>
+  <h1>Check a refusal without trusting whoever issued it</h1>
+  <p class="sub">Paste a determination and the values <b>you</b> hold. This page recomputes the
+  rule hash, the fact commitments, and re-runs the sealed rule — entirely in your browser, with
+  no account, no network request, and no access to the issuer. <b>Try breaking it.</b></p>
+</header>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Input <span class="chip" id="selftest">self-test…</span></h2>
+    <div class="body">
+      <div class="field">
+        <label for="det">The determination</label>
+        <textarea id="det" rows="17" spellcheck="false"></textarea>
+      </div>
+      <div class="field">
+        <label for="held">Your own record of the values</label>
+        <textarea id="held" rows="6" spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="tamper">
+      <button data-t="value">change a value</button>
+      <button data-t="rule">change the rule</button>
+      <button data-t="hash">forge the hash</button>
+      <button data-t="polarity">flip a polarity</button>
+      <button data-t="state">claim a different state</button>
+      <button data-t="subject">add a subject id</button>
+      <button class="reset" data-t="reset">reset</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Verification</h2>
+    <div id="verdict" class="verdict"><span class="dot"></span><span class="t">…</span><span class="n"></span></div>
+    <div id="steps"></div>
+  </div>
+</div>
+
+<div class="note">
+  <span class="lbl">Why this page has no server</span>
+  <p>Verification is a pure function over data you already hold. It needs no credential, because it
+  grants nothing — and it must not need one, or the reproducibility claim reduces to
+  <em>trust the issuer's API</em>.</p>
+  <p>The code here is a <b>second, independent implementation</b> of the published specification,
+  written from the text rather than from the reference implementation. It passes the same public
+  conformance vectors. That is the only real evidence a format is a standard rather than a
+  description of one codebase — if the two ever disagree, at least one is wrong, and finding out
+  which is the point.</p>
+</div>
+
+<footer>
+  <p>The issuer never stored the values — only <code>SHA-256</code> commitments to them. That is why
+  you can check this, and why erasing the underlying facts does not invalidate any determination.
+  A determination carries <b>no subject identifier</b>: it is about a decision, not a person.</p>
+  <p>Deimos AI LLC · Apache-2.0 · the specification is published prior art and anyone may implement it</p>
+</footer>
+</div>
+
+<script type="module">
+const TRUE = 'true', FALSE = 'false', UNKNOWN = 'unknown';
+
+/* ── §5 · Canonical form ─────────────────────────────────────────────── */
+
+function canonical(node) {
+  if (Array.isArray(node)) {
+    // §5.4 — set members sorted AND de-duplicated. Multiplicity carries no
+    // meaning in a set, so `in ["CA"]` and `in ["CA","CA"]` are one rule.
+    const uniq = [...new Set(node.map((m) => JSON.stringify(m)))].sort();
+    return `[${uniq.join(',')}]`;
+  }
+  if (node && typeof node === 'object') {
+    for (const k of ['all', 'any']) {
+      if (k in node) {
+        // §5.3 — commutative, so children sort by their own canonical form.
+        return `{"${k}":[${node[k].map(canonical).sort().join(',')}]}`;
+      }
+    }
+    if ('not' in node) return `{"not":${canonical(node.not)}}`;
+    return `{${Object.keys(node).sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(node[k])}`).join(',')}}`;
+  }
+  // §5.6 — strings NFC-normalised. §5.5 — integers only, so no float format.
+  if (typeof node === 'string') return JSON.stringify(node.normalize('NFC'));
+  return JSON.stringify(node);
+}
+
+const enc = new TextEncoder();
+async function sha256(text) {
+  const d = await crypto.subtle.digest('SHA-256', enc.encode(text));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const ruleHash = (rule) => sha256(canonical(rule));
+
+/* ── §6 · Fact commitments ───────────────────────────────────────────── */
+
+const valueDigest = (factType, value) => sha256(canonical({ t: factType, v: value }));
+
+/* ── §4 · Three-valued evaluation ────────────────────────────────────── */
+
+const negate = (t) => (t === TRUE ? FALSE : t === FALSE ? TRUE : UNKNOWN);
+
+function evaluate(rule, facts) {
+  if ('all' in rule) {
+    const p = rule.all.map((r) => evaluate(r, facts));
+    return p.includes(FALSE) ? FALSE : p.includes(UNKNOWN) ? UNKNOWN : TRUE;
+  }
+  if ('any' in rule) {
+    const p = rule.any.map((r) => evaluate(r, facts));
+    return p.includes(TRUE) ? TRUE : p.includes(UNKNOWN) ? UNKNOWN : FALSE;
+  }
+  if ('not' in rule) return negate(evaluate(rule.not, facts));
+
+  const f = facts[rule.fact];
+  // §4 — an absent or expired fact is UNKNOWN. Never false. This single line
+  // is the difference between this format and a boolean one.
+  if (f === undefined) return UNKNOWN;
+
+  const norm = (v) => (typeof v === 'string' ? v.normalize('NFC') : v);
+  const left = norm(f.value);
+  const lit = rule.value;
+  const set = () => new Set((Array.isArray(lit) ? lit : []).map(norm));
+  const t = (b) => (b ? TRUE : FALSE);
+
+  switch (rule.op) {
+    case 'eq': return t(left === norm(lit));
+    case 'ne': return t(left !== norm(lit));
+    case 'lt': return t(left < lit);
+    case 'lte': return t(left <= lit);
+    case 'gt': return t(left > lit);
+    case 'gte': return t(left >= lit);
+    case 'in': return t(set().has(left));
+    case 'nin': return t(!set().has(left));
+    default: throw new Error(`unknown operator: ${rule.op}`);
+  }
+}
+
+/* ── §7.1 · Reasons ──────────────────────────────────────────────────── */
+
+const join = (path, seg) => (path === '' ? seg : `${path}.${seg}`);
+
+function reasons(rule, facts, target) {
+  const want = target ?? evaluate(rule, facts);
+  return walk(rule, facts, want, '', false);
+}
+
+function walk(rule, facts, want, path, negated) {
+  for (const kind of ['all', 'any']) {
+    if (kind in rule) {
+      const deciding = kind === 'all' ? FALSE : TRUE;
+      const out = [];
+      rule[kind].forEach((child, i) => {
+        const t = evaluate(child, facts);
+        const include = want === deciding ? t === deciding
+          : want === UNKNOWN ? t === UNKNOWN : true;
+        // The REQUESTED truth travels down, never the child's actual one.
+        // They are identical for any honest question; they diverge only when
+        // somebody asks why a determination was refused that was not refused,
+        // and there the walk must run out of clauses rather than re-anchor.
+        if (include) out.push(...walk(child, facts, want, join(path, `${kind}[${i}]`), negated));
+      });
+      return out;
+    }
+  }
+  if ('not' in rule) return walk(rule.not, facts, negate(want), join(path, 'not'), !negated);
+
+  const t = evaluate(rule, facts);
+  return t === want
+    ? [{
+      path: path === '' ? 'rule' : path,
+      fact: rule.fact, op: rule.op, value: rule.value, truth: t,
+      polarity: negated ? 'negated' : 'direct',
+    }]
+    : [];
+}
+
+/* ── §8 · Verification procedure ─────────────────────────────────────── */
+
+const CONSISTENT = {
+  [TRUE]: ['sealed', 'clawed', 'expired'],
+  [FALSE]: ['lapsed', 'clawed', 'expired'],
+  [UNKNOWN]: ['tainted', 'clawed', 'expired'],
+};
+
+/**
+ * Verify a determination against values you hold yourself.
+ *
+ * `held` maps fact name to `{ type, value }`. Every step is reported
+ * separately rather than collapsed into a boolean: a verifier that says only
+ * "invalid" is one nobody can act on.
+ */
+async function verify(det, held = {}, opts = {}) {
+  const steps = [];
+  const add = (step, ok, detail) => steps.push({ step, ok, detail });
+
+  add('grammar version', (opts.grammars ?? ['1']).includes(det.grammar_version),
+    `declared ${det.grammar_version}`);
+  add('commitment scheme',
+    (opts.schemes ?? ['sha256-v1']).includes(det.commitment_scheme ?? 'sha256-v1'),
+    `declared ${det.commitment_scheme ?? 'sha256-v1'} (assumed)`);
+
+  const rh = await ruleHash(det.rule);
+  add('rule hash', rh === det.rule_hash,
+    rh === det.rule_hash ? rh : `recomputed ${rh}, record says ${det.rule_hash}`);
+
+  const facts = {};
+  let checked = 0, matched = 0;
+  for (const f of det.facts ?? []) {
+    const mine = held[f.fact];
+    if (mine === undefined) continue;
+    checked++;
+    const d = await valueDigest(mine.type ?? f.fact_type, mine.value);
+    if (d === f.value_sha256) { matched++; facts[f.fact] = { type: f.fact_type, value: mine.value }; }
+    else add(`commitment · ${f.fact}`, false, `your value digests to ${d}, record says ${f.value_sha256}`);
+  }
+  add('commitments', checked > 0 && matched === checked,
+    checked === 0
+      ? 'no values supplied — supply your own record to check the rest'
+      : `${matched} of ${checked} supplied values match`);
+
+  if (matched === checked && checked === (det.facts ?? []).length && checked > 0) {
+    const truth = evaluate(det.rule, facts);
+    const ok = (CONSISTENT[truth] ?? []).includes(det.state);
+    add('re-evaluation', ok, `rule now evaluates ${truth}; record states "${det.state}"`
+      + (ok ? '' : ` — expected one of ${CONSISTENT[truth].join(', ')}`));
+
+    if (det.reasons?.length) {
+      const named = [...new Set(det.reasons.map((r) => r.fact))];
+      const narrowed = Object.fromEntries(Object.entries(facts).filter(([k]) => named.includes(k)));
+      add('reasons · sufficiency', evaluate(det.rule, narrowed) === truth,
+        'restricting facts to those the reasons name gives the same outcome');
+    }
+  } else if (checked > 0) {
+    add('re-evaluation', null, 'skipped — supply every fact the record names');
+  }
+
+  // ACCURACY is checkable with no values at all: it is a property of the
+  // reasons and the paths alone. Sufficiency is monotone and cannot catch
+  // over-reporting, so this is the one that finds a reason offered for an
+  // outcome it does not carry.
+  if (det.reasons?.length) {
+    const bad = det.reasons.filter((r) => {
+      const parity = r.path.split('.').filter((s) => s === 'not').length % 2;
+      return (parity === 1) !== (r.polarity === 'negated');
+    });
+    add('reasons · accuracy', bad.length === 0,
+      bad.length === 0 ? 'every polarity matches the parity of its path'
+        : `${bad.length} reason(s) whose polarity disagrees with their path`);
+  }
+
+  add('no subject identifier', !JSON.stringify(det).includes('subject_id'),
+    'a determination is about a decision, not a person');
+
+  return { steps, ok: steps.every((s) => s.ok !== false) };
+}
+
+const EXAMPLE = {
+  "seal_id": "seal_8wmazngd95kz51dt",
+  "scope": "refund.issue",
+  "disposition": "bind",
+  "state": "sealed",
+  "rule": {
+    "all": [
+      {
+        "fact": "carrier.delivered",
+        "op": "eq",
+        "value": false
+      },
+      {
+        "fact": "prior_refunds_90d",
+        "op": "lt",
+        "value": 3
+      }
+    ]
+  },
+  "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+  "grammar_version": "1",
+  "commitment_scheme": "sha256-v1",
+  "sealed_by": "agent",
+  "sealed_at": "2026-09-07T12:00:00.000Z",
+  "expires_at": "2026-10-07T12:00:00.000Z",
+  "reasons": [
+    {
+      "path": "all[0]",
+      "fact": "carrier.delivered",
+      "op": "eq",
+      "value": false,
+      "truth": "true",
+      "polarity": "direct"
+    },
+    {
+      "path": "all[1]",
+      "fact": "prior_refunds_90d",
+      "op": "lt",
+      "value": 3,
+      "truth": "true",
+      "polarity": "direct"
+    }
+  ],
+  "facts": [
+    {
+      "fact": "carrier.delivered",
+      "fact_type": "bool",
+      "value_sha256": "4edf146e54aeae5a988adc5f8e6961ebcda73457d71cd354d2b3c152b65b7b3c",
+      "source": "carrier_api",
+      "admissibility": "receipt",
+      "asserted_at": "2026-09-06T09:14:00.000Z"
+    },
+    {
+      "fact": "prior_refunds_90d",
+      "fact_type": "int",
+      "value_sha256": "8c9a880cea8da3f9fd7c1796bd4259bb456544cdda3023bfc12caf01d6f0b915",
+      "source": "core_ledger",
+      "admissibility": "internal",
+      "asserted_at": "2026-09-07T11:58:00.000Z"
+    }
+  ],
+  "events": [
+    {
+      "kind": "sealed",
+      "actor": "agent",
+      "occurred_at": "2026-09-07T12:00:00.000Z"
+    }
+  ]
+};
+const HELD = {
+  "carrier.delivered": {
+    "type": "bool",
+    "value": false
+  },
+  "prior_refunds_90d": {
+    "type": "int",
+    "value": 1
+  }
+};
+const VECTORS = {
+  "spec_version": "0.1",
+  "note": "Expected values derived from SPEC.md, not from any implementation. If an implementation disagrees, establish which side is wrong before editing either.",
+  "canonical": [
+    {
+      "name": "commutative children sort, so order cannot change identity",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "canonical": "{\"all\":[{\"fact\":\"carrier.delivered\",\"op\":\"eq\",\"value\":false},{\"fact\":\"prior_refunds_90d\",\"op\":\"lt\",\"value\":3}]}",
+      "rule_sha256": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5"
+    },
+    {
+      "name": "the same rule written the other way round hashes identically",
+      "rule": {
+        "all": [
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          },
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          }
+        ]
+      },
+      "canonical": "{\"all\":[{\"fact\":\"carrier.delivered\",\"op\":\"eq\",\"value\":false},{\"fact\":\"prior_refunds_90d\",\"op\":\"lt\",\"value\":3}]}",
+      "rule_sha256": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5"
+    },
+    {
+      "name": "set members sort AND de-duplicate — SPEC 5.4",
+      "rule": {
+        "fact": "state",
+        "op": "in",
+        "value": [
+          "TX",
+          "CA",
+          "CA",
+          "AL"
+        ]
+      },
+      "canonical": "{\"fact\":\"state\",\"op\":\"in\",\"value\":[\"AL\",\"CA\",\"TX\"]}",
+      "rule_sha256": "f0138e9f360b6a6c4d40a870080307367bf3b6ff83872cdaa69df2aa068c623e"
+    },
+    {
+      "name": "double negation is preserved, not folded — the grammar is not simplified",
+      "rule": {
+        "not": {
+          "not": {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          }
+        }
+      },
+      "canonical": "{\"not\":{\"not\":{\"fact\":\"a\",\"op\":\"eq\",\"value\":true}}}",
+      "rule_sha256": "93c3f9efd8b1e0b421873779e5829ae0db08d9cfb87d73ecded1433eb456a437"
+    }
+  ],
+  "digest": [
+    {
+      "name": "integer",
+      "fact_type": "int",
+      "value": 7,
+      "value_sha256": "a27103d6e0e29c80b8446132b95879d1d6ed74517aa17769ebafaaf9540ce78f"
+    },
+    {
+      "name": "boolean false — distinct from absent, which has no digest at all",
+      "fact_type": "bool",
+      "value": false,
+      "value_sha256": "4edf146e54aeae5a988adc5f8e6961ebcda73457d71cd354d2b3c152b65b7b3c"
+    },
+    {
+      "name": "string, NFC normalised",
+      "fact_type": "str",
+      "value": "café",
+      "value_sha256": "96994357502bfafa2a4f4c089b61a9adfc422cec6f587f5f798cb7806b8be178"
+    },
+    {
+      "name": "epoch millis are integers",
+      "fact_type": "time",
+      "value": 1788000000000,
+      "value_sha256": "cdd555cbd702f993fcca1758f1786b1d4acdcabf12b6c9302a756a0082689d29"
+    }
+  ],
+  "evaluate": [
+    {
+      "name": "both hold",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 1
+        }
+      },
+      "truth": "true"
+    },
+    {
+      "name": "one fails and decides the conjunction",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 9
+        }
+      },
+      "truth": "false"
+    },
+    {
+      "name": "an ABSENT fact is unknown, never false — SPEC 4",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        }
+      },
+      "truth": "unknown"
+    },
+    {
+      "name": "one false child decides a conjunction even with an unknown sibling",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 9
+        }
+      },
+      "truth": "false"
+    },
+    {
+      "name": "one true child decides a disjunction even with an unknown sibling",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          },
+          {
+            "fact": "b",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "facts": {
+        "a": {
+          "type": "bool",
+          "value": true
+        }
+      },
+      "truth": "true"
+    },
+    {
+      "name": "negation of unknown is unknown",
+      "rule": {
+        "not": {
+          "fact": "a",
+          "op": "eq",
+          "value": true
+        }
+      },
+      "facts": {},
+      "truth": "unknown"
+    }
+  ],
+  "reasons": [
+    {
+      "name": "a conjunction that held needed every clause",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 1
+        }
+      },
+      "truth": "true",
+      "reasons": [
+        {
+          "path": "all[0]",
+          "fact": "carrier.delivered",
+          "truth": "true",
+          "polarity": "direct"
+        },
+        {
+          "path": "all[1]",
+          "fact": "prior_refunds_90d",
+          "truth": "true",
+          "polarity": "direct"
+        }
+      ]
+    },
+    {
+      "name": "a conjunction that failed names only the clause that failed",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 9
+        }
+      },
+      "truth": "false",
+      "reasons": [
+        {
+          "path": "all[1]",
+          "fact": "prior_refunds_90d",
+          "truth": "false",
+          "polarity": "direct"
+        }
+      ]
+    },
+    {
+      "name": "a disjunction that held names only the branch that fired",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          },
+          {
+            "fact": "b",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "facts": {
+        "a": {
+          "type": "bool",
+          "value": false
+        },
+        "b": {
+          "type": "bool",
+          "value": true
+        }
+      },
+      "truth": "true",
+      "reasons": [
+        {
+          "path": "any[1]",
+          "fact": "b",
+          "truth": "true",
+          "polarity": "direct"
+        }
+      ]
+    },
+    {
+      "name": "a clause under one negation is negated and carries the OPPOSITE truth",
+      "rule": {
+        "not": {
+          "fact": "a",
+          "op": "eq",
+          "value": true
+        }
+      },
+      "facts": {
+        "a": {
+          "type": "bool",
+          "value": false
+        }
+      },
+      "truth": "true",
+      "reasons": [
+        {
+          "path": "not",
+          "fact": "a",
+          "truth": "false",
+          "polarity": "negated"
+        }
+      ]
+    },
+    {
+      "name": "double negation is DIRECT — polarity is parity, not presence",
+      "rule": {
+        "not": {
+          "not": {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          }
+        }
+      },
+      "facts": {
+        "a": {
+          "type": "bool",
+          "value": true
+        }
+      },
+      "truth": "true",
+      "reasons": [
+        {
+          "path": "not.not",
+          "fact": "a",
+          "truth": "true",
+          "polarity": "direct"
+        }
+      ]
+    },
+    {
+      "name": "asking for an outcome that did not happen returns nothing",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 1
+        }
+      },
+      "truth": "false",
+      "reasons": []
+    }
+  ],
+  "refuse": [
+    {
+      "name": "an empty conjunction is vacuously true — a decision about nobody",
+      "rule": {
+        "all": []
+      }
+    },
+    {
+      "name": "an empty disjunction",
+      "rule": {
+        "any": []
+      }
+    },
+    {
+      "name": "non-integer numbers make equality a lie",
+      "rule": {
+        "fact": "a",
+        "op": "eq",
+        "value": 1.5
+      }
+    },
+    {
+      "name": "an ordered comparison against a boolean",
+      "rule": {
+        "fact": "a",
+        "op": "lt",
+        "value": true
+      }
+    },
+    {
+      "name": "a set operator with an empty set",
+      "rule": {
+        "fact": "a",
+        "op": "in",
+        "value": []
+      }
+    },
+    {
+      "name": "an unknown operator",
+      "rule": {
+        "fact": "a",
+        "op": "matches",
+        "value": "x"
+      }
+    },
+    {
+      "name": "an unusable fact name",
+      "rule": {
+        "fact": "A.Bad-Name",
+        "op": "eq",
+        "value": 1
+      }
+    },
+    {
+      "name": "no presence operator exists — SPEC 3.2",
+      "rule": {
+        "fact": "a",
+        "op": "present",
+        "value": true
+      }
+    }
+  ]
+}
+;
+
+const $ = (s) => document.querySelector(s);
+const detEl = $('#det'), heldEl = $('#held');
+
+function load(det = EXAMPLE, held = HELD) {
+  detEl.value = JSON.stringify(det, null, 2);
+  heldEl.value = JSON.stringify(held, null, 2);
+  run();
+}
+
+async function run() {
+  let det, held;
+  try { det = JSON.parse(detEl.value); } catch (e) { return fail('The determination is not valid JSON.'); }
+  try { held = JSON.parse(heldEl.value); } catch (e) { return fail('Your values are not valid JSON.'); }
+  let r;
+  try { r = await verify(det, held); } catch (e) { return fail(String(e && e.message || e)); }
+
+  const bad = r.steps.filter(s => s.ok === false).length;
+  const v = $('#verdict');
+  v.querySelector('.dot').style.background = bad ? 'var(--bad)' : 'var(--ok)';
+  v.querySelector('.t').textContent = bad ? 'Does not verify' : 'Verifies';
+  v.querySelector('.t').style.color = bad ? 'var(--bad)' : 'var(--ok)';
+  v.querySelector('.n').textContent = bad ? `${bad} check${bad>1?'s':''} failed` : `${r.steps.length} checks passed`;
+
+  $('#steps').innerHTML = r.steps.map(s => {
+    const cls = s.ok === false ? 'bad' : s.ok === null ? 'skip' : 'ok';
+    const mk  = s.ok === false ? '✕' : s.ok === null ? '–' : '✓';
+    return `<div class="step ${cls}"><span class="m">${mk}</span>
+      <span><span class="k">${esc(s.step)}</span><div class="d">${esc(s.detail)}</div></span></div>`;
+  }).join('');
+}
+
+function fail(msg) {
+  const v = $('#verdict');
+  v.querySelector('.dot').style.background = 'var(--bad)';
+  v.querySelector('.t').textContent = 'Cannot read input';
+  v.querySelector('.t').style.color = 'var(--bad)';
+  v.querySelector('.n').textContent = '';
+  $('#steps').innerHTML = `<div class="step bad"><span class="m">✕</span>
+    <span><span class="k">input</span><div class="d">${esc(msg)}</div></span></div>`;
+}
+const esc = (s) => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+const TAMPER = {
+  value:    () => { const h = structuredClone(HELD); h['prior_refunds_90d'].value = 9; load(EXAMPLE, h); },
+  rule:     () => { const d = structuredClone(EXAMPLE); d.rule.all[1].value = 99; load(d); },
+  hash:     () => { const d = structuredClone(EXAMPLE); d.rule_hash = 'f'.repeat(64); load(d); },
+  polarity: () => { const d = structuredClone(EXAMPLE); d.reasons[0].polarity = 'negated'; load(d); },
+  state:    () => { const d = structuredClone(EXAMPLE); d.state = 'lapsed'; load(d); },
+  subject:  () => { const d = structuredClone(EXAMPLE); d.subject_id = 'sub_9f2c41'; load(d); },
+  reset:    () => load(),
+};
+for (const b of document.querySelectorAll('.tamper button')) {
+  b.addEventListener('click', () => TAMPER[b.dataset.t]());
+}
+let t; for (const el of [detEl, heldEl]) {
+  el.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 250); });
+}
+
+// Self-test against the published conformance vectors, in this browser.
+(async () => {
+  let pass = 0, total = 0;
+  for (const c of VECTORS.canonical) { total += 2;
+    if (canonical(c.rule) === c.canonical) pass++;
+    if (await sha256(canonical(c.rule)) === c.rule_sha256) pass++; }
+  for (const c of VECTORS.digest) { total++;
+    if (await sha256(canonical({t:c.fact_type, v:c.value})) === c.value_sha256) pass++; }
+  for (const c of VECTORS.evaluate) { total++; if (evaluate(c.rule, c.facts) === c.truth) pass++; }
+  for (const c of VECTORS.reasons) { total++;
+    const got = reasons(c.rule, c.facts, c.truth)
+      .map(r => ({path:r.path, fact:r.fact, truth:r.truth, polarity:r.polarity}));
+    if (JSON.stringify(got) === JSON.stringify(c.reasons)) pass++; }
+  const el = $('#selftest');
+  el.textContent = `${pass}/${total} vectors`;
+  if (pass !== total) { el.style.background='var(--bad-bg)'; el.style.color='var(--bad)';
+    el.style.borderColor='color-mix(in srgb,var(--bad) 26%,transparent)'; }
+})();
+
+load();
+</script>

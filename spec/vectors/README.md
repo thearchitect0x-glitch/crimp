@@ -24,6 +24,12 @@ npm run conformance
 Against yours: read `vectors.json`, run each case, compare. The file is the
 contract; the runner is a convenience.
 
+`npm run conformance` runs them against **two** implementations: the reference
+one in `src/`, and the independent one in `spec/verifier.mjs` which was written
+from the specification text and imports nothing from `src/`. Two independent
+implementations agreeing is the only real evidence that the specification is
+sufficient — one implementation agreeing with itself proves nothing.
+
 ## What each group asserts
 
 | Group | Spec § | Why it is here |

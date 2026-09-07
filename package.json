@@ -25,7 +25,7 @@
     "fuzz": "FUZZ_RUNS=${FUZZ_RUNS:-25000} tsx --test test/unit/fuzz-*.test.ts",
     "audit": "npm audit --omit=dev --audit-level=high",
     "mint": "tsx scripts/mint.ts",
-    "conformance": "tsx scripts/conformance.ts"
+    "conformance": "tsx scripts/conformance.ts && node scripts/conformance-verifier.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.2",
