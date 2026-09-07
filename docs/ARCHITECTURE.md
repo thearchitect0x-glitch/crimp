@@ -156,6 +156,63 @@ poisonable subjects is visible precisely in the attempts that failed.
 `POST /v1/subjects/carve-out` is the only correction, and it is deliberately
 weaker than an undo — see ASSURANCE_CASE.md §4 for exactly how weak.
 
+## Why, on the record — and who asked
+
+A determination that cannot say why is not usable by the buyers this is for.
+ECOA/Regulation B requires the specific principal reasons for an adverse
+action; CFPB Circular 2022-03 is explicit that a complex algorithm does not
+excuse a creditor from giving them. Crimp holds the rule that was applied, so
+it is the only party that can derive the reason mechanically rather than
+reconstruct it afterwards.
+
+**Reasons are structured, never prose.** A path, a fact name, an operator, a
+literal, the truth it carried, and its polarity. `src/domain/explain.ts`
+follows Kleene directly — a conjunction that failed is explained by its false
+children, a disjunction that held by its true ones — and two properties keep it
+honest:
+
+- **SUFFICIENCY** — restricting the facts to those the reasons name gives the
+  same answer. Catches under-reporting.
+- **ACCURACY** — every reason carries the outcome it is offered for, or its
+  negation under an odd number of `not`s. Catches over-reporting, which
+  SUFFICIENCY structurally cannot: telling somebody they were refused because
+  of a condition they satisfied is the inaccurate-reason violation itself.
+
+**Two fidelities, and the split is the security design.** A reason naming the
+clause leaks nothing — the caller submitted the rule. A reason carrying the
+observed value discloses what the institution holds about a person *and*
+collapses threshold discovery from a binary search over repeated
+attest-and-seal cycles into one call. That is the structuring vector Ratchet
+exists to detect. A creditor must nonetheless give the reason, so the answer is
+neither to refuse it nor to hand it out:
+
+| | `POST /v1/seals` and `GET /v1/seals/:id` | `POST /v1/seals/:id/disclosure` |
+|---|---|---|
+| Clause, operator, literal, polarity | yes | yes |
+| Observed value, source, admissibility | no | yes |
+| The value that would have passed | no | yes |
+| Authority | `seals:read` | `seals:disclose` **and** operator |
+| Recorded as an event | no | **yes** |
+
+Nobody anywhere currently records who asked why a person was refused. For a
+regulated buyer that record is itself the compliance artifact, and
+`GET /v1/insight/disclosures` is the log. It is deliberately **not** pressure:
+asking why is not resisting, and counting it as contestation would corrupt the
+quadrant.
+
+## The proof
+
+`GET /v1/seals/:id` returns what an examiner needs and nothing that identifies
+a person: the rule as written, its canonical hash, the grammar version, the
+reason set, every event, and for each fact the seal read its name, type,
+source, admissibility, assertion time and `sha256(canonicalize({t, v}))` of the
+value. **Not the value** — Crimp never held it. There is no subject id either;
+a proof is about a determination, not a person.
+
+The artifact carries its own verification instructions, because a proof that
+does not say how to check it will not be checked, and documentation explaining
+it may not still be hosted in 2032.
+
 ## Three fields the contract requires, and why
 
 | Field | Required | Because |

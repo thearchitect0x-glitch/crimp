@@ -13,6 +13,7 @@ import { newId, sha256Hex, canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
 import { resolveForRead, resolveForWrite } from './subject.js';
+import { reasons, type Reason } from './explain.js';
 import {
   validateRule, canonicalRule, factsReferenced,
   GRAMMAR_VERSION, SUPPORTED_GRAMMAR_VERSIONS,
@@ -66,6 +67,15 @@ export interface SealResult {
   disposition: Disposition;
   ruleHash: string;
   reason: string;
+  /**
+   * The clauses that decided it, value-free.
+   *
+   * Returned to whoever created the determination without any further gate:
+   * every field is a projection of the rule they just submitted, so it
+   * discloses nothing they did not already send. The observed values are a
+   * separate, recorded act — see `disclosure()`.
+   */
+  reasons: Reason[];
 }
 
 /* ── Subject resolution ──────────────────────────────────────────────── */
@@ -166,8 +176,8 @@ export async function seal(
     // Replay before doing any work. A retry must be cheap and must not
     // re-resolve subjects or re-evaluate anything.
     const { rows: prior } = await tx.query<{
-      id: string; disposition: Disposition; rule_hash: string;
-    }>(`SELECT id, disposition, rule_hash FROM seals
+      id: string; disposition: Disposition; rule_hash: string; reasons: Reason[];
+    }>(`SELECT id, disposition, rule_hash, reasons FROM seals
          WHERE workspace_id = $1 AND idempotency_key = $2`,
       [workspaceId, input.idempotencyKey]);
     if (prior[0]) {
@@ -181,6 +191,11 @@ export async function seal(
         sealId: prior[0].id, outcome: 'replayed' as const,
         disposition: prior[0].disposition, ruleHash,
         reason: 'This determination already exists. Returning the original.',
+        // The reasons the ORIGINAL was decided on, not a fresh derivation
+        // against today's facts. A replay must return the determination that
+        // was made, or a retry after an attestation changed would report a
+        // different decision under the same identifier.
+        reasons: prior[0].reasons,
       };
     }
 
@@ -208,19 +223,27 @@ export async function seal(
         sealId: null, outcome: 'not_applicable' as const,
         disposition: input.disposition, ruleHash,
         reason: 'The rule did not hold against the attested facts. No determination was created.',
+        // Which clauses failed, so the caller knows why their own rule did not
+        // apply. Nothing is stored: no determination exists to attach it to.
+        reasons: reasons(rule, facts, FALSE),
       };
     }
+
+    // Derived here and stored, because it cannot be re-derived later: knowing
+    // which branch of an `any` fired needs the facts as they were, and those
+    // are kept only as digests.
+    const why = reasons(rule, facts, TRUE);
 
     const sealId = newId('seal');
     await tx.query(
       `INSERT INTO seals (id, workspace_id, subject_id, scope, disposition, rule, rule_hash,
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
-                          claw_cooling_off_s, max_uses, idempotency_key, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+                          claw_cooling_off_s, max_uses, idempotency_key, expires_at, reasons)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
-        input.idempotencyKey, input.expiresAt ?? null],
+        input.idempotencyKey, input.expiresAt ?? null, JSON.stringify(why)],
     );
 
     for (const r of rows) {
@@ -240,7 +263,7 @@ export async function seal(
 
     return {
       sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash,
-      reason: 'The rule held. The determination is sealed.',
+      reason: 'The rule held. The determination is sealed.', reasons: why,
     };
   });
 }

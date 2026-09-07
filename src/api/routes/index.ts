@@ -9,6 +9,7 @@ import {
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
   sourcesToWire, quadrantToWire, cliffsToWire, keyToWire,
+  proofToWire, disclosureToWire,
   type WireClaw, type WireFact,
 } from '../serialize.js';
 import { attest } from '../../domain/attest.js';
@@ -16,6 +17,7 @@ import { seal, lookup, exercise, claw } from '../../domain/seal.js';
 import { sourceReliability, quadrant, cliffs } from '../../domain/insight.js';
 import { declareCohort, placeInCohort } from '../../domain/cohort.js';
 import { mergeSubjects, carveOut } from '../../domain/merge.js';
+import { proof, disclosure, disclosures } from '../../domain/record.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -95,6 +97,35 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   }, async (req) => {
     const p = await authorized(req, 'permits:exercise');
     return exercise(p, { sealId: req.params.id });
+  });
+
+  /* ── The record ──────────────────────────────────────────────────── */
+  app.get<{ Params: { id: string } }>('/seals/:id', {
+    schema: { response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'seals:read');
+    return proofToWire(await proof(p, req.params.id));
+  });
+
+  // A POST, because it has a side effect: the disclosure is recorded. Nobody
+  // anywhere currently records who asked why a person was refused, and for a
+  // regulated buyer that record IS the compliance artifact.
+  app.post<{ Params: { id: string } }>('/seals/:id/disclosure', {
+    schema: { response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'seals:disclose');
+    return disclosureToWire(await disclosure(p, req.params.id));
+  });
+
+  app.get<{ Querystring: { days?: string } }>('/insight/disclosures', {
+    schema: { querystring: windowQuery, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'insight:read');
+    const rows = await disclosures(p, windowDays(req.query.days));
+    return { disclosures: rows.map((d) => ({
+      seal_id: d.sealId, actor: d.actor, facts: d.facts,
+      occurred_at: d.occurredAt.toISOString(),
+    })) };
   });
 
   /* ── Claw ────────────────────────────────────────────────────────── */

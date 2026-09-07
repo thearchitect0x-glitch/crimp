@@ -16,6 +16,8 @@ import type { SealResult, LookupResult } from '../domain/seal.js';
 import type { ClawRule } from '../domain/authority.js';
 import type { SourceReliability, QuadrantCounts, Cliff } from '../domain/insight.js';
 import type { MintedKey } from '../domain/auth.js';
+import type { Reason } from '../domain/explain.js';
+import type { Proof, Disclosure } from '../domain/record.js';
 import { ApiError } from '../lib/errors.js';
 
 /* ── Inbound ─────────────────────────────────────────────────────────── */
@@ -77,6 +79,57 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
     disposition: r.disposition,
     rule_hash: r.ruleHash,
     reason: r.reason,
+    reasons: r.reasons.map(reasonToWire),
+  };
+}
+
+/**
+ * A reason on the wire. `value` is the rule's own literal and `path` locates
+ * the clause inside it — neither says anything about the person. An observed
+ * value only ever appears through `disclosureToWire`.
+ */
+function reasonToWire(r: Reason): Record<string, unknown> {
+  return { path: r.path, fact: r.fact, op: r.op, value: r.value, truth: r.truth,
+    polarity: r.polarity };
+}
+
+export function proofToWire(p: Proof): Record<string, unknown> {
+  return {
+    seal_id: p.sealId,
+    scope: p.scope,
+    disposition: p.disposition,
+    state: p.state,
+    rule: p.rule,
+    rule_hash: p.ruleHash,
+    grammar_version: p.grammarVersion,
+    sealed_by: p.sealedBy,
+    sealed_at: p.sealedAt.toISOString(),
+    expires_at: p.expiresAt?.toISOString() ?? null,
+    reasons: p.reasons.map(reasonToWire),
+    facts: p.facts.map((f) => ({
+      fact: f.fact, fact_type: f.factType, value_sha256: f.valueSha256,
+      source: f.source, admissibility: f.admissibility,
+      asserted_at: f.assertedAt.toISOString(),
+    })),
+    events: p.events.map((e) => ({
+      kind: e.kind, actor: e.actor, evidence_sha256: e.evidenceSha256,
+      evidence_class: e.evidenceClass, occurred_at: e.occurredAt.toISOString(),
+    })),
+    verify: p.verify,
+  };
+}
+
+export function disclosureToWire(d: Disclosure): Record<string, unknown> {
+  return {
+    seal_id: d.sealId,
+    recorded_at: d.recordedAt.toISOString(),
+    reasons: d.reasons.map((r) => ({
+      ...reasonToWire(r),
+      observed: r.observed,
+      source: r.source,
+      admissibility: r.admissibility,
+      ...(r.wouldHaveNeeded !== undefined ? { would_have_needed: r.wouldHaveNeeded } : {}),
+    })),
   };
 }
 
