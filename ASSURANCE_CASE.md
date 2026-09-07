@@ -134,6 +134,23 @@ already belong to several subjects, Crimp refuses with `merge_required`. This is
 correct-but-incomplete: merges are monotone and permanent, and a wrong one drags
 strangers under somebody else's determination with no way back.
 
+**A third party can raise pressure on somebody else's determination.** Pressure
+is incremented by whoever presents a subject's aliases and is refused, so
+someone who knows an identifier can probe on that person's behalf and push
+their determination into a hardened tier — raising the authority and evidence
+needed to lift it. This is why hardening deliberately does **not** extend
+cooling-off: authority and evidence can still be met by finding a higher
+authority or better evidence, but time cannot be routed around at all, so
+hardening it would deepen this attack rather than defend against anything. The
+underlying issue is real and undefended.
+
+**The top of the authority ladder cannot seal.** A claw authority must strictly
+exceed the sealer and nothing exceeds `custodian`, so a custodian can create no
+determinations. This is the no-self-reversal rule reaching its logical end and
+is treated as correct — the highest authority governs the system rather than
+deciding cases, because its determinations could never be reversed. It does
+mean `TIME_BOUNDS.custodian` is unreachable through `seal()`.
+
 **Scopes are a tree, not a DAG.** A seal on `money.out` does not catch a refund
 today. Widening later is safe; the gap is real now.
 

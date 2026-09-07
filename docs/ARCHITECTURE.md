@@ -103,6 +103,53 @@ denial is computed only on the population that fought back.
 There is no `unless` mechanism separate from the rule. The rule *is* the
 falsification condition — re-evaluating it is what produces a lapse.
 
+## Four gates, not three
+
+A claw rule is checked on **scope**, **authority**, **evidence** and **time**.
+The first three were enforced from the beginning. The fourth was not, and the
+gap is the same shape as every other defect found in this codebase: a principle
+stated clearly, enforced on one axis, silently unenforced on the neighbouring
+one.
+
+`validateClawRule` has always bounded *who* may reverse — an agent may require
+at most one level above itself, because *"an agent that can put determinations
+beyond an operator's reach is a denial-of-service weapon pointed at its own
+workspace."* Cooling-off had one global ceiling for every authority, and a
+determination's duration had none at all. So an agent holding only
+`seals:write` could author a refusal that **never expires** and that nobody,
+including a custodian, could lift **for three months**.
+
+| Sealed by | Max cooling-off | Max duration |
+|---|---|---|
+| `agent` | 1 hour | 30 days |
+| `operator` | 7 days | 1 year |
+| `principal` | 30 days | 5 years |
+| `custodian` | 90 days | unbounded — and unreachable, see below |
+
+Cooling-off is the one defence immune to a perfectly persuasive argument, and
+its entire cost falls on the person still refused. So the authority that can
+impose the longest wait is the one accountable for it.
+
+**The closer.** An absent expiry used to mean forever. Requiring one would have
+been the obvious fix and the worse one — a bound the caller can forget is not a
+bound, and this bound protects a third party who is not in the conversation. So
+it is **capped rather than demanded**, and the chosen value is returned in
+`expires_at` so nothing is decided silently. `commit` is exempt: it records what
+an agent told a customer, and expiring a commitment erases it rather than ending
+it.
+
+**Hardening deliberately does not touch time.** Pressure raises the required
+authority and evidence floor and leaves cooling-off alone. Pressure is
+incremented by whoever presents a subject's aliases and is refused, so a third
+party can raise it on somebody else's determination — and authority and evidence
+can still be met by finding a higher authority or better evidence, while time
+cannot be routed around at all. See ASSURANCE_CASE.md §4.
+
+**A custodian cannot seal.** The claw authority must strictly exceed the sealer
+and nothing exceeds the top of a total order. That is the no-self-reversal rule
+reaching its end, and it is correct: the highest authority governs the system
+rather than deciding cases, because its determinations could never be reversed.
+
 ## Three fields the contract requires, and why
 
 | Field | Required | Because |
