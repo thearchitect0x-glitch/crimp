@@ -180,6 +180,21 @@ replicas are safe — every transition is a compare-and-set — but nothing yet
 alerts if the worker stops. A silently dead worker looks exactly like a
 workspace where nothing has changed.
 
+**One identity-linkage signal is inherent and remains.** Presenting two aliases
+that belong to different subjects is refused with `merge_required`, and the
+refusal necessarily tells the caller they are different people. That cannot be
+removed: a gate that will not say what would lift a refusal is a closed door
+rather than a refusal. It is much weaker than a returned identifier — it
+requires the aliases to already conflict, it is a failure rather than a
+success, and it names an action the caller usually cannot take alone. The
+deliberate decision was **not** to vary the error by authority: that would buy
+roughly one bit and cost conditional logic in an error path, which is the
+appearance of hardening rather than hardening.
+
+**Timing is not defended.** Creating a new subject does measurably more work
+than finding an existing one, so response time is a weak linkage side channel.
+Unmitigated, and stated rather than hidden.
+
 **Scopes are a tree, not a DAG.** A seal on `money.out` does not catch a refund
 today. Widening later is safe; the gap is real now.
 

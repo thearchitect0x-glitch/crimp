@@ -277,6 +277,21 @@ with `facts_not_attested`.
 
 That is 42 CFR 435.916 in one clause — if the data on hand is stale you may not
 determine from it, you must go and ask.
+## The join key does not leave the process
+
+No endpoint returns a subject id. Not attestation, not cohort placement, not
+the proof export.
+
+Returning it made attestation an **identity-linkage oracle**: attest one alias,
+attest another, compare the responses, and an agent granted nothing but
+`attestations:write` learns whether two identifiers belong to the same person —
+for the price of two writes. Every other part of the subject design exists to
+prevent precisely that, and the proof export already withheld it with a test
+asserting so. Those two positions were incompatible; this was the open one.
+
+Nothing outside the process needs it. `eraseSubject` is domain-internal, and
+every caller names a subject by presenting aliases, which is the only way it
+should ever be done.
 
 ## Three fields the contract requires, and why
 
