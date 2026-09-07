@@ -80,6 +80,7 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
     rule_hash: r.ruleHash,
     reason: r.reason,
     reasons: r.reasons.map(reasonToWire),
+    expires_at: r.expiresAt?.toISOString() ?? null,
   };
 }
 

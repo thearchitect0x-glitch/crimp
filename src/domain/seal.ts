@@ -23,7 +23,8 @@ import {
 import { evaluate } from './evaluate.js';
 import { validateScope, ancestors, covers } from './scope.js';
 import {
-  validateClawRule, mayClaw, isAuthority, type Authority, type ClawRule,
+  validateClawRule, mayClaw, isAuthority, TIME_BOUNDS,
+  type Authority, type ClawRule,
 } from './authority.js';
 import { meetsFloor, type Admissibility } from './admissibility.js';
 import { requireScope, type Principal } from './auth.js';
@@ -76,6 +77,16 @@ export interface SealResult {
    * separate, recorded act — see `disclosure()`.
    */
   reasons: Reason[];
+  /**
+   * When this determination stops standing.
+   *
+   * Returned because Crimp may have chosen it. An absent expiry from anything
+   * below `custodian` is capped at that authority's ceiling rather than
+   * refused — the door closes itself instead of demanding the caller remember
+   * to close it — and the caller is told what it got rather than left to
+   * assume forever.
+   */
+  expiresAt: Date | null;
 }
 
 /* ── Subject resolution ──────────────────────────────────────────────── */
@@ -166,6 +177,24 @@ export async function seal(
         { expiresAt: input.expiresAt.toISOString() });
     }
   }
+
+  // THE CLOSER. A door nobody has to remember to shut.
+  //
+  // Absent expiry means forever, so an agent holding `seals:write` could author
+  // a permanent refusal. Requiring an expiry would have been the obvious fix
+  // and the worse one: a bound the caller can forget is not a bound, and this
+  // bound exists to protect a third party — the person refused — who is not in
+  // the conversation. So it is capped rather than demanded, and the chosen
+  // value is returned so nothing is decided silently.
+  //
+  // `commit` is exempt: it records what an agent told a customer, and expiring
+  // a commitment would erase it rather than end it.
+  const maxDuration = TIME_BOUNDS[sealedBy].maxDurationSeconds;
+  let expiresAt = input.expiresAt ?? null;
+  if (maxDuration !== null && input.disposition !== 'commit') {
+    const ceiling = new Date(Date.now() + maxDuration * 1000);
+    if (expiresAt === null || expiresAt > ceiling) expiresAt = ceiling;
+  }
   const clawRule = validateClawRule(sealedBy, input.claw);
   const referenced = validateRule(input.rule);
   const rule = input.rule as Rule;
@@ -188,8 +217,9 @@ export async function seal(
     // Replay before doing any work. A retry must be cheap and must not
     // re-resolve subjects or re-evaluate anything.
     const { rows: prior } = await tx.query<{
-      id: string; disposition: Disposition; rule_hash: string; reasons: Reason[];
-    }>(`SELECT id, disposition, rule_hash, reasons FROM seals
+      id: string; disposition: Disposition; rule_hash: string;
+      reasons: Reason[]; expires_at: Date | null;
+    }>(`SELECT id, disposition, rule_hash, reasons, expires_at FROM seals
          WHERE workspace_id = $1 AND idempotency_key = $2`,
       [workspaceId, input.idempotencyKey]);
     if (prior[0]) {
@@ -206,8 +236,9 @@ export async function seal(
         // The reasons the ORIGINAL was decided on, not a fresh derivation
         // against today's facts. A replay must return the determination that
         // was made, or a retry after an attestation changed would report a
-        // different decision under the same identifier.
+        // different decision under the same identifier. Same for the expiry.
         reasons: prior[0].reasons,
+        expiresAt: prior[0].expires_at,
       };
     }
 
@@ -232,7 +263,7 @@ export async function seal(
       // Not an error. The agent applied its rule and the rule did not hold, so
       // no determination exists. Recorded nowhere as a seal, returned plainly.
       return {
-        sealId: null, outcome: 'not_applicable' as const,
+        sealId: null, outcome: 'not_applicable' as const, expiresAt: null,
         disposition: input.disposition, ruleHash,
         reason: 'The rule did not hold against the attested facts. No determination was created.',
         // Which clauses failed, so the caller knows why their own rule did not
@@ -257,7 +288,7 @@ export async function seal(
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
-        input.idempotencyKey, input.expiresAt ?? null, JSON.stringify(why)],
+        input.idempotencyKey, expiresAt, JSON.stringify(why)],
     );
 
     for (const r of rows) {
@@ -277,6 +308,7 @@ export async function seal(
 
     return {
       sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash,
+      expiresAt,
       reason: 'The rule held. The determination is sealed.', reasons: why,
     };
   });
