@@ -103,6 +103,54 @@ denial is computed only on the population that fought back.
 There is no `unless` mechanism separate from the rule. The rule *is* the
 falsification condition — re-evaluating it is what produces a lapse.
 
+## Four axes on a reversal, and the line hardening may not cross
+
+A claw rule declares **who** may reverse, on **what evidence**, after **how
+long**, **how many** of them, and **from where**.
+
+| Axis | Meaning |
+|---|---|
+| `authority` | Must strictly exceed the sealer. A sealer chooses its own jailer and can never be it |
+| `evidenceFloor` | An admissibility class the evidence must dominate |
+| `coolingOffSeconds` | The one defence immune to a perfectly persuasive argument |
+| `quorum` | 1 or 2. Two signatures from **different** credentials, each clearing every other bar independently |
+| `jurisdiction` | ISO 3166. Where the reversing credential must be bound |
+
+**Quorum** is four-eyes for an act that is consequential and hard to undo.
+Standard practice in every regulated industry, and it was inexpressible here.
+The standing half expires after a week: a dual-control decision that takes
+longer is not one decision made by two people, it is two unrelated decisions —
+and it bounds the attacker holding one credential now who expects another
+later. A quorum that never completes leaves the determination **standing**,
+which is the safe direction.
+
+**Jurisdiction** turns *"every reversal affecting a person here was performed
+under authority bound here"* from a promise in a contract into a refusal in
+code. It works because authority is already a property of the credential and
+unforgeable by the caller. A sealer may demand **only the place its own
+credential is bound to**, and a bound key may only mint keys bound to the same
+place — otherwise an operator mints itself a credential elsewhere and satisfies
+a rule written to exclude it, or names a place no key holds and produces a
+determination nobody can ever lift.
+
+### The line
+
+> **Pressure may raise only the bars a legitimate party can clear by acting.**
+
+Pressure is incremented by whoever presents a subject's aliases and is refused,
+so **a third party who knows an identifier can raise it on somebody else's
+determination.** That gives the rule for which axes hardening may touch:
+
+- **Authority** — clearable. Find a higher authority.
+- **Evidence floor** — clearable. Produce better evidence.
+- **Cooling-off** — *not* clearable. Time cannot be routed around.
+- **Quorum** — *not* clearable. A person seeking relief cannot produce a second signer.
+- **Jurisdiction** — carried through unchanged. Moving it would loosen the rule; dropping it certainly would.
+
+So `harden()` spreads `...base` and overrides exactly two fields. If a new axis
+is added to `ClawRule`, decide which side of that line it falls on **before**
+adding it.
+
 ## Three fields the contract requires, and why
 
 | Field | Required | Because |

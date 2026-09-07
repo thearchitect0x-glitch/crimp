@@ -73,6 +73,14 @@ const claw = {
     authority: { type: 'string', enum: [...AUTHORITIES] },
     evidence_floor: { type: 'string', enum: [...ADMISSIBILITY] },
     cooling_off_seconds: { type: 'integer', minimum: 0, maximum: 7_776_000 },
+    // Four-eyes. A second signature from a DIFFERENT credential, each clearing
+    // every other bar independently — a quorum adds a requirement and relaxes
+    // nothing.
+    quorum: { type: 'integer', enum: [1, 2] },
+    // ISO 3166. Only the place the sealing credential is itself bound to is
+    // accepted: a rule naming a place no key holds is a determination nobody
+    // could ever lift.
+    jurisdiction: { type: ['string', 'null'], pattern: '^[A-Z]{2}(-[A-Z0-9]{1,3})?$' },
   },
 } as const;
 

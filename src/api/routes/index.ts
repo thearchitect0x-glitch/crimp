@@ -100,13 +100,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{
     Params: { id: string };
     Body: { evidence_sha256: string; evidence_class: string };
-  }>('/seals/:id/claw', { schema: { body: clawBody, response: errors } }, async (req) => {
+  }>('/seals/:id/claw', { schema: { body: clawBody, response: errors } }, async (req, reply) => {
     const p = await authorized(req, 'seals:claw');
-    return claw(p, {
+    // A `pending` result is 202: the signature was accepted and the
+    // determination is untouched until a second credential agrees.
+    const out = await claw(p, {
       sealId: req.params.id,
       evidenceSha256: req.body.evidence_sha256,
       evidenceClass: req.body.evidence_class as never,
     });
+    reply.code(out.state === 'pending' ? 202 : 200);
+    return out.state === 'pending'
+      ? { state: out.state, signatures_needed: out.signaturesNeeded }
+      : { state: out.state };
   });
 
   /* ── Cohorts: two ways in, no way out ────────────────────────────── */

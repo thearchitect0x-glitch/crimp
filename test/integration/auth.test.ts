@@ -192,7 +192,7 @@ describe('revocation follows the same ladder', () => {
 describe('scopes', () => {
   test('the quickstart scope set cannot claw', () => {
     const p: Principal = {
-      workspaceId: 'ws', keyId: 'k', authority: 'agent', scopes: new Set(AGENT_SCOPES),
+      workspaceId: 'ws', keyId: 'k', authority: 'agent', jurisdiction: null, scopes: new Set(AGENT_SCOPES),
     };
     assert.throws(() => requireScope(p, 'seals:claw'), (e: unknown) => {
       assert.equal((e as ApiError).code, 'forbidden');
