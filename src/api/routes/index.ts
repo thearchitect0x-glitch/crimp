@@ -4,12 +4,12 @@ import type { FastifyInstance } from 'fastify';
 import { authorized } from '../app.js';
 import {
   attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
-  carveOutBody, mintKeyBody, windowQuery, errors,
+  carveOutBody, mintKeyBody, windowQuery, errors, rulesetBody, ruleBody, closeRuleBody,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
   sourcesToWire, quadrantToWire, cliffsToWire, keyToWire,
-  proofToWire, disclosureToWire,
+  proofToWire, disclosureToWire, registeredRuleToWire,
   type WireClaw, type WireFact,
 } from '../serialize.js';
 import { attest } from '../../domain/attest.js';
@@ -18,6 +18,7 @@ import { sourceReliability, quadrant, cliffs } from '../../domain/insight.js';
 import { declareCohort, placeInCohort } from '../../domain/cohort.js';
 import { mergeSubjects, carveOut } from '../../domain/merge.js';
 import { proof, disclosure, disclosures } from '../../domain/record.js';
+import { declareRuleset, commitRule, closeRule, ruleHistory } from '../../domain/registry.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -33,6 +34,16 @@ function windowDays(raw: string | undefined, fallback = 90): number {
       { days: raw });
   }
   return n;
+}
+
+/** Parse a timestamp where the message can name the field. */
+function timestamp(raw: string | null | undefined, field: string): Date | null {
+  if (raw == null) return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    throw new ApiError(400, 'invalid_request', `"${raw}" is not a valid timestamp for ${field}.`);
+  }
+  return d;
 }
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
@@ -65,15 +76,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     Body: {
       idempotency_key: string; expires_at?: string | null;
       aliases: unknown; scope: string; disposition: 'bind' | 'permit' | 'commit';
-      rule: unknown; claw: WireClaw; max_uses?: number | null; required_facts?: string[];
+      rule?: unknown; rule_ref?: { ruleset: string; rule_id: string }; as_of?: string | null;
+      claw: WireClaw; max_uses?: number | null; required_facts?: string[];
     };
   }>('/seals', { schema: { body: sealBody, response: errors } }, async (req, reply) => {
     const p = await authorized(req, 'seals:write');
-    const expiresAt = req.body.expires_at == null ? null : new Date(req.body.expires_at);
-    if (expiresAt !== null && Number.isNaN(expiresAt.getTime())) {
-      throw new ApiError(400, 'invalid_request',
-        `"${req.body.expires_at}" is not a valid timestamp.`);
-    }
+    const expiresAt = timestamp(req.body.expires_at, 'expires_at');
     const out = await seal(p, {
       idempotencyKey: req.body.idempotency_key,
       expiresAt,
@@ -81,6 +89,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       scope: req.body.scope,
       disposition: req.body.disposition,
       rule: req.body.rule,
+      ruleRef: req.body.rule_ref === undefined ? null
+        : { ruleset: req.body.rule_ref.ruleset, ruleId: req.body.rule_ref.rule_id },
+      asOf: timestamp(req.body.as_of, 'as_of'),
       claw: clawFromWire(req.body.claw),
       maxUses: req.body.max_uses ?? null,
       requiredFacts: req.body.required_facts ?? [],
@@ -89,6 +100,71 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // retry succeeded, but it did not create anything.
     reply.code(out.outcome === 'sealed' ? 201 : 200);
     return sealToWire(out);
+  });
+
+  /* ── The registry (cap-08) ───────────────────────────────────────── */
+  app.post<{ Body: { ruleset: string; description?: string | null } }>('/rulesets', {
+    schema: { body: rulesetBody, response: errors },
+  }, async (req, reply) => {
+    const p = await authorized(req, 'rules:write');
+    const out = await declareRuleset(p, {
+      ruleset: req.body.ruleset, description: req.body.description ?? null,
+    });
+    reply.code(201);
+    return out;
+  });
+
+  app.post<{
+    Params: { ruleset: string };
+    Body: {
+      rule_id: string; rule: unknown; legal_authority: string; effective_from: string;
+      effective_to?: string | null; scope?: string | null; note?: string | null;
+    };
+  }>('/rulesets/:ruleset/rules', {
+    schema: { body: ruleBody, response: errors },
+  }, async (req, reply) => {
+    const p = await authorized(req, 'rules:write');
+    const effectiveFrom = timestamp(req.body.effective_from, 'effective_from');
+    if (effectiveFrom === null) {
+      throw new ApiError(400, 'invalid_request', 'effective_from is required.');
+    }
+    const out = await commitRule(p, {
+      ruleset: req.params.ruleset,
+      ruleId: req.body.rule_id,
+      rule: req.body.rule,
+      legalAuthority: req.body.legal_authority,
+      effectiveFrom,
+      effectiveTo: timestamp(req.body.effective_to, 'effective_to'),
+      scope: req.body.scope ?? null,
+      note: req.body.note ?? null,
+    });
+    reply.code(out.outcome === 'committed' ? 201 : 200);
+    return { outcome: out.outcome, ...registeredRuleToWire(out) };
+  });
+
+  // A POST with a verb, like /exercise: the one mutation a committed version
+  // admits, and it is recorded with the actor's authority.
+  app.post<{
+    Params: { ruleset: string; rule_id: string; version: string };
+    Body: { effective_to: string };
+  }>('/rulesets/:ruleset/rules/:rule_id/:version/close', {
+    schema: { body: closeRuleBody, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'rules:write');
+    const effectiveTo = timestamp(req.body.effective_to, 'effective_to');
+    if (effectiveTo === null) throw new ApiError(400, 'invalid_request', 'effective_to is required.');
+    return registeredRuleToWire(await closeRule(p, {
+      ruleset: req.params.ruleset, ruleId: req.params.rule_id,
+      version: req.params.version, effectiveTo,
+    }));
+  });
+
+  app.get<{ Params: { ruleset: string; rule_id: string } }>('/rulesets/:ruleset/rules/:rule_id', {
+    schema: { response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'rules:read');
+    const versions = await ruleHistory(p, req.params.ruleset, req.params.rule_id);
+    return { versions: versions.map(registeredRuleToWire) };
   });
 
   /* ── The hot path: a query ───────────────────────────────────────── */

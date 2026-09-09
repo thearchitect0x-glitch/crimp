@@ -3,7 +3,7 @@
 
 # The Determination Format
 
-**Version 0.1 · draft · 7 September 2026**
+**Version 0.2 · draft · 9 September 2026**
 
 A determination is a record that a named rule was applied to named facts and
 produced a stated outcome, sealed before the outcome was known, and re-runnable
@@ -212,6 +212,51 @@ option stays open; it is not exercised yet.
 decision, not about a person. Including one would make a set of determinations
 a way to enumerate a population.
 
+### 7.0a Optional fields added in 0.2 — a registered rule, and the date it is about
+
+Both fields are **optional**. A record without them is a valid 0.2 record; a
+0.1 verifier that ignores them verifies a 0.2 record identically, because
+neither participates in any hash or in evaluation.
+
+```jsonc
+{
+  // The date this determination is ABOUT. Not always when it was made:
+  // retroactive eligibility looks back three months. Null means "as of
+  // sealed_at". Never read by evaluation — time enters only as a fact.
+  "as_of": "2026-06-01T00:00:00.000Z" | null,
+
+  // A snapshot of the registered rule this was sealed under, if any.
+  // `rule` and `rule_hash` above remain the source of truth for verification;
+  // this exists to CITE and to GROUP, never to dereference.
+  "rule_ref": {
+    "ruleset": "medicaid",
+    "rule_id": "renewal.income_test",
+    "version": "…64 hex — equal to rule_hash…",
+    "legal_authority": "42 CFR 435.916(b)",
+    "effective_from": "2026-01-01T00:00:00.000Z",
+    "effective_to": null
+  } | null
+}
+```
+
+**`rule_ref.version` MUST equal `rule_hash`** when both are present. A verifier
+that checks the snapshot checks this and nothing else about it — the registry
+is an institution's own record, and a proof MUST remain verifiable if that
+registry no longer exists.
+
+**Why the version is the hash.** A registered rule is therefore immutable by
+construction: you cannot edit a hash, only commit a successor with a new
+effective window. Two institutions that commit identical policy text share one
+version, so *"how often does this policy shape lapse"* can be asked across
+institutions without sharing a fact about any person.
+
+**Which version governs.** Selection by `as_of` happens before evaluation, in
+the issuing system. Re-evaluation re-runs the rule **as sealed** — the
+decision-date version — because the rule is inline. A law that applies
+retroactively would require substituting a successor at re-evaluation, which
+changes `rule_hash` and therefore what the record *is*; that is a format
+decision this version does not make. See `docs/upgrade/BLOCKERS.md`.
+
 ### 7.1 Reasons
 
 A reason locates a clause of the rule that carried the outcome. `path` is its
@@ -240,6 +285,9 @@ facts:
 1. **Check the grammar version.** Refuse an unsupported one. Do not guess.
 2. **Check the commitment scheme.** Same.
 3. **Recompute `rule_hash`** from `rule` by §5. It MUST match.
+   If `rule_ref` is present (§7.0a), `rule_ref.version` MUST equal `rule_hash`.
+   Nothing else about `rule_ref` is verifiable without the issuer's registry,
+   and a verifier MUST NOT require that registry to exist.
 4. **Recompute each `value_sha256`** from the held values by §6. A mismatch
    means the value changed or the record is wrong — the verifier reports it and
    does not attempt to decide which.

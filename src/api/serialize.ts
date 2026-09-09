@@ -18,6 +18,7 @@ import type { SourceReliability, QuadrantCounts, Cliff } from '../domain/insight
 import type { MintedKey } from '../domain/auth.js';
 import type { Reason } from '../domain/explain.js';
 import type { Proof, Disclosure } from '../domain/record.js';
+import { toStored, type RegisteredRule } from '../domain/registry.js';
 import { ApiError } from '../lib/errors.js';
 
 /* ── Inbound ─────────────────────────────────────────────────────────── */
@@ -85,6 +86,19 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
     reason: r.reason,
     reasons: r.reasons.map(reasonToWire),
     expires_at: r.expiresAt?.toISOString() ?? null,
+    rule_ref: r.ruleRef === null ? null : toStored(r.ruleRef),
+  };
+}
+
+export function registeredRuleToWire(r: RegisteredRule): Record<string, unknown> {
+  return {
+    ...toStored(r),
+    rule: r.rule,
+    grammar_version: r.grammarVersion,
+    scope: r.scope,
+    committed_by: r.committedBy,
+    committed_at: r.committedAt.toISOString(),
+    note: r.note,
   };
 }
 
@@ -110,6 +124,8 @@ export function proofToWire(p: Proof): Record<string, unknown> {
     sealed_by: p.sealedBy,
     sealed_at: p.sealedAt.toISOString(),
     expires_at: p.expiresAt?.toISOString() ?? null,
+    as_of: p.asOf?.toISOString() ?? null,
+    rule_ref: p.ruleRef === null ? null : toStored(p.ruleRef),
     reasons: p.reasons.map(reasonToWire),
     facts: p.facts.map((f) => ({
       fact: f.fact, fact_type: f.factType, value_sha256: f.valueSha256,

@@ -2,7 +2,7 @@
 // Copyright 2026 Deimos AI LLC
 /** Run the published vectors against the INDEPENDENT verifier in spec/verifier.mjs. */
 import { readFileSync } from 'node:fs';
-import { canonical, sha256, evaluate, reasons } from '../spec/verifier.mjs';
+import { canonical, sha256, evaluate, reasons, verify } from '../spec/verifier.mjs';
 
 const v = JSON.parse(readFileSync('spec/vectors/vectors.json', 'utf8'));
 let pass = 0; const fail = [];
@@ -23,6 +23,16 @@ for (const c of v.reasons) {
   check('reasons', c.name,
     reasons(c.rule, c.facts, c.truth).map((r) =>
       ({ path: r.path, fact: r.fact, truth: r.truth, polarity: r.polarity })), c.reasons);
+}
+
+// §7.0a, through the verifier's own procedure rather than a re-implementation
+// of it: the 'rule ref' step must exist iff the field does, and agree.
+for (const c of v.record) {
+  const { steps } = await verify(c.record);
+  const step = steps.find((s) => s.step === 'rule ref');
+  const got = c.record.rule_ref == null ? step === undefined : step?.ok === true;
+  check('record', c.name, got, c.rule_ref_consistent);
+  check('record', `${c.name} (rule hash step)`, steps.find((s) => s.step === 'rule hash')?.ok, true);
 }
 
 console.log(`independent verifier: ${pass} passed, ${fail.length} failed`);

@@ -111,9 +111,21 @@ export const attestBody = {
   },
 } as const;
 
+const ruleRef = {
+  type: 'object',
+  required: ['ruleset', 'rule_id'],
+  additionalProperties: false,
+  properties: {
+    ruleset: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
+    rule_id: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}(\\.[a-z][a-z0-9_]{0,30}){0,3}$' },
+  },
+} as const;
+
 export const sealBody = {
   type: 'object',
-  required: ['idempotency_key', 'aliases', 'scope', 'disposition', 'rule', 'claw'],
+  required: ['idempotency_key', 'aliases', 'scope', 'disposition', 'claw'],
+  // A rule, inline or registered. Neither is a body nobody can act on.
+  anyOf: [{ required: ['rule'] }, { required: ['rule_ref'] }],
   additionalProperties: false,
   properties: {
     // Required. A retry without one creates a second determination, which for
@@ -126,10 +138,48 @@ export const sealBody = {
     scope: { type: 'string', maxLength: 127 },
     disposition: { type: 'string', enum: ['bind', 'permit', 'commit'] },
     rule,
+    // cap-08. Which registered rule to seal under, and the date the decision
+    // is about. Both optional; a record without them is what every record was.
+    rule_ref: ruleRef,
+    as_of: { type: ['string', 'null'], maxLength: 64 },
     claw,
     max_uses: { type: ['integer', 'null'], minimum: 1 },
     required_facts: { type: 'array', maxItems: 16, items: { type: 'string', maxLength: 96 } },
   },
+} as const;
+
+export const rulesetBody = {
+  type: 'object',
+  required: ['ruleset'],
+  additionalProperties: false,
+  properties: {
+    ruleset: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
+    description: { type: ['string', 'null'], maxLength: 500 },
+  },
+} as const;
+
+export const ruleBody = {
+  type: 'object',
+  required: ['rule_id', 'rule', 'legal_authority', 'effective_from'],
+  additionalProperties: false,
+  properties: {
+    rule_id: ruleRef.properties.rule_id,
+    rule,
+    // Shape-checked in the domain layer, where the message can say what a
+    // citation looks like. Here only bounded.
+    legal_authority: { type: 'string', minLength: 1, maxLength: 200 },
+    effective_from: { type: 'string', maxLength: 64 },
+    effective_to: { type: ['string', 'null'], maxLength: 64 },
+    scope: { type: ['string', 'null'], maxLength: 127 },
+    note: { type: ['string', 'null'], maxLength: 1000 },
+  },
+} as const;
+
+export const closeRuleBody = {
+  type: 'object',
+  required: ['effective_to'],
+  additionalProperties: false,
+  properties: { effective_to: { type: 'string', maxLength: 64 } },
 } as const;
 
 export const lookupBody = {

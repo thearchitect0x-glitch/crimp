@@ -54,6 +54,16 @@ for (const c of v['refuse'] as unknown as Array<Record<string, never>>) {
   check('refuse', c['name'] as unknown as string, refused, true);
 }
 
+// §7.0a — the one claim about a registered-rule snapshot a stranger can check.
+// A record without the field is consistent by definition: the field is optional.
+for (const c of v['record'] as unknown as Array<Record<string, never>>) {
+  const rec = c['record'] as unknown as { rule: Rule; rule_hash: string; rule_ref?: { version: string } | null };
+  const rh = sha(canonicalRule(rec.rule));
+  check('record', `${c['name'] as unknown as string} (rule_hash)`, rh, rec.rule_hash);
+  const consistent = rec.rule_ref == null ? true : rec.rule_ref.version === rh;
+  check('record', c['name'] as unknown as string, consistent, c['rule_ref_consistent']);
+}
+
 console.log(`conformance: ${pass} passed, ${fail.length} failed`);
 if (fail.length > 0) {
   console.log('\n' + fail.join('\n\n'));

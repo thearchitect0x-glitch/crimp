@@ -310,6 +310,15 @@ async function verify(det, held = {}, opts = {}) {
   add('rule hash', rh === det.rule_hash,
     rh === det.rule_hash ? rh : `recomputed ${rh}, record says ${det.rule_hash}`);
 
+  // §7.0a — a registered-rule snapshot, if present, must name the rule that
+  // was actually sealed. That is the only thing about it a stranger can check.
+  if (det.rule_ref != null) {
+    const same = det.rule_ref.version === det.rule_hash;
+    add('rule ref', same, same
+      ? `${det.rule_ref.ruleset}/${det.rule_ref.rule_id} · ${det.rule_ref.legal_authority ?? 'no authority cited'}`
+      : `snapshot says version ${det.rule_ref.version}, record says ${det.rule_hash}`);
+  }
+
   const facts = {};
   let checked = 0, matched = 0;
   for (const f of det.facts ?? []) {

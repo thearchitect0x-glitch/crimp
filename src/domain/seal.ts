@@ -8,7 +8,7 @@
  * disposition. There is no parameter through which a conclusion can arrive.
  */
 import type pg from 'pg';
-import { withTx, type Db } from '../db/pool.js';
+import { withTx, getPool, type Db } from '../db/pool.js';
 import { newId, sha256Hex, canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
@@ -28,6 +28,10 @@ import {
 } from './authority.js';
 import { meetsFloor, type Admissibility } from './admissibility.js';
 import { requireScope, type Principal } from './auth.js';
+import {
+  resolveRule, refOf, fromStored, toStored as toStoredRef, assertScopeWithin,
+  type RuleRef, type StoredRuleRef,
+} from './registry.js';
 import { classify, tierOf, harden, PRESSURE_WINDOW_DAYS, type Pressure } from './lifecycle.js';
 
 export type Disposition = 'bind' | 'permit' | 'commit';
@@ -52,7 +56,21 @@ export interface SealInput {
   aliases: unknown;
   scope: string;
   disposition: Disposition;
-  rule: unknown;
+  /** The rule, inline. Optional only when `ruleRef` names a registered one. */
+  rule?: unknown;
+  /**
+   * A registered rule to seal under (cap-08). Resolved to the version in force
+   * on `asOf` BEFORE evaluation; the evaluator receives a concrete rule and
+   * remains unable to see a clock. If `rule` is also given it must be the same
+   * rule, or the caller has told two stories and is refused.
+   */
+  ruleRef?: { ruleset: string; ruleId: string } | null;
+  /**
+   * The date the decision is ABOUT, which is not always the date it is made.
+   * Selects the registry version; recorded on the seal; never read by
+   * evaluation. Null means "as of now".
+   */
+  asOf?: Date | null;
   claw: ClawRule;
   maxUses?: number | null;
   /** When this determination stops standing on its own. Null means never. */
@@ -67,6 +85,8 @@ export interface SealResult {
   outcome: 'sealed' | 'not_applicable' | 'replayed';
   disposition: Disposition;
   ruleHash: string;
+  /** Which registered version was selected, so nothing is decided silently. Null for an inline rule. */
+  ruleRef: RuleRef | null;
   reason: string;
   /**
    * The clauses that decided it, value-free.
@@ -196,8 +216,41 @@ export async function seal(
     if (expiresAt === null || expiresAt > ceiling) expiresAt = ceiling;
   }
   const clawRule = validateClawRule(sealedBy, input.claw, p.jurisdiction);
-  const referenced = validateRule(input.rule);
-  const rule = input.rule as Rule;
+
+  const asOf = input.asOf ?? null;
+  if (asOf !== null && (!(asOf instanceof Date) || Number.isNaN(asOf.getTime()))) {
+    throw new ApiError(400, 'invalid_request', 'as_of must be a timestamp.');
+  }
+
+  // Registry selection happens HERE, before evaluation, and hands the
+  // evaluator a concrete rule. Time enters the decision only as the date the
+  // caller says the decision is about, and that date is recorded.
+  let ruleRef: RuleRef | null = null;
+  let ruleText: unknown = input.rule;
+  if (input.ruleRef != null) {
+    const registered = await resolveRule(getPool(), workspaceId,
+      input.ruleRef.ruleset, input.ruleRef.ruleId, asOf ?? new Date());
+    assertScopeWithin(registered, scope);
+    if (ruleText !== undefined) {
+      validateRule(ruleText);
+      const inlineHash = sha256Hex(canonicalRule(ruleText as Rule));
+      if (inlineHash !== registered.version) {
+        throw new ApiError(400, 'rule_ref_mismatch',
+          `The inline rule is not the version of "${registered.ruleId}" in force on `
+          + `${(asOf ?? new Date()).toISOString()}. Send one or the other; sending both that `
+          + 'disagree is two stories.',
+          { inline: inlineHash, registered: registered.version });
+      }
+    }
+    ruleText = registered.rule;
+    ruleRef = refOf(registered);
+  }
+  if (ruleText === undefined) {
+    throw new ApiError(400, 'invalid_request',
+      'A determination needs a rule: inline, or a rule_ref into the registry.');
+  }
+  const referenced = validateRule(ruleText);
+  const rule = ruleText as Rule;
 
   // A rule that references none of the fact classes policy requires is a rule
   // that decides nothing while looking like it decides something — the vacuous
@@ -218,8 +271,8 @@ export async function seal(
     // re-resolve subjects or re-evaluate anything.
     const { rows: prior } = await tx.query<{
       id: string; disposition: Disposition; rule_hash: string;
-      reasons: Reason[]; expires_at: Date | null;
-    }>(`SELECT id, disposition, rule_hash, reasons, expires_at FROM seals
+      reasons: Reason[]; expires_at: Date | null; rule_ref: StoredRuleRef | null;
+    }>(`SELECT id, disposition, rule_hash, reasons, expires_at, rule_ref FROM seals
          WHERE workspace_id = $1 AND idempotency_key = $2`,
       [workspaceId, input.idempotencyKey]);
     if (prior[0]) {
@@ -239,6 +292,7 @@ export async function seal(
         // different decision under the same identifier. Same for the expiry.
         reasons: prior[0].reasons,
         expiresAt: prior[0].expires_at,
+        ruleRef: prior[0].rule_ref === null ? null : fromStored(prior[0].rule_ref),
       };
     }
 
@@ -264,7 +318,7 @@ export async function seal(
       // no determination exists. Recorded nowhere as a seal, returned plainly.
       return {
         sealId: null, outcome: 'not_applicable' as const, expiresAt: null,
-        disposition: input.disposition, ruleHash,
+        disposition: input.disposition, ruleHash, ruleRef,
         reason: 'The rule did not hold against the attested facts. No determination was created.',
         // Which clauses failed, so the caller knows why their own rule did not
         // apply. Nothing is stored: no determination exists to attach it to.
@@ -283,14 +337,15 @@ export async function seal(
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
                           claw_cooling_off_s, max_uses, idempotency_key, expires_at,
                           reasons, claw_quorum, claw_jurisdiction,
-                          last_evaluated_at, evaluation_due)
+                          last_evaluated_at, evaluation_due, rule_ref, as_of)
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,
-               $17,$18,now(),false)`,
+               $17,$18,now(),false,$19::jsonb,$20)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
         input.idempotencyKey, expiresAt, JSON.stringify(why),
-        clawRule.quorum ?? 1, clawRule.jurisdiction ?? null],
+        clawRule.quorum ?? 1, clawRule.jurisdiction ?? null,
+        ruleRef === null ? null : JSON.stringify(toStoredRef(ruleRef)), asOf],
     );
 
     for (const r of rows) {
@@ -305,11 +360,12 @@ export async function seal(
       `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, detail)
        VALUES ($1,$2,'sealed',$3,$4::jsonb)`,
       [sealId, workspaceId, sealedBy,
-        JSON.stringify({ scope, disposition: input.disposition, rule_hash: ruleHash })],
+        JSON.stringify({ scope, disposition: input.disposition, rule_hash: ruleHash,
+          ...(ruleRef === null ? {} : { ruleset: ruleRef.ruleset, rule_id: ruleRef.ruleId }) })],
     );
 
     return {
-      sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash,
+      sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash, ruleRef,
       expiresAt,
       reason: 'The rule held. The determination is sealed.', reasons: why,
     };

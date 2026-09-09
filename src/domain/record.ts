@@ -28,6 +28,7 @@ import { requireScope, type Principal } from './auth.js';
 import { disclose, type DisclosedReason, type Reason } from './explain.js';
 import type { Disposition } from './seal.js';
 import type { Facts, Fact, FactType, Rule } from './rule.js';
+import { fromStored, type RuleRef, type StoredRuleRef } from './registry.js';
 
 /** Reading the values that decided a determination is an operator act. */
 export const DISCLOSURE_AUTHORITY = 'operator';
@@ -61,6 +62,10 @@ export interface Proof {
   sealedBy: string;
   sealedAt: Date;
   expiresAt: Date | null;
+  /** The date the decision is about (SPEC §7.0a). Null means as of `sealedAt`. */
+  asOf: Date | null;
+  /** The registered rule this was sealed under, if any. A citation, not a pointer. */
+  ruleRef: RuleRef | null;
   reasons: Reason[];
   facts: SealedFact[];
   events: SealEvent[];
@@ -68,6 +73,7 @@ export interface Proof {
   verify: {
     ruleHash: string;
     valueDigest: string;
+    ruleRef: string;
     note: string;
   };
 }
@@ -76,12 +82,13 @@ interface SealRow {
   id: string; scope: string; disposition: Disposition; state: string; rule: Rule;
   rule_hash: string; grammar_version: string; sealed_by: string; sealed_at: Date;
   expires_at: Date | null; reasons: Reason[]; subject_id: string;
+  as_of: Date | null; rule_ref: StoredRuleRef | null;
 }
 
 async function loadSeal(db: Db, workspaceId: string, sealId: string): Promise<SealRow> {
   const { rows } = await db.query<SealRow>(
     `SELECT id, scope, disposition, state, rule, rule_hash, grammar_version, sealed_by,
-            sealed_at, expires_at, reasons, subject_id
+            sealed_at, expires_at, reasons, subject_id, as_of, rule_ref
        FROM seals WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, sealId]);
   const seal = rows[0];
@@ -130,6 +137,8 @@ export async function proof(p: Principal, sealId: string): Promise<Proof> {
     sealedBy: seal.sealed_by,
     sealedAt: seal.sealed_at,
     expiresAt: seal.expires_at,
+    asOf: seal.as_of,
+    ruleRef: seal.rule_ref === null ? null : fromStored(seal.rule_ref),
     reasons: seal.reasons,
     facts: facts.map((f) => ({
       fact: f.fact, factType: f.fact_type, valueSha256: f.value_sha256,
@@ -146,6 +155,8 @@ export async function proof(p: Principal, sealId: string): Promise<Proof> {
       ruleHash: 'sha256(canonical JSON of `rule`: object keys sorted, '
         + 'commutative children of all/any sorted by their canonical form)',
       valueDigest: 'sha256(canonical JSON of {"t": fact_type, "v": value})',
+      ruleRef: 'if present, rule_ref.version MUST equal rule_hash. Nothing else about it is '
+        + 'verifiable without the institution\'s own registry, and the record does not depend on it.',
       note: 'Recompute each value digest from your own record of the value, compare, then '
         + 're-run `rule` under grammar_version. Crimp never held the values, so it cannot '
         + 'have altered them.',

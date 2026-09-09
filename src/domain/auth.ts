@@ -62,6 +62,11 @@ export const SCOPES = [
   // policy from inside the workspace it is supposed to be constrained by.
   'seals:read',
   'seals:disclose',
+  // Committing policy, and reading its history. Both absent from AGENT_SCOPES,
+  // and commit is gated on `operator` on top of the scope: an agent may apply
+  // a rule, it may not author the committed policy it is then bound by.
+  'rules:write',
+  'rules:read',
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 
