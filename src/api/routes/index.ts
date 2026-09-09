@@ -5,11 +5,13 @@ import { authorized } from '../app.js';
 import {
   attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
   carveOutBody, mintKeyBody, windowQuery, errors, rulesetBody, ruleBody, closeRuleBody, catalogueBody,
+  clockBody, findingsQuery,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
   sourcesToWire, quadrantToWire, cliffsToWire, keyToWire,
   proofToWire, disclosureToWire, registeredRuleToWire, catalogueEntryToWire,
+  clockToWire, timelinessToWire, findingToWire,
   type WireClaw, type WireFact,
 } from '../serialize.js';
 import { attest } from '../../domain/attest.js';
@@ -21,6 +23,8 @@ import { proof, disclosure, disclosures } from '../../domain/record.js';
 import { declareRuleset, commitRule, closeRule, ruleHistory } from '../../domain/registry.js';
 import { catalogueFact, listCatalogue, type FactClass } from '../../domain/catalogue.js';
 import type { FactType } from '../../domain/rule.js';
+import { startClock, clocksFor, timeliness } from '../../domain/clocks.js';
+import { listFindings } from '../../domain/findings.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -102,6 +106,45 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // retry succeeded, but it did not create anything.
     reply.code(out.outcome === 'sealed' ? 201 : 200);
     return sealToWire(out);
+  });
+
+  /* ── Clocks and findings (cap-03) ────────────────────────────────── */
+  app.post<{ Body: { aliases: unknown; scope: string; clock: string; started_at: string } }>(
+    '/clocks', { schema: { body: clockBody, response: errors } }, async (req, reply) => {
+      const p = await authorized(req, 'attestations:write');
+      const startedAt = timestamp(req.body.started_at, 'started_at');
+      if (startedAt === null) throw new ApiError(400, 'invalid_request', 'started_at is required.');
+      const out = await startClock(p, {
+        aliases: req.body.aliases, scope: req.body.scope, clock: req.body.clock, startedAt,
+      }, await loadStrengths(p.workspaceId));
+      reply.code(out.outcome === 'started' ? 201 : 200);
+      return { outcome: out.outcome, ...clockToWire(out) };
+    });
+
+  // A read by aliases, like a lookup, and a POST for the same reason a
+  // lookup is: the aliases are a body, not a URL.
+  app.post<{ Body: { aliases: unknown } }>('/clocks/lookup', {
+    schema: { body: { type: 'object', required: ['aliases'], additionalProperties: false,
+      properties: { aliases: clockBody.properties.aliases } }, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'determinations:read');
+    const rows = await clocksFor(p, { aliases: req.body.aliases }, await loadStrengths(p.workspaceId));
+    return { clocks: rows.map(clockToWire) };
+  });
+
+  app.get<{ Querystring: { days?: string } }>('/insight/timeliness', {
+    schema: { querystring: windowQuery, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'insight:read');
+    return { clocks: (await timeliness(p, windowDays(req.query.days))).map(timelinessToWire) };
+  });
+
+  app.get<{ Querystring: { class?: string; days?: string } }>('/findings', {
+    schema: { querystring: findingsQuery, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'insight:read');
+    const rows = await listFindings(p, { class: req.query.class, days: windowDays(req.query.days) });
+    return { findings: rows.map(findingToWire) };
   });
 
   /* ── The catalogue (cap-01) ──────────────────────────────────────── */

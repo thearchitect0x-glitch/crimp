@@ -168,6 +168,10 @@ export async function eraseSubject(workspaceId: string, subjectId: string): Prom
     await tx.query(
       'DELETE FROM subject_cohorts WHERE workspace_id = $1 AND subject_id = $2',
       [workspaceId, subjectId]);
+    // A clock is about a person's application. The finding it produced is
+    // about the agency, carries no subject, and stays.
+    await tx.query('DELETE FROM clocks WHERE workspace_id = $1 AND subject_id = $2',
+      [workspaceId, subjectId]);
     return rowCount ?? 0;
   });
 }

@@ -21,6 +21,8 @@ import type { Proof, Disclosure } from '../domain/record.js';
 import { toStored, type RegisteredRule } from '../domain/registry.js';
 import type { CatalogueEntry } from '../domain/catalogue.js';
 import type { Remedy } from '../domain/remedy.js';
+import type { Clock, Timeliness } from '../domain/clocks.js';
+import type { Finding } from '../domain/findings.js';
 import { ApiError } from '../lib/errors.js';
 
 /* ── Inbound ─────────────────────────────────────────────────────────── */
@@ -104,6 +106,29 @@ export function remedyToWire(r: Remedy | null): Record<string, unknown> | null {
       fact: c.fact, fact_type: c.factType,
       constraints: c.constraints.map((k) => ({ path: k.path, op: k.op, value: k.value, truth: k.truth })),
     }))),
+  };
+}
+
+export function clockToWire(c: Clock): Record<string, unknown> {
+  return {
+    clock_id: c.id, scope: c.scope, clock: c.name, authority: c.authority,
+    started_at: c.startedAt.toISOString(), due_at: c.dueAt.toISOString(), status: c.status,
+    met_at: c.metAt?.toISOString() ?? null, missed_at: c.missedAt?.toISOString() ?? null,
+    resolved_at: c.resolvedAt?.toISOString() ?? null, seal_id: c.sealId,
+  };
+}
+
+export function timelinessToWire(t: Timeliness): Record<string, unknown> {
+  return {
+    clock: t.clock, authority: t.authority, running: t.running, met: t.met, missed: t.missed,
+    mean_hours_to_meet: t.meanHoursToMeet, mean_hours_late: t.meanHoursLate, unresolved: t.unresolved,
+  };
+}
+
+export function findingToWire(f: Finding): Record<string, unknown> {
+  return {
+    finding_id: f.id, class: f.class, subject_kind: f.subjectKind, subject_id: f.subjectId,
+    detail: f.detail, occurred_at: f.occurredAt.toISOString(),
   };
 }
 

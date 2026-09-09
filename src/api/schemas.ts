@@ -190,6 +190,27 @@ export const catalogueBody = {
   },
 } as const;
 
+export const clockBody = {
+  type: 'object',
+  required: ['aliases', 'scope', 'clock', 'started_at'],
+  additionalProperties: false,
+  properties: {
+    aliases,
+    scope: { type: 'string', maxLength: 127 },
+    clock: { type: 'string', maxLength: 64 },
+    started_at: { type: 'string', maxLength: 64 },
+  },
+} as const;
+
+export const findingsQuery = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    class: { type: 'string', maxLength: 64 },
+    days: { type: 'string', maxLength: 4 },
+  },
+} as const;
+
 export const closeRuleBody = {
   type: 'object',
   required: ['effective_to'],

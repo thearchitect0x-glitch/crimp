@@ -228,3 +228,70 @@ renderer (cap-04) can look up a fact's type and the workspace's sources.
 **Human to confirm.** Nothing legal. The bound (65 536) is an engineering
 choice stated in the format; if a programme's rules routinely exceed it, the
 number should be revisited *in the spec*, not in the code alone.
+
+## cap-03 · Clocks, and the findings they produce · 9 September 2026
+
+**Design divergence, recorded.** The brief says "clocks as facts" with a
+`clock` fact type carrying a status. A clock here is a **record-bound object
+with its own status, not a fact a rule can read**, and the evaluator cannot
+see it. The reason is in the brief's own next sentence — a missed clock is
+"never a change to the beneficiary outcome" — and a rule that could read
+`status = missed` is precisely a change to the outcome driven by the
+agency's lateness. The two requirements are met by making the second one
+structural: there is no code path from `clocks` to a seal's state.
+
+**What was built.**
+- `clocks.config.ts`: seven federal deadline clocks, each `TODO(legal-confirm)`
+  with its citation — Medicaid 45/90-day determinations (42 CFR 435.912(c)(3)),
+  SNAP 30-day and 7-day expedited (7 CFR 273.2(g)(1), (i)(3)(i)), prior
+  authorization 7-day standard and 72-hour expedited (42 CFR 438.210(d) as
+  amended by CMS-0057-F), fair hearing 90-day (42 CFR 431.244(f)(1)).
+  Intervals in hours so a 72-hour clock is not special.
+- Migration 014: `clocks`, `findings`, `finding_classes` (reference table,
+  same reason as `seal_event_kinds`). A finding carries no subject id.
+- A clock **starts from an attested event** — the caller states when the
+  application was received, as a claim by a named source, through
+  `POST /clocks` (`attestations:write`). Idempotent while running.
+- It is **met** by a seal for the subject in or around its scope (permit or
+  bind), or by an attestation of a named fact (`fair_hearing_90_day` →
+  `adjudication.ruling`, the name capability 6 will use). **Missed** once the
+  *database's* clock says due has passed — the Docker clock-drift lesson from
+  the earlier sessions, applied. A late resolution records `resolved_at`, so
+  lateness is a number.
+- A missed clock is an `agency_timeliness` **finding**, once per clock by
+  partial unique index — idempotent under two workers by construction.
+- The sweep advances clocks for every workspace with one running, whether
+  or not any determination is due: a programme that sealed nothing this week
+  still owes somebody a decision by Friday.
+- `GET /insight/timeliness`: per clock, running / met / missed, mean hours to
+  meet, mean hours late, unresolved — the 42 CFR 433.112(b)(15) number.
+  `GET /findings?class=`. Both `insight:read`; agents cannot read findings.
+- Erasure deletes a person's clocks and keeps the findings: the clock was
+  about the person, the finding is about the agency.
+
+**Stated honestly.** A determination clock is met by *any* seal — a favourable
+outcome an institution does not seal as a `permit` leaves no record and is
+invisible to the clock, as to everything else. An institution that wants its
+timeliness measured seals its grants too.
+
+**Blocker B2.** `advance_notice_10_day` (42 CFR 431.211) is a *minimum
+interval* between notice and effect, not a deadline, and nothing on the
+record marks "took effect". Modelling it honestly needs an `effective_at` on
+a refusal — a behaviour and format decision in the person's favour. Written
+up in `BLOCKERS.md`; not shipped as a dead config entry.
+
+**Tests.** 357 → 367 (9 integration, 1 e2e): created on open with due from
+config; replay while running; unknown name and future start refused; met by
+a seal in scope on time with no finding; broader scope meets, unrelated scope
+does not; missed → finding once, second sweep silent; late resolution records
+hours late and the timeliness figure reports it; met by attested fact; a
+finding never changes the determination and a clock survives re-evaluation;
+erasure removes the clock and keeps the finding.
+
+**Second implementation / format.** None: clocks and findings are outside the
+determination record by design. They will be documented in
+`docs/spec/extensions.md` (Phase 2) as finding classes.
+
+**Human to confirm.** Every interval and citation in `clocks.config.ts`;
+whether the deployment's state has tighter standards; the CMS-0057-F
+compliance date that applies to the payer; and B2.
