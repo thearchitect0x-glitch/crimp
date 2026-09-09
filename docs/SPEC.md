@@ -98,6 +98,39 @@ This format does not make that impossible. **It makes it attributable.** An
 institution must assert the absence as a positive, sourced claim rather than
 inferring it from silence.
 
+### 3.x Constant conclusions (0.2, normative)
+
+A rule, or any subtree of it, that evaluates to the same truth under **every**
+assignment in which the facts it names are present decides nothing about
+those facts. It can only test whether they were attested — the presence
+operator this grammar withholds, rebuilt from parts:
+
+```
+any[ a = 1, a ≠ 1 ]        true  whenever a is attested, whatever it says
+all[ a = 1, a ≠ 1 ]        false whenever a is attested
+any[ a = true, a = false ] a bool has two values, and this names both
+any[ a < 5, a > 3 ]        covers every integer
+```
+
+An implementation MUST refuse such a rule at admission. Detection is exact
+and bounded:
+
+- For each fact a subtree names, its literals partition the fact's values
+  into finitely many cells no comparison can distinguish — for an integer
+  literal *n*, the cells below, at and above it (*n*−1, *n*, *n*+1 represent
+  them all); for strings, each literal and one string that is none of them;
+  for booleans, both. Evaluating one representative per cell is exact.
+- A subtree over **one** fact is always checked.
+- A subtree over several facts is checked when the product of its cell
+  counts is at most **65 536**; above that it is not checked. The bound is
+  part of the format so that two implementations refuse the same rules.
+- A subtree whose literals for one fact are of mixed kinds cannot be judged
+  and is not refused here (it cannot evaluate against any typed fact either).
+
+This narrows *admission*, not *evaluation*. A rule sealed under 0.1 evaluates
+identically under 0.2 and remains verifiable; it would be refused if
+resubmitted. Vectors: `refuse` (five added) and `admit` (new group).
+
 ## 4 · Three-valued evaluation (normative)
 
 Values are `true`, `false`, `unknown`. Kleene's strong three-valued logic.
@@ -211,6 +244,27 @@ option stays open; it is not exercised yet.
 **There is no subject identifier, by design.** A determination is about a
 decision, not about a person. Including one would make a set of determinations
 a way to enumerate a population.
+
+### 7.0b Optional field added in 0.2 — the attester (facts[])
+
+Each entry of `facts[]` MAY carry `attester`: the credential that asserted the
+fact, as the issuer identifies it (an opaque string, never a person's name).
+Absent or `null` in 0.1 records. Not part of any hash.
+
+### 7.0c Issuing-system behaviour that does NOT appear in the record — guards
+
+An issuing system MAY withhold a fact from evaluation until another fact
+holds — Crimp withholds a *non-response* fact until the corresponding
+*delivery* fact says `delivered`. This is invisible in the format on purpose,
+and safe because of §4: strong Kleene evaluation is monotone in information.
+A determination that sealed `true` with a fact withheld is `true` under every
+value of that fact, so an examiner who holds the value re-runs the rule and
+reproduces the outcome. A withheld fact is not in `facts[]`, because the
+evaluator did not read it; a guard that *held* IS in `facts[]`, although the
+rule does not name it, because the determination rested on it — an examiner
+sees the delivery evidence committed beside the non-response it unlocked.
+Refusals caused by a guard are reported to the caller as
+`delivery_unattested` and are never sealed.
 
 ### 7.0a Optional fields added in 0.2 — a registered rule, and the date it is about
 

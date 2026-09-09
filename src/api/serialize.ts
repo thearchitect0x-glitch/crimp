@@ -19,6 +19,7 @@ import type { MintedKey } from '../domain/auth.js';
 import type { Reason } from '../domain/explain.js';
 import type { Proof, Disclosure } from '../domain/record.js';
 import { toStored, type RegisteredRule } from '../domain/registry.js';
+import type { CatalogueEntry } from '../domain/catalogue.js';
 import { ApiError } from '../lib/errors.js';
 
 /* ── Inbound ─────────────────────────────────────────────────────────── */
@@ -90,6 +91,15 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
   };
 }
 
+export function catalogueEntryToWire(e: CatalogueEntry): Record<string, unknown> {
+  return {
+    fact: e.fact, fact_type: e.factType, class: e.class,
+    guarded_by: e.guardedBy, guard_value: e.guardValue, allowed_values: e.allowedValues,
+    description: e.description, declared_by: e.declaredBy,
+    declared_at: e.declaredAt.toISOString(),
+  };
+}
+
 export function registeredRuleToWire(r: RegisteredRule): Record<string, unknown> {
   return {
     ...toStored(r),
@@ -131,6 +141,7 @@ export function proofToWire(p: Proof): Record<string, unknown> {
       fact: f.fact, fact_type: f.factType, value_sha256: f.valueSha256,
       source: f.source, admissibility: f.admissibility,
       asserted_at: f.assertedAt.toISOString(),
+      attester: f.attester,
     })),
     events: p.events.map((e) => ({
       kind: e.kind, actor: e.actor, evidence_sha256: e.evidenceSha256,

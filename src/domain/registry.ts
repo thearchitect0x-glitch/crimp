@@ -33,6 +33,7 @@ import { validateRule, canonicalRule, GRAMMAR_VERSION, type Rule } from './rule.
 import { validateScope, covers } from './scope.js';
 import { rankOf } from './authority.js';
 import { requireScope, type Principal } from './auth.js';
+import { loadCatalogue, assertCatalogued } from './catalogue.js';
 
 const RULESET = /^[a-z][a-z0-9_]{0,30}$/;
 const RULE_ID = /^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,3}$/;
@@ -187,7 +188,7 @@ export async function commitRule(p: Principal, args: {
 
   // The same validation a seal runs. A rule that cannot be sealed cannot be
   // committed either, and hearing that here is cheaper than hearing it later.
-  validateRule(args.rule);
+  const referenced = validateRule(args.rule);
   const rule = args.rule as Rule;
   const version = sha256Hex(canonicalRule(rule));
 
@@ -198,6 +199,10 @@ export async function commitRule(p: Principal, args: {
       throw new ApiError(404, 'unknown_ruleset',
         `Ruleset "${args.ruleset}" is not declared in this workspace.`, { ruleset: args.ruleset });
     }
+    // Test (d) of capability 1, made structural: a synonym for a guarded fact
+    // is not detected, it is a fact the programme never defined, and a closed
+    // catalogue refuses it by name.
+    assertCatalogued(await loadCatalogue(tx, p.workspaceId), referenced, 'a committed rule');
 
     // Idempotent on content. The same text is the same version; a second
     // commit of it is a replay, not a conflict.

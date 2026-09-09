@@ -54,6 +54,14 @@ for (const c of v['refuse'] as unknown as Array<Record<string, never>>) {
   check('refuse', c['name'] as unknown as string, refused, true);
 }
 
+// §3 — the rules the grammar must ADMIT. Refusal alone is easy to satisfy: a
+// grammar that refuses everything passes every refuse vector.
+for (const c of v['admit'] as unknown as Array<Record<string, never>>) {
+  let admitted = true;
+  try { validateRule(c['rule']); } catch { admitted = false; }
+  check('admit', c['name'] as unknown as string, admitted, true);
+}
+
 // §7.0a — the one claim about a registered-rule snapshot a stranger can check.
 // A record without the field is consistent by definition: the field is optional.
 for (const c of v['record'] as unknown as Array<Record<string, never>>) {

@@ -4,12 +4,12 @@ import type { FastifyInstance } from 'fastify';
 import { authorized } from '../app.js';
 import {
   attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
-  carveOutBody, mintKeyBody, windowQuery, errors, rulesetBody, ruleBody, closeRuleBody,
+  carveOutBody, mintKeyBody, windowQuery, errors, rulesetBody, ruleBody, closeRuleBody, catalogueBody,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
   sourcesToWire, quadrantToWire, cliffsToWire, keyToWire,
-  proofToWire, disclosureToWire, registeredRuleToWire,
+  proofToWire, disclosureToWire, registeredRuleToWire, catalogueEntryToWire,
   type WireClaw, type WireFact,
 } from '../serialize.js';
 import { attest } from '../../domain/attest.js';
@@ -19,6 +19,8 @@ import { declareCohort, placeInCohort } from '../../domain/cohort.js';
 import { mergeSubjects, carveOut } from '../../domain/merge.js';
 import { proof, disclosure, disclosures } from '../../domain/record.js';
 import { declareRuleset, commitRule, closeRule, ruleHistory } from '../../domain/registry.js';
+import { catalogueFact, listCatalogue, type FactClass } from '../../domain/catalogue.js';
+import type { FactType } from '../../domain/rule.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -100,6 +102,28 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // retry succeeded, but it did not create anything.
     reply.code(out.outcome === 'sealed' ? 201 : 200);
     return sealToWire(out);
+  });
+
+  /* ── The catalogue (cap-01) ──────────────────────────────────────── */
+  app.post<{
+    Body: {
+      fact: string; fact_type: FactType; class: FactClass; guarded_by?: string | null;
+      guard_value?: string | null; allowed_values?: string[] | null; description?: string | null;
+    };
+  }>('/catalogue', { schema: { body: catalogueBody, response: errors } }, async (req, reply) => {
+    const p = await authorized(req, 'rules:write');
+    const out = await catalogueFact(p, {
+      fact: req.body.fact, factType: req.body.fact_type, class: req.body.class,
+      guardedBy: req.body.guarded_by ?? null, guardValue: req.body.guard_value ?? null,
+      allowedValues: req.body.allowed_values ?? null, description: req.body.description ?? null,
+    });
+    reply.code(201);
+    return catalogueEntryToWire(out);
+  });
+
+  app.get('/catalogue', { schema: { response: errors } }, async (req) => {
+    const p = await authorized(req, 'rules:read');
+    return { facts: (await listCatalogue(p)).map(catalogueEntryToWire) };
   });
 
   /* ── The registry (cap-08) ───────────────────────────────────────── */

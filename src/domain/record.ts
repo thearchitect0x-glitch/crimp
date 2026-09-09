@@ -41,6 +41,8 @@ export interface SealedFact {
   source: string;
   admissibility: string;
   assertedAt: Date;
+  /** The credential that asserted it, as the issuer identifies it. Null before cap-01. */
+  attester: string | null;
 }
 
 export interface SealEvent {
@@ -114,9 +116,9 @@ export async function proof(p: Principal, sealId: string): Promise<Proof> {
 
   const { rows: facts } = await db.query<{
     fact: string; fact_type: FactType; value_sha256: string;
-    source: string; admissibility: string; asserted_at: Date;
+    source: string; admissibility: string; asserted_at: Date; attester: string | null;
   }>(
-    `SELECT fact, fact_type, value_sha256, source, admissibility, asserted_at
+    `SELECT fact, fact_type, value_sha256, source, admissibility, asserted_at, attester
        FROM seal_facts WHERE seal_id = $1 ORDER BY fact`, [sealId]);
 
   const { rows: events } = await db.query<{
@@ -143,6 +145,7 @@ export async function proof(p: Principal, sealId: string): Promise<Proof> {
     facts: facts.map((f) => ({
       fact: f.fact, factType: f.fact_type, valueSha256: f.value_sha256,
       source: f.source, admissibility: f.admissibility, assertedAt: f.asserted_at,
+      attester: f.attester,
     })),
     events: events.map((e) => ({
       kind: e.kind, actor: e.actor, evidenceSha256: e.evidence_sha256,

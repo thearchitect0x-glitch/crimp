@@ -175,6 +175,21 @@ export const ruleBody = {
   },
 } as const;
 
+export const catalogueBody = {
+  type: 'object',
+  required: ['fact', 'fact_type', 'class'],
+  additionalProperties: false,
+  properties: {
+    fact: { type: 'string', maxLength: 96 },
+    fact_type: { type: 'string', enum: [...FACT_TYPES] },
+    class: { type: 'string', enum: ['plain', 'non_response', 'delivery'] },
+    guarded_by: { type: ['string', 'null'], maxLength: 96 },
+    guard_value: { type: ['string', 'null'], maxLength: 64 },
+    allowed_values: { type: ['array', 'null'], maxItems: 64, items: { type: 'string', maxLength: 64 } },
+    description: { type: ['string', 'null'], maxLength: 500 },
+  },
+} as const;
+
 export const closeRuleBody = {
   type: 'object',
   required: ['effective_to'],

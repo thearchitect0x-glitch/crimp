@@ -32,6 +32,7 @@ import {
   resolveRule, refOf, fromStored, toStored as toStoredRef, assertScopeWithin,
   type RuleRef, type StoredRuleRef,
 } from './registry.js';
+import { loadCatalogue, assertCatalogued, applyGuards, guardsOf } from './catalogue.js';
 import { classify, tierOf, harden, PRESSURE_WINDOW_DAYS, type Pressure } from './lifecycle.js';
 
 export type Disposition = 'bind' | 'permit' | 'commit';
@@ -116,7 +117,7 @@ export interface SealResult {
 interface FactRow {
   fact: string; fact_type: FactType;
   bool_value: boolean | null; int_value: number | null; str_value: string | null;
-  source: string; admissibility: Admissibility; asserted_at: Date;
+  source: string; admissibility: Admissibility; asserted_at: Date; attester: string | null;
 }
 
 function toFact(r: FactRow): Fact {
@@ -143,7 +144,8 @@ async function loadFacts(
     // silently re-decided, and a fresh seal is refused with `facts_not_attested`.
     // That is 42 CFR 435.916 in one clause — if the data on hand is stale you
     // may not determine from it, you must go and ask.
-    `SELECT fact, fact_type, bool_value, int_value, str_value, source, admissibility, asserted_at
+    `SELECT fact, fact_type, bool_value, int_value, str_value, source, admissibility, asserted_at,
+            attester
        FROM attestations
       WHERE workspace_id = $1 AND subject_id = $2 AND fact = ANY($3::text[])
         AND (expires_at IS NULL OR expires_at > now())`,
@@ -298,7 +300,20 @@ export async function seal(
 
     const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
       { doing: 'sealing a determination' });
-    const { facts, rows } = await loadFacts(tx, workspaceId, subjectId, [...referenced]);
+
+    // A closed catalogue admits only what it names — for an inline rule here,
+    // for a registered one at commit. Then the guards: a non-response fact is
+    // withheld until its delivery fact holds, and the evaluator never learns
+    // there was anything to withhold.
+    const catalogue = await loadCatalogue(tx, workspaceId);
+    assertCatalogued(catalogue, referenced, 'a rule');
+    const loaded = await loadFacts(tx, workspaceId, subjectId,
+      [...referenced, ...guardsOf(catalogue, referenced)]);
+    const { facts, withheld } = applyGuards(catalogue, loaded.facts, referenced);
+    // What the record commits to: every fact the evaluator read, and every
+    // guard that held — the determination rested on the delivery as surely
+    // as on the non-response it unlocked. A withheld fact is not here.
+    const rows = loaded.rows.filter((r) => facts[r.fact] !== undefined);
 
     // Throws RuleTypeError (400) on a literal that cannot be compared with the
     // fact it names. That is a bug in the rule, not missing data, and it must
@@ -310,7 +325,13 @@ export async function seal(
       throw new ApiError(409, 'facts_not_attested',
         'This rule reads facts that have not been attested, so it has not been answered — it has '
         + 'neither been satisfied nor violated. Attest them and seal again. An agent may not '
-        + 'decide on facts it never gathered.', { missing });
+        + 'decide on facts it never gathered.'
+        + (withheld.length > 0
+          ? ` ${withheld.length} of them cannot be read until delivery is attested: `
+            + withheld.map((w) => `${w.fact} (needs ${w.guardedBy} = ${w.requires}, `
+              + `${w.observed === null ? 'nothing attested' : `attested ${w.observed}`})`).join('; ')
+          : ''),
+        { missing, guarded: withheld });
     }
 
     if (truth === FALSE) {
@@ -350,9 +371,11 @@ export async function seal(
 
     for (const r of rows) {
       await tx.query(
-        `INSERT INTO seal_facts (seal_id, fact, fact_type, value_sha256, source, admissibility, asserted_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [sealId, r.fact, r.fact_type, valueDigest(r), r.source, r.admissibility, r.asserted_at],
+        `INSERT INTO seal_facts (seal_id, fact, fact_type, value_sha256, source, admissibility,
+                                 asserted_at, attester)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [sealId, r.fact, r.fact_type, valueDigest(r), r.source, r.admissibility, r.asserted_at,
+          r.attester],
       );
     }
 
@@ -767,9 +790,11 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
       LIMIT $2`,
     [workspaceId, limit]);
 
+  const catalogue = await loadCatalogue(pool, workspaceId);
   const changes: Reevaluation[] = [];
   for (const s of rows) {
     let next: string;
+    let guarded: unknown[] = [];
     if (s.expired) {
       // Ran out. NOT an error — collapsing this into `lapsed` would count
       // every expiry as the institution having been wrong.
@@ -781,7 +806,12 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
       next = 'tainted';
     } else {
       const names = [...factsReferenced(s.rule)];
-      const { facts } = await loadFacts(pool, workspaceId, s.subject_id, names);
+      const loaded = await loadFacts(pool, workspaceId, s.subject_id,
+        [...names, ...guardsOf(catalogue, names)]);
+      // The same guard the seal applied. A finding of non-response that
+      // stood on delivered mail does not survive the mail coming back.
+      const { facts, withheld } = applyGuards(catalogue, loaded.facts, names);
+      guarded = withheld;
       try {
         next = classify(evaluate(s.rule, facts));
       } catch {
@@ -808,7 +838,8 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
       await tx.query(
         `INSERT INTO seal_events (seal_id, workspace_id, kind, detail)
          VALUES ($1,$2,$3,$4::jsonb)`,
-        [s.id, workspaceId, next, JSON.stringify({ from: s.state })]);
+        [s.id, workspaceId, next, JSON.stringify({ from: s.state,
+          ...(guarded.length > 0 ? { guarded } : {}) })]);
       changes.push({ sealId: s.id, from: s.state, to: next });
     });
   }

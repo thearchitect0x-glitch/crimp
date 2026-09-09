@@ -495,6 +495,111 @@
         "op": "present",
         "value": true
       }
+    },
+    {
+      "name": "constant conclusion: any[a=1, a≠1] is true whenever a is attested — a presence test",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": 1
+          },
+          {
+            "fact": "a",
+            "op": "ne",
+            "value": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "constant conclusion: all[a=1, a≠1] is false whenever a is attested",
+      "rule": {
+        "all": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": 1
+          },
+          {
+            "fact": "a",
+            "op": "ne",
+            "value": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "a set operator over booleans can never evaluate — the grammar refuses what the evaluator cannot run",
+      "rule": {
+        "fact": "a",
+        "op": "in",
+        "value": [
+          true,
+          false
+        ]
+      }
+    },
+    {
+      "name": "constant conclusion: any[a<5, a>3] covers every integer",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "lt",
+            "value": 5
+          },
+          {
+            "fact": "a",
+            "op": "gt",
+            "value": 3
+          }
+        ]
+      }
+    },
+    {
+      "name": "constant conclusion buried in a subtree is still refused",
+      "rule": {
+        "all": [
+          {
+            "fact": "b",
+            "op": "lt",
+            "value": 5
+          },
+          {
+            "any": [
+              {
+                "fact": "a",
+                "op": "eq",
+                "value": 1
+              },
+              {
+                "fact": "a",
+                "op": "ne",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "constant conclusion: any[a=true, a=false] — a bool has two values and this names both",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          },
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": false
+          }
+        ]
+      }
     }
   ],
   "record": [
@@ -593,6 +698,70 @@
         "reasons": []
       },
       "rule_ref_consistent": true
+    }
+  ],
+  "admit": [
+    {
+      "name": "any[a<5, a>5] is false at 5 — a gap is not a constant",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "lt",
+            "value": 5
+          },
+          {
+            "fact": "a",
+            "op": "gt",
+            "value": 5
+          }
+        ]
+      }
+    },
+    {
+      "name": "a >= 0 is false below zero",
+      "rule": {
+        "fact": "a",
+        "op": "gte",
+        "value": 0
+      }
+    },
+    {
+      "name": "s in [A, B] is false for any other string",
+      "rule": {
+        "fact": "s",
+        "op": "in",
+        "value": [
+          "A",
+          "B"
+        ]
+      }
+    },
+    {
+      "name": "genuinely joint conditions: all[any[a=1, b=1], a≠1]",
+      "rule": {
+        "all": [
+          {
+            "any": [
+              {
+                "fact": "a",
+                "op": "eq",
+                "value": 1
+              },
+              {
+                "fact": "b",
+                "op": "eq",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "fact": "a",
+            "op": "ne",
+            "value": 1
+          }
+        ]
+      }
     }
   ]
 }
