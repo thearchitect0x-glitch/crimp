@@ -281,6 +281,31 @@ function walk(rule, facts, want, path, negated) {
     : [];
 }
 
+/**
+ * A value in the cell a correction describes: try the literals and their
+ * neighbours until every constraint holds. The same partition the issuer
+ * searched, so if the issuer found a cell, this finds a member of it.
+ */
+function witness(c) {
+  const lits = c.constraints.flatMap((k) => (Array.isArray(k.value) ? k.value : [k.value]));
+  const kinds = new Set(lits.map((v) => typeof v));
+  if (kinds.size !== 1) return undefined;
+  const kind = [...kinds][0];
+  const cands = kind === 'boolean' ? [true, false]
+    : kind === 'number' ? [...new Set(lits.flatMap((n) => [n - 1, n, n + 1]))].sort((a, b) => a - b)
+      : [...new Set(lits), lits.join('') + '\u0001'];
+  const type = kind === 'boolean' ? 'bool' : kind === 'number' ? 'int' : 'str';
+  for (const value of cands) {
+    const f = { type, value };
+    const ok = c.constraints.every((k) => {
+      try { return evaluate({ fact: c.fact, op: k.op, value: k.value }, { [c.fact]: f }) === k.truth; }
+      catch { return false; }
+    });
+    if (ok) return f;
+  }
+  return undefined;
+}
+
 /* ── §8 · Verification procedure ─────────────────────────────────────── */
 
 const CONSISTENT = {
@@ -348,6 +373,26 @@ async function verify(det, held = {}, opts = {}) {
     }
   } else if (checked > 0) {
     add('re-evaluation', null, 'skipped — supply every fact the record names');
+  }
+
+  // §7.0d — a remedy is a claim: "change these facts into these cells and the
+  // rule moves to `target`". Checkable with held values, and worth checking:
+  // a remedy that does not work is a notice telling somebody to do the wrong
+  // thing. Minimality is a search property and is not re-derived here.
+  if (det.remedy != null && Object.keys(facts).length === (det.facts ?? []).length
+      && (det.facts ?? []).length > 0) {
+    const results = det.remedy.sets.map((set) => {
+      const over = {};
+      for (const c of set) {
+        const v = witness(c);
+        if (v === undefined) return false;
+        over[c.fact] = v;
+      }
+      try { return evaluate(det.rule, { ...facts, ...over }) === det.remedy.target; } catch { return false; }
+    });
+    add('remedy · effective', results.every(Boolean),
+      `${results.filter(Boolean).length} of ${results.length} correction set(s) move the rule to ${det.remedy.target}`
+      + (det.remedy.exhaustive ? '' : ' (search was bounded)'));
   }
 
   // ACCURACY is checkable with no values at all: it is a property of the

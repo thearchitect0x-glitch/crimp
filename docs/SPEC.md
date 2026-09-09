@@ -266,6 +266,46 @@ sees the delivery evidence committed beside the non-response it unlocked.
 Refusals caused by a guard are reported to the caller as
 `delivery_unattested` and are never sealed.
 
+### 7.0d Optional field added in 0.2 — the remedy
+
+A record MAY carry `remedy`: every **minimal** set of fact changes that would
+move the rule to `target`. For a refusal, `target` is `false` — what would
+make it lapse. It is derived from the rule and the facts' *cells*, never
+their values, so it discloses nothing the rule itself does not.
+
+```jsonc
+"remedy": {
+  "target": "false",
+  "exhaustive": true,        // false if the search stopped at the bound
+  "evaluations": 6,
+  "sets": [                  // each set is one minimal remedy, facts sorted
+    [ { "fact": "prior_refunds_90d", "fact_type": "int",
+        "constraints": [     // every clause on this fact, with the truth it must take
+          { "path": "all[1]", "op": "lt", "value": 3, "truth": "false" } ] } ]
+  ]
+} | null
+```
+
+**Semantics (normative).** A *cell* of a fact is a maximal set of values on
+which every clause of the rule naming that fact has the same truth. A
+correction set is a set of facts together with one cell each such that
+placing those facts in those cells moves the rule to `target`; it is
+*minimal* if no correction set of smaller size exists. `sets` MUST contain
+every minimal correction set and nothing else, with facts sorted by name and
+sets sorted by their canonical JSON. `constraints` describes the cell by the
+truth of each clause on that fact.
+
+**Bound.** Sizes are searched in increasing order, one evaluation per
+distinct cell per fact (two representatives in one cell are one move), and
+the search stops after **65 536** evaluations. If it stops before the first size with a witness is
+completed, `exhaustive` is `false` and `sets` holds what was found. The bound
+is part of the format so that two implementations report the same thing.
+
+**Verification.** A verifier holding the values MAY check *effectiveness*:
+for each set, choose any value in each described cell, re-evaluate, and
+require `target`. Minimality is a search property; a verifier that does not
+re-run the search does not claim it.
+
 ### 7.0a Optional fields added in 0.2 — a registered rule, and the date it is about
 
 Both fields are **optional**. A record without them is a valid 0.2 record; a

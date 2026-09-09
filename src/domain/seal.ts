@@ -33,6 +33,7 @@ import {
   type RuleRef, type StoredRuleRef,
 } from './registry.js';
 import { loadCatalogue, assertCatalogued, applyGuards, guardsOf } from './catalogue.js';
+import { corrections, favourable, type Remedy } from './remedy.js';
 import { classify, tierOf, harden, PRESSURE_WINDOW_DAYS, type Pressure } from './lifecycle.js';
 
 export type Disposition = 'bind' | 'permit' | 'commit';
@@ -88,6 +89,13 @@ export interface SealResult {
   ruleHash: string;
   /** Which registered version was selected, so nothing is decided silently. Null for an inline rule. */
   ruleRef: RuleRef | null;
+  /**
+   * What would move this the person's way (cap-02). For a sealed refusal,
+   * what would make it lapse; for a permit that did not apply, what would
+   * earn it. Null for a commit, and for a refusal that did not apply — there
+   * is nothing to remedy in not being refused.
+   */
+  remedy: Remedy | null;
   reason: string;
   /**
    * The clauses that decided it, value-free.
@@ -274,7 +282,8 @@ export async function seal(
     const { rows: prior } = await tx.query<{
       id: string; disposition: Disposition; rule_hash: string;
       reasons: Reason[]; expires_at: Date | null; rule_ref: StoredRuleRef | null;
-    }>(`SELECT id, disposition, rule_hash, reasons, expires_at, rule_ref FROM seals
+      remedy: Remedy | null;
+    }>(`SELECT id, disposition, rule_hash, reasons, expires_at, rule_ref, remedy FROM seals
          WHERE workspace_id = $1 AND idempotency_key = $2`,
       [workspaceId, input.idempotencyKey]);
     if (prior[0]) {
@@ -295,6 +304,7 @@ export async function seal(
         reasons: prior[0].reasons,
         expiresAt: prior[0].expires_at,
         ruleRef: prior[0].rule_ref === null ? null : fromStored(prior[0].rule_ref),
+        remedy: prior[0].remedy,
       };
     }
 
@@ -320,6 +330,13 @@ export async function seal(
     // be refused loudly rather than absorbed as UNKNOWN.
     const truth = evaluate(rule, facts);
 
+    // The direction that helps the person, if this disposition has one. A
+    // remedy is derived from the rule's literals and the facts' CELLS, never
+    // their values, so it sits at the same sensitivity as the reasons.
+    const want = favourable(input.disposition);
+    const remedyToward = (t: typeof TRUE | typeof FALSE | null): Remedy | null =>
+      (t === null || t === truth ? null : corrections(rule, facts, t));
+
     if (truth === UNKNOWN) {
       const missing = [...referenced].filter((f) => facts[f] === undefined);
       throw new ApiError(409, 'facts_not_attested',
@@ -331,7 +348,7 @@ export async function seal(
             + withheld.map((w) => `${w.fact} (needs ${w.guardedBy} = ${w.requires}, `
               + `${w.observed === null ? 'nothing attested' : `attested ${w.observed}`})`).join('; ')
           : ''),
-        { missing, guarded: withheld });
+        { missing, guarded: withheld, remedy: remedyToward(want) });
     }
 
     if (truth === FALSE) {
@@ -340,6 +357,9 @@ export async function seal(
       return {
         sealId: null, outcome: 'not_applicable' as const, expiresAt: null,
         disposition: input.disposition, ruleHash, ruleRef,
+        // A permit that did not apply: what would earn it. A refusal that did
+        // not apply needs no remedy — that IS the favourable outcome.
+        remedy: remedyToward(want),
         reason: 'The rule did not hold against the attested facts. No determination was created.',
         // Which clauses failed, so the caller knows why their own rule did not
         // apply. Nothing is stored: no determination exists to attach it to.
@@ -351,6 +371,7 @@ export async function seal(
     // which branch of an `any` fired needs the facts as they were, and those
     // are kept only as digests.
     const why = reasons(rule, facts, TRUE);
+    const remedy = remedyToward(want);
 
     const sealId = newId('seal');
     await tx.query(
@@ -358,15 +379,16 @@ export async function seal(
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
                           claw_cooling_off_s, max_uses, idempotency_key, expires_at,
                           reasons, claw_quorum, claw_jurisdiction,
-                          last_evaluated_at, evaluation_due, rule_ref, as_of)
+                          last_evaluated_at, evaluation_due, rule_ref, as_of, remedy)
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,
-               $17,$18,now(),false,$19::jsonb,$20)`,
+               $17,$18,now(),false,$19::jsonb,$20,$21::jsonb)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
         input.idempotencyKey, expiresAt, JSON.stringify(why),
         clawRule.quorum ?? 1, clawRule.jurisdiction ?? null,
-        ruleRef === null ? null : JSON.stringify(toStoredRef(ruleRef)), asOf],
+        ruleRef === null ? null : JSON.stringify(toStoredRef(ruleRef)), asOf,
+        remedy === null ? null : JSON.stringify(remedy)],
     );
 
     for (const r of rows) {
@@ -389,7 +411,7 @@ export async function seal(
 
     return {
       sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash, ruleRef,
-      expiresAt,
+      remedy, expiresAt,
       reason: 'The rule held. The determination is sealed.', reasons: why,
     };
   });

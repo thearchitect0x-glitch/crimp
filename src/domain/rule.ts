@@ -263,8 +263,12 @@ function checkNode(node: Rule, path: string): ConstantConclusion | null {
   return { truth: seenTrue ? TRUE : FALSE, path: path === '' ? 'rule' : path, assignments: total };
 }
 
-/** One representative per cell, per fact — or null if a fact's literals are of mixed kinds. */
-function representatives(node: Rule): Map<string, Fact[]> | null {
+/**
+ * One representative per cell, per fact — or null if a fact's literals are of
+ * mixed kinds. Shared with the remedy search (cap-02), which needs the same
+ * partition for the same reason: it is what makes "every value" finite.
+ */
+export function representatives(node: Rule): Map<string, Fact[]> | null {
   const literals = new Map<string, Set<boolean | number | string>>();
   const collect = (n: Rule): void => {
     if ('all' in n) return n.all.forEach(collect);

@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { validateRule, canonicalRule, type Rule, type Facts } from '../src/domain/rule.js';
 import { evaluate } from '../src/domain/evaluate.js';
 import { reasons } from '../src/domain/explain.js';
+import { corrections } from '../src/domain/remedy.js';
 import { canonicalize } from '../src/lib/ids.js';
 
 const v = JSON.parse(readFileSync('spec/vectors/vectors.json', 'utf8')) as Record<string, never>;
@@ -60,6 +61,15 @@ for (const c of v['admit'] as unknown as Array<Record<string, never>>) {
   let admitted = true;
   try { validateRule(c['rule']); } catch { admitted = false; }
   check('admit', c['name'] as unknown as string, admitted, true);
+}
+
+// §7.0d — every minimal correction set, and nothing else, in a stated order.
+for (const c of v['remedy'] as unknown as Array<Record<string, never>>) {
+  const got = corrections(c['rule'] as unknown as Rule, c['facts'] as unknown as Facts, c['target'] as never);
+  check('remedy', c['name'] as unknown as string,
+    { exhaustive: got.exhaustive, sets: got.sets.map((set) => set.map((x) => ({
+      fact: x.fact, fact_type: x.factType, constraints: x.constraints }))) },
+    { exhaustive: c['exhaustive'], sets: c['sets'] });
 }
 
 // §7.0a — the one claim about a registered-rule snapshot a stranger can check.

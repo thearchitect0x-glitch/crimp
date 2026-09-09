@@ -20,6 +20,7 @@ import type { Reason } from '../domain/explain.js';
 import type { Proof, Disclosure } from '../domain/record.js';
 import { toStored, type RegisteredRule } from '../domain/registry.js';
 import type { CatalogueEntry } from '../domain/catalogue.js';
+import type { Remedy } from '../domain/remedy.js';
 import { ApiError } from '../lib/errors.js';
 
 /* ── Inbound ─────────────────────────────────────────────────────────── */
@@ -88,6 +89,21 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
     reasons: r.reasons.map(reasonToWire),
     expires_at: r.expiresAt?.toISOString() ?? null,
     rule_ref: r.ruleRef === null ? null : toStored(r.ruleRef),
+    remedy: remedyToWire(r.remedy),
+  };
+}
+
+/** A remedy on the wire. Rule literals and cells only — nothing observed. */
+export function remedyToWire(r: Remedy | null): Record<string, unknown> | null {
+  if (r === null) return null;
+  return {
+    target: r.target,
+    exhaustive: r.exhaustive,
+    evaluations: r.evaluations,
+    sets: r.sets.map((set) => set.map((c) => ({
+      fact: c.fact, fact_type: c.factType,
+      constraints: c.constraints.map((k) => ({ path: k.path, op: k.op, value: k.value, truth: k.truth })),
+    }))),
   };
 }
 
@@ -136,6 +152,7 @@ export function proofToWire(p: Proof): Record<string, unknown> {
     expires_at: p.expiresAt?.toISOString() ?? null,
     as_of: p.asOf?.toISOString() ?? null,
     rule_ref: p.ruleRef === null ? null : toStored(p.ruleRef),
+    remedy: remedyToWire(p.remedy),
     reasons: p.reasons.map(reasonToWire),
     facts: p.facts.map((f) => ({
       fact: f.fact, fact_type: f.factType, value_sha256: f.valueSha256,

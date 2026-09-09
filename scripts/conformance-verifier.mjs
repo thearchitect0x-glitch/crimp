@@ -35,5 +35,20 @@ for (const c of v.record) {
   check('record', `${c.name} (rule hash step)`, steps.find((s) => s.step === 'rule hash')?.ok, true);
 }
 
+// §7.0d — the verifier does not search; it checks that a remedy WORKS. Each
+// vector's sets are run through `verify()` as a record whose values are held,
+// which is exactly what an examiner with the institution's data would do.
+for (const c of v.remedy) {
+  const truth = evaluate(c.rule, c.facts);
+  const facts = await Promise.all(Object.entries(c.facts).map(async ([fact, f]) => ({
+    fact, fact_type: f.type, value_sha256: await sha256(canonical({ t: f.type, v: f.value })),
+  })));
+  const det = { grammar_version: '1', rule: c.rule, rule_hash: await sha256(canonical(c.rule)),
+    state: truth === 'true' ? 'sealed' : truth === 'false' ? 'lapsed' : 'tainted',
+    facts, reasons: [], remedy: { target: c.target, exhaustive: c.exhaustive, sets: c.sets } };
+  const { steps } = await verify(det, c.facts);
+  check('remedy', `${c.name} (effective)`, steps.find((s) => s.step === 'remedy · effective')?.ok, true);
+}
+
 console.log(`independent verifier: ${pass} passed, ${fail.length} failed`);
 if (fail.length) { console.log('\n' + fail.join('\n\n')); process.exitCode = 1; }

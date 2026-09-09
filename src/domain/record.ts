@@ -29,6 +29,7 @@ import { disclose, type DisclosedReason, type Reason } from './explain.js';
 import type { Disposition } from './seal.js';
 import type { Facts, Fact, FactType, Rule } from './rule.js';
 import { fromStored, type RuleRef, type StoredRuleRef } from './registry.js';
+import type { Remedy } from './remedy.js';
 
 /** Reading the values that decided a determination is an operator act. */
 export const DISCLOSURE_AUTHORITY = 'operator';
@@ -68,6 +69,8 @@ export interface Proof {
   asOf: Date | null;
   /** The registered rule this was sealed under, if any. A citation, not a pointer. */
   ruleRef: RuleRef | null;
+  /** What would move this the person's way (SPEC §7.0d). Null before cap-02 and on a commit. */
+  remedy: Remedy | null;
   reasons: Reason[];
   facts: SealedFact[];
   events: SealEvent[];
@@ -84,13 +87,13 @@ interface SealRow {
   id: string; scope: string; disposition: Disposition; state: string; rule: Rule;
   rule_hash: string; grammar_version: string; sealed_by: string; sealed_at: Date;
   expires_at: Date | null; reasons: Reason[]; subject_id: string;
-  as_of: Date | null; rule_ref: StoredRuleRef | null;
+  as_of: Date | null; rule_ref: StoredRuleRef | null; remedy: Remedy | null;
 }
 
 async function loadSeal(db: Db, workspaceId: string, sealId: string): Promise<SealRow> {
   const { rows } = await db.query<SealRow>(
     `SELECT id, scope, disposition, state, rule, rule_hash, grammar_version, sealed_by,
-            sealed_at, expires_at, reasons, subject_id, as_of, rule_ref
+            sealed_at, expires_at, reasons, subject_id, as_of, rule_ref, remedy
        FROM seals WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, sealId]);
   const seal = rows[0];
@@ -141,6 +144,7 @@ export async function proof(p: Principal, sealId: string): Promise<Proof> {
     expiresAt: seal.expires_at,
     asOf: seal.as_of,
     ruleRef: seal.rule_ref === null ? null : fromStored(seal.rule_ref),
+    remedy: seal.remedy,
     reasons: seal.reasons,
     facts: facts.map((f) => ({
       fact: f.fact, factType: f.fact_type, valueSha256: f.value_sha256,

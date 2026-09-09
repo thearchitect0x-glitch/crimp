@@ -163,3 +163,68 @@ catalogue — which facts are non-response facts, which notice guards each —
 is the programme's own data dictionary and is not something this code should
 guess. `CHANNELS` (`mail`, `e_notice`, `portal`, `sms`) is exported as the
 convention and enforced only where an operator closes a `.channel` fact to it.
+
+## cap-02 · Minimal correction sets — the remedy · 9 September 2026
+
+**Spec.** §7.0d (new, additive): optional `remedy` on a record — every
+*minimal* set of fact changes that moves the rule to `target`, each fact
+described by its **cell** (every clause on that fact, with the truth it must
+take). Normative semantics for "cell", "correction set", "minimal", ordering,
+and the bound (**65 536** evaluations, one per distinct cell per fact).
+Verification of *effectiveness* specified; minimality declared a search
+property a non-searching verifier does not claim.
+
+**Domain.** `src/domain/remedy.ts`: `corrections(rule, facts, target)`, pure;
+`favourable(disposition)`; `REMEDY_BOUND`. Migration 013: `seals.remedy`.
+
+- **Reuses the F1 partition.** `representatives()` (rule.ts) is now exported:
+  the same cells that make "every value" finite for the constant-conclusion
+  check make the remedy search exact. One mechanism, two uses.
+- **Value-free by construction.** A remedy is the rule's own literals
+  rearranged. It never carries what a fact *is*, so it sits at the same
+  sensitivity as `reasons` and is returned to the sealer and exported in the
+  proof without the disclosure gate. `wouldHaveNeeded` (the value-bearing
+  form) stays behind `seals:disclose`, as before.
+- **Direction follows disposition.** `bind` is a refusal: the remedy is what
+  makes it lapse (`target: false`), stored on the seal and in the record.
+  `permit` is a grant: a permit that did not apply returns what would earn it.
+  `commit` has no side, so `null`. A refusal that did not apply also gets
+  `null` — there is nothing to remedy in not being refused. An undecided
+  refusal (`facts_not_attested`) carries the remedy in its error detail beside
+  `missing`, so "attest these" comes with "in which cells".
+- **Stored at seal time**, like the reasons, because it is derived from facts
+  kept only as digests. A replay returns the stored remedy, not a fresh one.
+- **Every minimal set, every cell.** Two cells for the same fact are two
+  remedies (`any[a=1, a=2]` from `a=0` has two). Found by re-reading the spec
+  text I had just written against the code: the search broke after the first
+  witness per subset. Fixed and tested before commit.
+
+**Tests.** 335 → 357 (22 new: 15 unit incl. minimality checked by brute force
+against the evaluator for every reported set, 4 integration, 3 fuzz
+properties — effectiveness, minimality-by-deletion, determinism). Fuzz
+20 → 23 at 2 000 runs. Conformance 48 → 52 (reference: four `remedy` vectors,
+hand-derived) and 30 → 34 (independent verifier: each vector's sets run
+through `verify()` as a held-values record and must be *effective*).
+
+**Second implementation.** `spec/verifier.mjs` and the embedded copy in
+`verifier.html` gained one step, `remedy · effective`, and a `witness()`
+that picks a member of a described cell the same way the issuer partitions —
+so if the issuer found a cell, the verifier finds a member of it.
+
+**Two expectations I had wrong, caught by my own tests.** (1) A ten-clause
+conjunction with every clause failing does *not* exceed the bound: 59 048
+evaluations, and 1 023 once representatives in the same cell are tried once.
+The bound is real at seventeen (2¹⁷ − 1 > 65 536), which is what is now
+tested. (2) "Already at target" spent evaluations finding nothing; it now
+returns before searching.
+
+**Not done, deliberately.** `deadline` — the brief's "if a clock applies" —
+waits for capability 3, where clocks exist; a field nothing fills is the
+pattern this codebase distrusts. "Acceptable sources" is not stored: the
+sweep acts on any declared source, and stating a narrower list to a person
+would be false. The catalogue (cap-01) and `fact_sources` are where a notice
+renderer (cap-04) can look up a fact's type and the workspace's sources.
+
+**Human to confirm.** Nothing legal. The bound (65 536) is an engineering
+choice stated in the format; if a programme's rules routinely exceed it, the
+number should be revisited *in the spec*, not in the code alone.

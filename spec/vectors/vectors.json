@@ -763,5 +763,237 @@
         ]
       }
     }
+  ],
+  "remedy": [
+    {
+      "name": "a refusal that holds: either clause failing would make it lapse",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 1
+        }
+      },
+      "target": "false",
+      "exhaustive": true,
+      "sets": [
+        [
+          {
+            "fact": "carrier.delivered",
+            "fact_type": "bool",
+            "constraints": [
+              {
+                "path": "all[0]",
+                "op": "eq",
+                "value": false,
+                "truth": "false"
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "fact": "prior_refunds_90d",
+            "fact_type": "int",
+            "constraints": [
+              {
+                "path": "all[1]",
+                "op": "lt",
+                "value": 3,
+                "truth": "false"
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "name": "a conjunction with both clauses failing needs both to change",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": true
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 5
+        }
+      },
+      "target": "true",
+      "exhaustive": true,
+      "sets": [
+        [
+          {
+            "fact": "carrier.delivered",
+            "fact_type": "bool",
+            "constraints": [
+              {
+                "path": "all[0]",
+                "op": "eq",
+                "value": false,
+                "truth": "true"
+              }
+            ]
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "fact_type": "int",
+            "constraints": [
+              {
+                "path": "all[1]",
+                "op": "lt",
+                "value": 3,
+                "truth": "true"
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "name": "a disjunction with neither holding: two independent single-fact remedies",
+      "rule": {
+        "any": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": true
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 5
+        }
+      },
+      "target": "true",
+      "exhaustive": true,
+      "sets": [
+        [
+          {
+            "fact": "carrier.delivered",
+            "fact_type": "bool",
+            "constraints": [
+              {
+                "path": "any[0]",
+                "op": "eq",
+                "value": false,
+                "truth": "true"
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "fact": "prior_refunds_90d",
+            "fact_type": "int",
+            "constraints": [
+              {
+                "path": "any[1]",
+                "op": "lt",
+                "value": 3,
+                "truth": "true"
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "name": "an absent fact is remedied by attesting it in the right cell",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        }
+      },
+      "target": "false",
+      "exhaustive": true,
+      "sets": [
+        [
+          {
+            "fact": "carrier.delivered",
+            "fact_type": "bool",
+            "constraints": [
+              {
+                "path": "all[0]",
+                "op": "eq",
+                "value": false,
+                "truth": "false"
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "fact": "prior_refunds_90d",
+            "fact_type": "int",
+            "constraints": [
+              {
+                "path": "all[1]",
+                "op": "lt",
+                "value": 3,
+                "truth": "false"
+              }
+            ]
+          }
+        ]
+      ]
+    }
   ]
 }
