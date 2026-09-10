@@ -10,6 +10,7 @@
 import { getPool } from '../db/pool.js';
 import { reevaluate, type Reevaluation } from '../domain/seal.js';
 import { advanceClocks, resolveMissed } from '../domain/clocks.js';
+import { propagateAdjudications, workspacesWithPendingReversals } from '../domain/systemic.js';
 
 export interface PassResult {
   workspaces: number;
@@ -19,6 +20,8 @@ export interface PassResult {
   backlogged: number;
   /** cap-03. Clocks that were met, and clocks that were found missed, this pass. */
   clocks: { met: number; missed: number };
+  /** cap-06. Rulings propagated, and determinations placed under review, this pass. */
+  systemic: { reviews: number; flagged: number };
 }
 
 /**
@@ -39,6 +42,15 @@ export async function sweepOnce(opts: {
   const maxBatches = opts.maxBatchesPerWorkspace ?? 5;
   const pool = getPool();
 
+  // Rulings first: a determination placed under review is marked due, and
+  // this pass should be the one that re-examines it.
+  const systemic = { reviews: 0, flagged: 0 };
+  for (const ws of await workspacesWithPendingReversals(pool)) {
+    const r = await propagateAdjudications(ws);
+    systemic.reviews += r.reviews.length;
+    systemic.flagged += r.flagged;
+  }
+
   // Only workspaces that actually have due work. A deployment with ten
   // thousand idle tenants should not pay for them on every pass.
   const { rows: due } = await pool.query<{ workspace_id: string }>(
@@ -49,7 +61,7 @@ export async function sweepOnce(opts: {
              OR (expires_at IS NOT NULL AND expires_at <= now()))`);
 
   const out: PassResult = { workspaces: due.length, examined: 0, changes: [], backlogged: 0,
-    clocks: { met: 0, missed: 0 } };
+    clocks: { met: 0, missed: 0 }, systemic };
 
   for (const { workspace_id: ws } of due) {
     let remaining = 0;

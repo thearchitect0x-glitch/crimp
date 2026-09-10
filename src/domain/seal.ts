@@ -451,6 +451,12 @@ export interface Determination {
   code: string;
   /** `permit` only: uses remaining, or null when unbounded. */
   remaining?: number | null;
+  /**
+   * cap-06. A ruling elsewhere put the rule this rests on under review. The
+   * determination still stands — nothing decided silently — and the reader
+   * is told.
+   */
+  underReview: boolean;
 }
 
 export interface LookupResult {
@@ -497,9 +503,9 @@ export async function lookup(p: Principal, args: {
 
     const { rows: found } = await tx.query<{
       id: string; scope: string; disposition: Disposition; state: 'sealed' | 'tainted';
-      max_uses: number | null; uses: number;
+      max_uses: number | null; uses: number; review_flagged_at: Date | null;
     }>(
-      `SELECT id, scope, disposition, state, max_uses, uses
+      `SELECT id, scope, disposition, state, max_uses, uses, review_flagged_at
          FROM seals
         WHERE workspace_id = $1 AND subject_id = $2 AND scope = ANY($3::text[])
           AND state IN ('sealed', 'tainted')
@@ -521,6 +527,7 @@ export async function lookup(p: Principal, args: {
         out.push({
           sealId: s.id, scope: s.scope, disposition: 'bind', state: s.state,
           code: s.state === 'tainted' ? CODES.refusalTainted : CODES.refusalStanding,
+          underReview: s.review_flagged_at !== null,
         });
       } else if (s.disposition === 'permit') {
         const remaining = s.max_uses === null ? null : s.max_uses - s.uses;
@@ -528,11 +535,13 @@ export async function lookup(p: Principal, args: {
           sealId: s.id, scope: s.scope, disposition: 'permit', state: s.state,
           code: remaining !== null && remaining <= 0 ? CODES.permitExhausted : CODES.permitAvailable,
           remaining,
+          underReview: s.review_flagged_at !== null,
         });
       } else {
         out.push({
           sealId: s.id, scope: s.scope, disposition: 'commit', state: s.state,
           code: CODES.commitMade,
+          underReview: s.review_flagged_at !== null,
         });
       }
     }

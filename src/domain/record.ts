@@ -71,6 +71,8 @@ export interface Proof {
   ruleRef: RuleRef | null;
   /** What would move this the person's way (SPEC §7.0d). Null before cap-02 and on a commit. */
   remedy: Remedy | null;
+  /** When a ruling elsewhere put this under review (SPEC §7.0e). Null if never. */
+  reviewFlaggedAt: Date | null;
   reasons: Reason[];
   facts: SealedFact[];
   events: SealEvent[];
@@ -88,12 +90,13 @@ interface SealRow {
   rule_hash: string; grammar_version: string; sealed_by: string; sealed_at: Date;
   expires_at: Date | null; reasons: Reason[]; subject_id: string;
   as_of: Date | null; rule_ref: StoredRuleRef | null; remedy: Remedy | null;
+  review_flagged_at: Date | null;
 }
 
 async function loadSeal(db: Db, workspaceId: string, sealId: string): Promise<SealRow> {
   const { rows } = await db.query<SealRow>(
     `SELECT id, scope, disposition, state, rule, rule_hash, grammar_version, sealed_by,
-            sealed_at, expires_at, reasons, subject_id, as_of, rule_ref, remedy
+            sealed_at, expires_at, reasons, subject_id, as_of, rule_ref, remedy, review_flagged_at
        FROM seals WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, sealId]);
   const seal = rows[0];
@@ -145,6 +148,7 @@ export async function proof(p: Principal, sealId: string): Promise<Proof> {
     asOf: seal.as_of,
     ruleRef: seal.rule_ref === null ? null : fromStored(seal.rule_ref),
     remedy: seal.remedy,
+    reviewFlaggedAt: seal.review_flagged_at,
     reasons: seal.reasons,
     facts: facts.map((f) => ({
       fact: f.fact, factType: f.fact_type, valueSha256: f.value_sha256,

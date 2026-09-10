@@ -409,3 +409,53 @@ under events in `docs/spec/extensions.md` (Phase 2).
 **Human to confirm.** The three windows and citations; whether the
 deployment wants a claw (human overrule) to carry harm as well — it is a
 one-line change and a policy question, not a technical one.
+
+## cap-06 · Systemic-error propagation · 10 September 2026
+
+**The fact family.** An adjudication is attested about the appellant, by the
+hearing authority as a named source, as ordinary facts: `adjudication.ruling`
+(reversed | affirmed | remanded), `.ruleset`, `.rule_id`, optional `.pattern`
+(a fact the rule may not rest on), `.authority`, `.date`. Nothing about them
+is special to the evaluator. `fair_hearing_90_day` (cap-03) is met by
+`adjudication.ruling`, as promised there.
+
+**What the sweep does with a reversal that names a rule.** It finds every
+open determination made under that rule — by registered id through
+`rule_ref`, **or by identical content** through `rule_hash` matching any
+version of that id, which is what content-addressed versions (cap-08) were
+for — narrowed to those whose `reasons` rest on `pattern` when one is named.
+Each is marked due and `review_flagged_at`; each gets a `systemic_review`
+event saying which ruling; one `systemic_review` finding names them all with
+a count. Then the same pass re-examines them. A ruling propagates **once**
+(`systemic_reviews`, unique on appellant + ruling time); a reversal naming no
+rule is about one person and is recorded as dealt with.
+
+**Design divergence, recorded.** The brief says to re-evaluate "with the
+ruling attached as a fact". Not done, for two reasons stated in
+`systemic.ts`: a fact is a claim by a source about a subject, and writing the
+appellant's ruling onto other people's records would have the sweep attest
+what nobody attested; and re-running an unchanged rule against unchanged
+facts changes nothing. The review flag says the same thing without pretending
+to be evidence. **No outcome changes.** A ruling that a rule is wrong does
+not say what the right rule is — closing the version and committing a
+successor is the operator's act (cap-08), re-determining each case is a
+person's (cap-10). What this capability makes complete and visible is the
+set of cases, which is the part a person cannot do by hand.
+
+**Visible everywhere it stands.** `under_review` on every lookup
+(additive), `review_flagged_at` on the record (SPEC §7.0e, additive, not
+hashed), and a fixed sentence on the notice while the determination stands —
+not once it has moved.
+
+**Tests.** 393 → 399 (4 integration, 1 e2e, 1 unit): one overturn reaches
+four of five determinations (three by id, one by content) and not the fifth;
+states unchanged; finding lists ids and count; second pass silent; pattern
+excludes the determination refused on a different fact; a rule-less reversal
+propagates nothing; lookup, proof, notice and the sweep's own result all
+show it.
+
+**Human to confirm.** Whether a closed catalogue should carry the
+`adjudication.*` family by default (an operator must catalogue it before a
+hearing authority can attest it); and whether `affirmed` rulings should be
+recorded as a finding class of their own — they are evidence the rule
+survived review, which is worth counting.

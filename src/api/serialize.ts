@@ -178,6 +178,7 @@ export function proofToWire(p: Proof): Record<string, unknown> {
     as_of: p.asOf?.toISOString() ?? null,
     rule_ref: p.ruleRef === null ? null : toStored(p.ruleRef),
     remedy: remedyToWire(p.remedy),
+    review_flagged_at: p.reviewFlaggedAt?.toISOString() ?? null,
     reasons: p.reasons.map(reasonToWire),
     facts: p.facts.map((f) => ({
       fact: f.fact, fact_type: f.factType, value_sha256: f.valueSha256,
@@ -223,6 +224,7 @@ export function lookupToWire(r: LookupResult): Record<string, unknown> {
       state: d.state,
       code: d.code,
       ...(d.remaining !== undefined ? { remaining: d.remaining } : {}),
+      under_review: d.underReview,
     })),
   };
 }

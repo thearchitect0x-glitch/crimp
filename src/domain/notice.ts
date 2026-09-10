@@ -50,6 +50,8 @@ export interface Notice {
     sealedAt: string; expiresAt: string | null;
     /** A fixed word per (disposition, state). Never a sentence. */
     statement: string;
+    /** cap-06. A ruling elsewhere put the rule this rests on under review. */
+    underReview: boolean;
   };
   rule: {
     ruleHash: string; rule: unknown;
@@ -108,6 +110,7 @@ export function deriveNotice(input: {
       disposition: p.disposition, state: p.state, scope: p.scope,
       sealedAt: p.sealedAt.toISOString(), expiresAt: p.expiresAt?.toISOString() ?? null,
       statement: STATEMENT[p.disposition]?.[p.state] ?? p.state,
+      underReview: p.reviewFlaggedAt !== null && (p.state === 'sealed' || p.state === 'tainted'),
     },
     rule: {
       ruleHash: p.ruleHash, rule: p.rule,
@@ -137,7 +140,7 @@ export interface Labels {
   inForce: string; why: string; facts: string; source: string; remedy: string; remedyAny: string;
   remedyAll: string; clocks: string; appeal: string; appealBy: string; days: string;
   observed: string; needed: string; notCase: string; and: string; or: string; unknownValue: string;
-  reference: string; verify: string;
+  reference: string; verify: string; underReview: string;
   op: Record<string, string>;
 }
 
@@ -150,6 +153,8 @@ export const LABELS_EN: Labels = {
   notCase: 'it is not the case that', and: 'and', or: 'or', unknownValue: 'not on record',
   reference: 'Reference', verify: 'This notice was derived from a sealed record. Its reference '
     + 'number lets anyone with the record check every statement above.',
+  underReview: 'This decision is under review following a ruling on the rule it applied. '
+    + 'It still stands until it is changed, and you will be told if it is.',
   op: { eq: 'is', ne: 'is not', lt: 'is less than', lte: 'is at most', gt: 'is more than',
     gte: 'is at least', in: 'is one of', nin: 'is not one of' },
 };
@@ -199,6 +204,7 @@ export function renderText(n: Notice, L: Labels = LABELS_EN): string {
   const out: string[] = [];
   out.push(`${L.title}`, '');
   out.push(`${L.decision}: ${n.outcome.statement}`);
+  if (n.outcome.underReview) out.push(L.underReview);
   out.push(`${L.scope}: ${n.programme}: ${n.outcome.scope}`);
   out.push(`${L.date}: ${date(n.outcome.sealedAt)}`);
   out.push('');
@@ -247,7 +253,8 @@ export function renderHtml(n: Notice, L: Labels = LABELS_EN): string {
   const parts: string[] = [];
   parts.push(`<article class="notice" lang="${esc(n.language)}" data-seal="${esc(n.sealId)}">`);
   parts.push(`<h1>${esc(L.title)}</h1>`);
-  parts.push(`<dl><dt>${esc(L.decision)}</dt><dd><strong>${esc(n.outcome.statement)}</strong></dd>`
+  parts.push(`<dl><dt>${esc(L.decision)}</dt><dd><strong>${esc(n.outcome.statement)}</strong>`
+    + (n.outcome.underReview ? `<p class="review">${esc(L.underReview)}</p>` : '') + '</dd>'
     + `<dt>${esc(L.scope)}</dt><dd>${esc(n.programme)}: ${esc(n.outcome.scope)}</dd>`
     + `<dt>${esc(L.date)}</dt><dd>${esc(date(n.outcome.sealedAt))}</dd>`
     + `<dt>${esc(L.rule)}</dt><dd>${esc(n.rule.ruleId ?? n.rule.ruleHash.slice(0, 16))}</dd>`

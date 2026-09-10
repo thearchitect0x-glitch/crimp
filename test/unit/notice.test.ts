@@ -13,7 +13,7 @@ const proof = (over: Partial<Proof> = {}): Proof => ({
   sealId: 'seal_abc', scope: 'medicaid.renewal', disposition: 'bind', state: 'sealed',
   rule: { fact: 'household.income', op: 'gt', value: 2000 }, ruleHash: 'f'.repeat(64),
   grammarVersion: '1', sealedBy: 'agent', sealedAt: new Date('2026-09-01T12:00:00Z'), expiresAt: null,
-  asOf: null,
+  asOf: null, reviewFlaggedAt: null,
   ruleRef: { ruleset: 'medicaid', ruleId: 'renewal.income', version: 'f'.repeat(64),
     legalAuthority: '42 CFR 435.916(b)', effectiveFrom: new Date('2026-01-01T00:00:00Z'), effectiveTo: null },
   remedy: { target: 'false', exhaustive: true, evaluations: 2, sets: [[{ fact: 'household.income', factType: 'int',
@@ -45,6 +45,14 @@ describe('derivation', () => {
     assert.equal(n.appeal.programme, 'Medicaid');
     assert.equal(n.appeal.days, 90);
     assert.equal(n.valuesDisclosed, false);
+  });
+
+  test('says when a ruling elsewhere put it under review, and only while it stands', () => {
+    const flagged = deriveNotice({ proof: proof({ reviewFlaggedAt: new Date('2026-09-05T00:00:00Z') }) });
+    assert.equal(flagged.outcome.underReview, true);
+    assert.match(renderText(flagged), /Decision: refused\nThis decision is under review following a ruling/);
+    const moved = deriveNotice({ proof: proof({ reviewFlaggedAt: new Date('2026-09-05T00:00:00Z'), state: 'lapsed' }) });
+    assert.equal(moved.outcome.underReview, false, 'a reversed determination is not "under review"');
   });
 
   test('refuses a programme with no configured appeal rights rather than omitting them', () => {

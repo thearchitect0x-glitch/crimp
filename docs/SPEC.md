@@ -306,6 +306,14 @@ for each set, choose any value in each described cell, re-evaluate, and
 require `target`. Minimality is a search property; a verifier that does not
 re-run the search does not claim it.
 
+### 7.0e Optional field added in 0.2 — under review
+
+A record MAY carry `review_flagged_at`: when a ruling against another
+determination made under the same rule placed this one under review. The
+determination's `state` is unchanged by it — review is visibility, not
+outcome — and a `systemic_review` event on the record says which ruling.
+Null or absent if never. Not part of any hash.
+
 ### 7.0a Optional fields added in 0.2 — a registered rule, and the date it is about
 
 Both fields are **optional**. A record without them is a valid 0.2 record; a
