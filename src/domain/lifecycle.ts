@@ -84,6 +84,29 @@ export function tierOf(p: Pressure): PressureTier {
  *  4. It decays. Pressure is counted in a rolling window, so a seal fought over
  *     last quarter is not still hardened today on the strength of history.
  */
+/**
+ * WHICH BARS PRESSURE MAY RAISE, AND WHICH IT MUST NOT.
+ *
+ * Pressure is incremented by whoever presents a subject's aliases and is
+ * refused — so a third party who knows an identifier can probe on that
+ * person's behalf and harden their determination against them.
+ *
+ * That gives a rule for which axes hardening may touch: **only the bars a
+ * legitimate party can clear by acting.** Authority can be cleared by finding
+ * a higher authority. An evidence floor can be cleared by producing better
+ * evidence. Both are answerable.
+ *
+ * Cooling-off and quorum are not. Time cannot be routed around at all, and a
+ * second human cannot be produced by the person seeking relief. Raising either
+ * under pressure would hand a third party a way to make somebody else's
+ * refusal harder to lift, which is the opposite of what hardening is for.
+ * Jurisdiction is likewise carried through unchanged — moving it would loosen
+ * the rule, and dropping it certainly would.
+ *
+ * So `harden` spreads `...base` and overrides exactly two fields. If a new
+ * axis is added to ClawRule, decide which side of this line it falls on before
+ * adding it here.
+ */
 export function harden(
   disposition: 'bind' | 'permit' | 'commit',
   base: ClawRule,
@@ -107,16 +130,16 @@ export function harden(
       break;
     case 'probing':
       rule = {
+        ...base,
         authority: bumpAuthority(base.authority, 1),
         evidenceFloor: raiseFloor(base.evidenceFloor, 'receipt'),
-        coolingOffSeconds: base.coolingOffSeconds,
       };
       break;
     case 'sustained':
       rule = {
+        ...base,
         authority: bumpAuthority(base.authority, 2),
         evidenceFloor: raiseFloor(base.evidenceFloor, 'receipt'),
-        coolingOffSeconds: base.coolingOffSeconds,
       };
       break;
   }

@@ -22,7 +22,7 @@ import {
 import { evaluate } from './evaluate.js';
 import { validateScope, ancestors, covers } from './scope.js';
 import {
-  validateClawRule, mayClaw, isAuthority, TIME_BOUNDS,
+  validateClawRule, mayClaw, isAuthority, TIME_BOUNDS, QUORUM_WINDOW_SECONDS,
   type Authority, type ClawRule,
 } from './authority.js';
 import { meetsFloor, type Admissibility } from './admissibility.js';
@@ -185,7 +185,7 @@ export async function seal(
     const ceiling = new Date(Date.now() + maxDuration * 1000);
     if (expiresAt === null || expiresAt > ceiling) expiresAt = ceiling;
   }
-  const clawRule = validateClawRule(sealedBy, input.claw);
+  const clawRule = validateClawRule(sealedBy, input.claw, p.jurisdiction);
   const referenced = validateRule(input.rule);
   const rule = input.rule as Rule;
 
@@ -258,12 +258,13 @@ export async function seal(
       `INSERT INTO seals (id, workspace_id, subject_id, scope, disposition, rule, rule_hash,
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
                           claw_cooling_off_s, max_uses, idempotency_key, expires_at,
-                          last_evaluated_at, evaluation_due)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),false)`,
+                          claw_quorum, claw_jurisdiction, last_evaluated_at, evaluation_due)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now(),false)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
-        input.idempotencyKey, expiresAt],
+        input.idempotencyKey, expiresAt,
+        clawRule.quorum ?? 1, clawRule.jurisdiction ?? null],
     );
 
     for (const r of rows) {
@@ -487,7 +488,7 @@ export async function claw(p: Principal, args: {
   sealId: string;
   evidenceSha256: string;
   evidenceClass: Admissibility;
-}): Promise<{ state: 'clawed' }> {
+}): Promise<{ state: 'clawed' | 'pending'; signaturesNeeded?: number }> {
   requireScope(p, 'seals:claw');
   const workspaceId = p.workspaceId;
   const actor = p.authority;
@@ -499,8 +500,10 @@ export async function claw(p: Principal, args: {
     const { rows } = await tx.query<{
       id: string; state: string; disposition: Disposition; sealed_at: Date;
       claw_authority: Authority; claw_evidence_floor: Admissibility; claw_cooling_off_s: number;
+      claw_quorum: number; claw_jurisdiction: string | null;
     }>(
-      `SELECT id, state, disposition, sealed_at, claw_authority, claw_evidence_floor, claw_cooling_off_s
+      `SELECT id, state, disposition, sealed_at, claw_authority, claw_evidence_floor,
+              claw_cooling_off_s, claw_quorum, claw_jurisdiction
          FROM seals WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
       [args.sealId, workspaceId]);
     const s = rows[0];
@@ -517,6 +520,8 @@ export async function claw(p: Principal, args: {
       authority: s.claw_authority,
       evidenceFloor: s.claw_evidence_floor,
       coolingOffSeconds: s.claw_cooling_off_s,
+      quorum: s.claw_quorum === 2 ? 2 : 1,
+      jurisdiction: s.claw_jurisdiction,
     };
     const tier = tierOf(await pressureOf(tx, s.id));
     const { rule: required, hardened } = harden(s.disposition, base, tier);
@@ -534,6 +539,17 @@ export async function claw(p: Principal, args: {
         { required: required.evidenceFloor, offered: args.evidenceClass, hardened });
     }
 
+    // Where the reversing human is. Checked alongside authority and evidence
+    // rather than after them, because it is the same kind of question: a
+    // property of the credential that the caller cannot state about itself.
+    if (required.jurisdiction != null && p.jurisdiction !== required.jurisdiction) {
+      throw new ApiError(403, 'wrong_jurisdiction',
+        `Reversing this determination requires a credential bound to `
+        + `"${required.jurisdiction}"; this one is `
+        + `${p.jurisdiction === null ? 'unbound' : `bound to "${p.jurisdiction}"`}.`,
+        { required: required.jurisdiction, held: p.jurisdiction });
+    }
+
     const elapsed = (Date.now() - s.sealed_at.getTime()) / 1000;
     if (elapsed < required.coolingOffSeconds) {
       // The one defence immune to a perfectly persuasive argument: you cannot
@@ -544,13 +560,46 @@ export async function claw(p: Principal, args: {
         { remainingSeconds: Math.ceil(required.coolingOffSeconds - elapsed) });
     }
 
+    // ── Quorum ────────────────────────────────────────────────────────
+    //
+    // Every bar above has now been cleared by THIS credential. A quorum adds a
+    // requirement, it never relaxes one, so the second signer clears all of
+    // them independently rather than inheriting the first signer's standing.
+    //
+    // Two signatures from the same key is one signature typed twice, so the
+    // standing half must come from a different key. It also expires: a
+    // dual-control decision that takes longer than a week is not one decision
+    // made by two people, it is two unrelated decisions — and it bounds the
+    // attacker holding one credential now who expects another later.
+    if ((required.quorum ?? 1) === 2) {
+      const { rows: standing } = await tx.query<{ key_id: string }>(
+        `SELECT detail->>'key_id' AS key_id FROM seal_events
+          WHERE seal_id = $1 AND kind = 'claw_pending'
+            AND occurred_at > now() - ($2 || ' seconds')::interval
+          ORDER BY occurred_at DESC`,
+        [s.id, String(QUORUM_WINDOW_SECONDS)]);
+
+      const other = standing.find((r) => r.key_id !== null && r.key_id !== p.keyId);
+      if (!other) {
+        await tx.query(
+          `INSERT INTO seal_events
+             (seal_id, workspace_id, kind, actor, evidence_sha256, evidence_class, detail)
+           VALUES ($1,$2,'claw_pending',$3,$4,$5,$6::jsonb)`,
+          [s.id, workspaceId, actor, args.evidenceSha256, args.evidenceClass,
+            JSON.stringify({ key_id: p.keyId, hardened, pressure_tier: tier })]);
+        // The determination is untouched. A quorum that never completes leaves
+        // it standing, which is the safe direction.
+        return { state: 'pending' as const, signaturesNeeded: 1 };
+      }
+    }
+
     await tx.query(
       `UPDATE seals SET state = 'clawed', settled_at = now() WHERE id = $1`, [s.id]);
     await tx.query(
       `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, evidence_sha256, evidence_class, detail)
        VALUES ($1,$2,'clawed',$3,$4,$5,$6::jsonb)`,
       [s.id, workspaceId, actor, args.evidenceSha256, args.evidenceClass,
-        JSON.stringify({ hardened, pressure_tier: tier, required })]);
+        JSON.stringify({ hardened, pressure_tier: tier, required, key_id: p.keyId })]);
 
     return { state: 'clawed' as const };
   });

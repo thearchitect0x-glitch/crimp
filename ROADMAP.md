@@ -66,6 +66,10 @@ below.
   rehearsal covered a system with no deployment; a rehearsal that covers less
   than the current system has stopped being a rehearsal.
 
+- **Quorum on a merge.** A merge is permanent and unreviewable, which makes it
+  a stronger candidate for dual control than a claw. `claw.quorum` exists; the
+  merge path has no equivalent.
+
 ## Later — under consideration, not committed
 
 - **A Merkle transparency log with external witnesses**, giving inclusion,
