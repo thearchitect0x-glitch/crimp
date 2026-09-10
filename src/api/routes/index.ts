@@ -3,8 +3,8 @@
 import type { FastifyInstance } from 'fastify';
 import { authorized } from '../app.js';
 import {
-  attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mintKeyBody,
-  windowQuery, errors,
+  attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
+  carveOutBody, mintKeyBody, windowQuery, errors,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
@@ -15,6 +15,7 @@ import { attest } from '../../domain/attest.js';
 import { seal, lookup, exercise, claw } from '../../domain/seal.js';
 import { sourceReliability, quadrant, cliffs } from '../../domain/insight.js';
 import { declareCohort, placeInCohort } from '../../domain/cohort.js';
+import { mergeSubjects, carveOut } from '../../domain/merge.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -119,6 +120,37 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       evidenceSha256: req.body.evidence_sha256,
       evidenceClass: req.body.evidence_class as never,
     });
+  });
+
+  /* ── Subjects: the merge, and its only correction ────────────────── */
+  app.post<{ Body: { aliases: unknown; evidence_sha256: string; evidence_class: string } }>(
+    '/subjects/merge', { schema: { body: mergeBody, response: errors } }, async (req) => {
+      const p = await authorized(req, 'subjects:merge');
+      const out = await mergeSubjects(p, {
+        aliases: req.body.aliases,
+        evidenceSha256: req.body.evidence_sha256,
+        evidenceClass: req.body.evidence_class,
+      }, await loadStrengths(p.workspaceId));
+      // Always 200. A merge that found one subject created nothing, and a merge
+      // that absorbed three destroyed rather than created — neither is a 201.
+      return {
+        subject_id: out.subjectId, outcome: out.outcome,
+        absorbed: out.absorbed, alias_count: out.aliasCount,
+      };
+    });
+
+  app.post<{
+    Body: { alias: { type: string; value: string }; evidence_sha256: string; evidence_class: string };
+  }>('/subjects/carve-out', {
+    schema: { body: carveOutBody, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'subjects:merge');
+    const out = await carveOut(p, {
+      alias: req.body.alias,
+      evidenceSha256: req.body.evidence_sha256,
+      evidenceClass: req.body.evidence_class,
+    }, await loadStrengths(p.workspaceId));
+    return { subject_id: out.subjectId, alias_count: out.aliasCount };
   });
 
   /* ── Cohorts: two ways in, no way out ────────────────────────────── */

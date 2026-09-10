@@ -27,15 +27,20 @@ after(async () => { await app.close(); await closePool(); });
 
 const bearer = (key: string) => ({ authorization: `Bearer ${key}` });
 
-async function keys(): Promise<{ ws: string; agent: string; operator: string; narrow: string }> {
+async function keys(): Promise<{
+  ws: string; agent: string; operator: string; principal: string; narrow: string;
+}> {
   const ws = await freshWorkspace();
   const agent = await mintKey({ workspaceId: ws, authority: 'agent',
     scopes: [...SCOPES], label: 'agent', by: null });
   const operator = await mintKey({ workspaceId: ws, authority: 'operator',
     scopes: [...SCOPES], label: 'op', by: null });
+  const principal = await mintKey({ workspaceId: ws, authority: 'principal',
+    scopes: [...SCOPES], label: 'principal', by: null });
   const narrow = await mintKey({ workspaceId: ws, authority: 'agent',
     scopes: [...AGENT_SCOPES], label: 'narrow', by: null });
-  return { ws, agent: agent.key, operator: operator.key, narrow: narrow.key };
+  return { ws, agent: agent.key, operator: operator.key,
+    principal: principal.key, narrow: narrow.key };
 }
 
 const FACTS = (delivered = false, refunds = 1) => [
@@ -260,6 +265,52 @@ describe('the contract fields', () => {
   });
 });
 
+describe('subject merge over HTTP', () => {
+  test('the dead end is gone: a 409 that names the way through, and it works', async () => {
+    const k = await keys();
+    const one = [{ type: 'card_fp', value: 'http-1' }];
+    const two = [{ type: 'gov_id', value: 'http-2' }];
+    for (const aliases of [one, two]) {
+      await app.inject({ method: 'POST', url: '/v1/attestations',
+        headers: bearer(k.agent), payload: { aliases, facts: FACTS() } });
+    }
+
+    const stuck = await app.inject({ method: 'POST', url: '/v1/determinations/lookup',
+      headers: bearer(k.agent), payload: { aliases: [...one, ...two], scope: 'refund' } });
+    assert.equal(stuck.statusCode, 409);
+    assert.equal(stuck.json().error.code, 'merge_required');
+    assert.match(stuck.json().error.message, /POST \/v1\/subjects\/merge/);
+
+    const m = await app.inject({ method: 'POST', url: '/v1/subjects/merge',
+      headers: bearer(k.principal),
+      payload: { aliases: [...one, ...two], evidence_sha256: hash64('e'),
+        evidence_class: 'internal' } });
+    assert.equal(m.statusCode, 200, 'a merge destroys rather than creates; 201 would be a lie');
+    assert.equal(m.json().outcome, 'merged');
+    assert.equal(m.json().absorbed, 1);
+    assert.equal(Object.keys(m.json()).some((x) => /[A-Z]/.test(x)), false);
+
+    const ok = await app.inject({ method: 'POST', url: '/v1/determinations/lookup',
+      headers: bearer(k.agent), payload: { aliases: [...one, ...two], scope: 'refund' } });
+    assert.equal(ok.statusCode, 200, 'the caller is unstuck');
+  });
+
+  test('an operator key cannot merge, and the body has no subject ids to name', async () => {
+    const k = await keys();
+    const payload = { aliases: person('nope'), evidence_sha256: hash64('e'),
+      evidence_class: 'internal' };
+    const r = await app.inject({ method: 'POST', url: '/v1/subjects/merge',
+      headers: bearer(k.operator), payload });
+    assert.equal(r.statusCode, 403);
+    assert.equal(r.json().error.code, 'insufficient_authority');
+
+    const named = await app.inject({ method: 'POST', url: '/v1/subjects/merge',
+      headers: bearer(k.principal), payload: { ...payload, subject_ids: ['sub_a', 'sub_b'] } });
+    assert.equal(named.statusCode, 400,
+      'a caller that could name subjects could union two it never demonstrated a link to');
+  });
+});
+
 describe('scopes are enforced at the route', () => {
   test('the quickstart key cannot claw or read insight', async () => {
     const k = await keys();
@@ -268,6 +319,11 @@ describe('scopes are enforced at the route', () => {
       ['GET', '/v1/insight/quadrant', undefined],
       ['POST', '/v1/keys', { authority: 'agent', scopes: ['seals:write'], label: 'x' }],
       ['POST', '/v1/cohorts', { cohort: 'region' }],
+      ['POST', '/v1/subjects/merge',
+        { aliases: person('sm'), evidence_sha256: hash64('e'), evidence_class: 'internal' }],
+      ['POST', '/v1/subjects/carve-out',
+        { alias: { type: 'card_fp', value: 'x' },
+          evidence_sha256: hash64('e'), evidence_class: 'internal' }],
       ['POST', '/v1/cohorts/placements',
         { aliases: person('sc'), cohort: 'region', band: 'north' }],
     ] as const) {

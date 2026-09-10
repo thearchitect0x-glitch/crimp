@@ -11,7 +11,8 @@ import type pg from 'pg';
 import { withTx, type Db } from '../db/pool.js';
 import { newId, sha256Hex, canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
-import { blindAliases, type MergeStrength, type BlindedAlias } from '../lib/blind.js';
+import { blindAliases, type MergeStrength } from '../lib/blind.js';
+import { resolveForRead, resolveForWrite } from './subject.js';
 import {
   validateRule, canonicalRule, factsReferenced,
   GRAMMAR_VERSION, SUPPORTED_GRAMMAR_VERSIONS,
@@ -69,58 +70,6 @@ export interface SealResult {
 
 /* ── Subject resolution ──────────────────────────────────────────────── */
 
-interface Resolved { subjectId: string; created: boolean }
-
-/**
- * Find or create the subject these aliases identify.
- *
- * Handles the two unambiguous cases. When presented aliases already belong to
- * SEVERAL existing subjects, this refuses rather than guessing: unioning them
- * is monotone and therefore permanent, and a wrong permanent merge drags
- * strangers under somebody else's determination with no way back. The degree-
- * bounded merge with authority-signed carve-outs is its own piece of work and
- * gets its own tests; until it lands, failing closed and recording the refusal
- * is the only honest behaviour.
- */
-async function resolveSubject(
-  tx: pg.PoolClient, workspaceId: string, aliases: readonly BlindedAlias[],
-): Promise<Resolved> {
-  const { rows: existing } = await tx.query<{ subject_id: string }>(
-    `SELECT DISTINCT subject_id FROM subject_aliases
-      WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-        SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-    [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
-  );
-
-  if (existing.length > 1) {
-    throw new ApiError(409, 'merge_required',
-      `These aliases already identify ${existing.length} distinct subjects. Unioning them is `
-      + 'permanent and cannot be undone, so Crimp will not do it implicitly. Resolve the merge '
-      + 'explicitly.', { subjects: existing.length });
-  }
-
-  const subjectId = existing[0]?.subject_id ?? newId('sub');
-  const created = existing.length === 0;
-  if (created) {
-    await tx.query('INSERT INTO subjects (id, workspace_id) VALUES ($1, $2)', [subjectId, workspaceId]);
-  }
-
-  // Attach any aliases not already bound. Monotone: this only ever adds.
-  await tx.query(
-    `INSERT INTO subject_aliases (workspace_id, alias_type, blinded, subject_id, merge_strength)
-     SELECT $1, t, b, $4, s FROM UNNEST($2::text[], $3::text[], $5::text[]) AS u(t, b, s)
-     ON CONFLICT (workspace_id, alias_type, blinded) DO NOTHING`,
-    [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded), subjectId,
-      aliases.map((a) => a.strength)],
-  );
-  await tx.query(
-    `UPDATE subjects SET alias_count =
-       (SELECT count(*) FROM subject_aliases WHERE subject_id = $1) WHERE id = $1`,
-    [subjectId]);
-
-  return { subjectId, created };
-}
-
 /* ── Attested facts ──────────────────────────────────────────────────── */
 
 interface FactRow {
@@ -142,9 +91,21 @@ async function loadFacts(
 ): Promise<{ facts: Facts; rows: FactRow[] }> {
   if (names.length === 0) return { facts: {}, rows: [] };
   const { rows } = await db.query<FactRow>(
+    // An expired attestation is not read. The customer declared when it stops
+    // being current, and ignoring that declaration meant determinations rested
+    // on facts their own owner had marked stale.
+    //
+    // The consequence is exactly right and is the reason this is a filter
+    // rather than a warning: an absent fact is UNKNOWN, never false. A rule
+    // reading a lapsed attestation is therefore unanswered rather than
+    // violated, a determination resting on one becomes `tainted` rather than
+    // silently re-decided, and a fresh seal is refused with `facts_not_attested`.
+    // That is 42 CFR 435.916 in one clause — if the data on hand is stale you
+    // may not determine from it, you must go and ask.
     `SELECT fact, fact_type, bool_value, int_value, str_value, source, admissibility, asserted_at
        FROM attestations
-      WHERE workspace_id = $1 AND subject_id = $2 AND fact = ANY($3::text[])`,
+      WHERE workspace_id = $1 AND subject_id = $2 AND fact = ANY($3::text[])
+        AND (expires_at IS NULL OR expires_at > now())`,
     [workspaceId, subjectId, names],
   );
   const facts: Record<string, Fact> = {};
@@ -235,7 +196,8 @@ export async function seal(
       };
     }
 
-    const { subjectId } = await resolveSubject(tx, workspaceId, aliases);
+    const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
+      { doing: 'sealing a determination' });
     const { facts, rows } = await loadFacts(tx, workspaceId, subjectId, [...referenced]);
 
     // Throws RuleTypeError (400) on a literal that cannot be compared with the
@@ -265,8 +227,9 @@ export async function seal(
     await tx.query(
       `INSERT INTO seals (id, workspace_id, subject_id, scope, disposition, rule, rule_hash,
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
-                          claw_cooling_off_s, max_uses, idempotency_key, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+                          claw_cooling_off_s, max_uses, idempotency_key, expires_at,
+                          last_evaluated_at, evaluation_due)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),false)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
@@ -365,19 +328,12 @@ export async function lookup(p: Principal, args: {
   const aliases = blindAliases(workspaceId, args.aliases, strengths);
 
   return withTx(async (tx) => {
-    const { rows: sub } = await tx.query<{ subject_id: string }>(
-      `SELECT DISTINCT subject_id FROM subject_aliases
-        WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-          SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
-    );
-    if (sub.length === 0) return { determinations: [] };
-    if (sub.length > 1) {
-      throw new ApiError(409, 'merge_required',
-        'These aliases identify several subjects; resolve the merge before asking.',
-        { subjects: sub.length });
-    }
-    const subjectId = sub[0]!.subject_id;
+    // Every alias counts on a read, weak ones included: a determination that
+    // could be escaped by presenting a different device would not be one.
+    // `resolveForRead` also raises `merge_required` and names the endpoint that
+    // resolves it, which is what stopped this being a dead end.
+    const subjectId = await resolveForRead(tx, workspaceId, aliases);
+    if (subjectId === null) return { determinations: [] };
 
     const { rows: found } = await tx.query<{
       id: string; scope: string; disposition: Disposition; state: 'sealed' | 'tainted';
@@ -571,7 +527,45 @@ export async function claw(p: Principal, args: {
 
 /* ── Re-evaluation ───────────────────────────────────────────────────── */
 
+/**
+ * The ground under this subject moved. Anything standing on it is due.
+ *
+ * ONE FUNCTION, CALLED FROM EVERY PLACE THAT MOVES GROUND — deliberately, and
+ * the reason is a pattern this codebase keeps repeating. Four defects so far
+ * have had the identical shape: a principle stated clearly, enforced on one
+ * axis, silently unenforced on the neighbouring one. `mergeCapable()` was
+ * written and never called. Cooling-off bounded who may reverse and never when.
+ * `expires_at` was declared and never read. And attestation marked
+ * determinations due while erasure — which removes the ground entirely — did
+ * not, which is how the taint test caught this on the way in.
+ *
+ * A rule that lives in one function is enforced. A rule that lives in a comment
+ * is remembered until it isn't. Anything that changes what a subject's facts
+ * are calls this.
+ */
+export async function markDue(
+  tx: pg.PoolClient, workspaceId: string, subjectId: string,
+): Promise<void> {
+  await tx.query(
+    `UPDATE seals SET evaluation_due = true
+      WHERE workspace_id = $1 AND subject_id = $2 AND state IN ('sealed', 'tainted')`,
+    [workspaceId, subjectId]);
+}
+
 export interface Reevaluation { sealId: string; from: string; to: string }
+
+export interface SweepResult {
+  /** Determinations whose state changed. */
+  changes: Reevaluation[];
+  /** How many were examined this pass. */
+  examined: number;
+  /**
+   * How many remain due after this pass — dirty, never examined, or expired.
+   * The worker loops again immediately while this is non-zero rather than
+   * sleeping through a backlog.
+   */
+  remaining: number;
+}
 
 /**
  * Re-run sealed rules against current attestations.
@@ -579,9 +573,22 @@ export interface Reevaluation { sealId: string; from: string; to: string }
  * This is the unbiased correction channel. A lapse is the institution
  * discovering it was wrong about somebody who never said a word — the only
  * error signal that does not require the affected person to have the resources
- * to fight.
+ * to fight. Roughly nine in ten Medicaid denials are never appealed, so it is
+ * also the only signal that sees them at all.
+ *
+ * ORDERING IS THE WHOLE CORRECTNESS ARGUMENT, and it used to be wrong. This
+ * selected `ORDER BY sealed_at LIMIT 100`, and a determination that does not
+ * change state stays at the front of that ordering permanently — so the sweep
+ * re-examined the same oldest hundred forever and never reached the
+ * hundred-and-first. Measured: 105 determinations, facts changed under the
+ * newest, five complete sweeps, still `sealed`.
+ *
+ * Now: due work first (an attestation landed for that subject, or it has run
+ * out), then least recently examined. `last_evaluated_at` advances for every
+ * row EXAMINED rather than every row changed, which is what makes the cursor
+ * move and every determination eventually reachable.
  */
-export async function reevaluate(workspaceId: string, limit = 100): Promise<Reevaluation[]> {
+export async function reevaluate(workspaceId: string, limit = 100): Promise<SweepResult> {
   const pool = (await import('../db/pool.js')).getPool();
   const { rows } = await pool.query<{
     id: string; subject_id: string; rule: Rule; state: string;
@@ -591,7 +598,11 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Reev
             (expires_at IS NOT NULL AND expires_at <= now()) AS expired
        FROM seals
       WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')
-      ORDER BY sealed_at LIMIT $2`,
+        AND (evaluation_due
+             OR last_evaluated_at IS NULL
+             OR (expires_at IS NOT NULL AND expires_at <= now()))
+      ORDER BY evaluation_due DESC, last_evaluated_at NULLS FIRST
+      LIMIT $2`,
     [workspaceId, limit]);
 
   const changes: Reevaluation[] = [];
@@ -617,15 +628,21 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Reev
         next = 'tainted';
       }
     }
-    if (next === s.state) continue;
 
     await withTx(async (tx) => {
+      // The cursor advances whether or not anything changed. A pass that
+      // examines a determination and leaves it alone has still examined it,
+      // and recording that is what stops the sweep looping on its own head.
       const { rowCount } = await tx.query(
-        `UPDATE seals SET state = $2,
-                settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END
+        `UPDATE seals
+            SET state = $2,
+                settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END,
+                last_evaluated_at = now(),
+                evaluation_due = false
           WHERE id = $1 AND state = $3`,
         [s.id, next, s.state]);
       if (rowCount === 0) return;  // somebody clawed it first; their record wins
+      if (next === s.state) return;
       await tx.query(
         `INSERT INTO seal_events (seal_id, workspace_id, kind, detail)
          VALUES ($1,$2,$3,$4::jsonb)`,
@@ -633,7 +650,51 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Reev
       changes.push({ sealId: s.id, from: s.state, to: next });
     });
   }
-  return changes;
+
+  const { rows: left } = await pool.query<{ n: string }>(
+    `SELECT count(*) AS n FROM seals
+      WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')
+        AND (evaluation_due
+             OR last_evaluated_at IS NULL
+             OR (expires_at IS NOT NULL AND expires_at <= now()))`,
+    [workspaceId]);
+
+  return { changes, examined: rows.length, remaining: Number(left[0]!.n) };
+}
+
+/**
+ * The worst-case age of the evidence, per workspace.
+ *
+ * `Metrics must be measurable and provide evidence that a state meets its
+ * outcomes on an ongoing basis` — 42 CFR 433.112(b)(15). "Ongoing" is not a
+ * property a system can assert; it is a number, and this is the number. If the
+ * oldest unexamined determination was last checked eleven days ago, then the
+ * correction channel is eleven days stale and no amount of documentation makes
+ * it otherwise.
+ */
+export async function sweepLag(db: Db, workspaceId: string): Promise<{
+  open: number; neverEvaluated: number; dueNow: number; oldestEvaluatedAt: Date | null;
+}> {
+  const { rows } = await db.query<{
+    open: string; never_evaluated: string; due_now: string; oldest: Date | null;
+  }>(
+    `SELECT count(*)                                              AS open,
+            count(*) FILTER (WHERE last_evaluated_at IS NULL)     AS never_evaluated,
+            count(*) FILTER (WHERE evaluation_due
+                                OR last_evaluated_at IS NULL
+                                OR (expires_at IS NOT NULL AND expires_at <= now()))
+                                                                  AS due_now,
+            min(last_evaluated_at)                                AS oldest
+       FROM seals
+      WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')`,
+    [workspaceId]);
+  const r = rows[0]!;
+  return {
+    open: Number(r.open),
+    neverEvaluated: Number(r.never_evaluated),
+    dueNow: Number(r.due_now),
+    oldestEvaluatedAt: r.oldest,
+  };
 }
 
 export { TRUE, FALSE, UNKNOWN };

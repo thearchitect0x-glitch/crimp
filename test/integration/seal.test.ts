@@ -359,7 +359,7 @@ describe('re-evaluation — the unbiased correction channel', () => {
     await setup(A, 'e1');
     const s = await seal(A.agent, { idempotencyKey: 'idem-e1', aliases: person('e1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
-    assert.deepEqual(await reevaluate(ws), []);
+    assert.deepEqual((await reevaluate(ws)).changes, []);
     assert.equal(await stateOf(s.sealId!), 'sealed');
   });
 
@@ -375,7 +375,7 @@ describe('re-evaluation — the unbiased correction channel', () => {
       facts: [{ fact: 'carrier.delivered', type: 'bool', value: true, source: 'carrier_api' }] },
     STRENGTHS);
 
-    const changes = await reevaluate(ws);
+    const { changes } = await reevaluate(ws);
     assert.deepEqual(changes, [{ sealId: s.sealId!, from: 'sealed', to: 'lapsed' }]);
     assert.equal(await stateOf(s.sealId!), 'lapsed');
     assert.equal(await countEvents(s.sealId!, 'lapsed'), 1);
@@ -396,7 +396,7 @@ describe('re-evaluation — the unbiased correction channel', () => {
       'SELECT subject_id FROM seals WHERE id = $1', [s.sealId]);
     await eraseSubject(ws, rows[0]!.subject_id);
 
-    const changes = await reevaluate(ws);
+    const { changes } = await reevaluate(ws);
     assert.deepEqual(changes, [{ sealId: s.sealId!, from: 'sealed', to: 'tainted' }]);
 
     const after = await lookup(A.agent, { aliases: person('e3'), scope: 'refund.issue' }, STRENGTHS);
