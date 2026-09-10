@@ -38,7 +38,8 @@ describe('systemic review over HTTP', () => {
       payload: { aliases: person('b'), scope: 'medicaid.renewal' } });
     assert.equal(before.json().determinations[0].under_review, false);
 
-    await app.inject({ method: 'POST', url: '/v1/attestations', headers: bearer(agent), payload: { aliases: person('a'),
+    // The ruling is a person's act: the operator key, through the authority source.
+    await app.inject({ method: 'POST', url: '/v1/attestations', headers: bearer(op), payload: { aliases: person('a'),
       facts: [
         { fact: 'adjudication.ruling', type: 'str', value: 'reversed', source: 'state_registry' },
         { fact: 'adjudication.ruleset', type: 'str', value: 'medicaid', source: 'state_registry' },

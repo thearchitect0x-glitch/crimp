@@ -7,7 +7,7 @@ import {
   MAX_ALIASES_PER_SUBJECT,
   type MergeStrength,
 } from '../../src/lib/blind.js';
-import { assertProductionSafety } from '../../src/lib/config.js';
+import { assertProductionSafety, TEST_SIGNING_SEED } from '../../src/lib/config.js';
 import { ApiError } from '../../src/lib/errors.js';
 
 const strengths: Record<string, MergeStrength> = {
@@ -176,6 +176,13 @@ describe('production safety', () => {
       { ...base, authSecret: 'dev-secret-do-not-use-in-production' } as unknown as Cfg), /AUTH_SECRET/);
     assert.throws(() => assertProductionSafety(
       { ...base, blindSecret: 'dev-secret-do-not-use-in-production' } as unknown as Cfg), /BLIND_SECRET/);
+  });
+
+  test('refuses the published test signing seed', () => {
+    assert.throws(() => assertProductionSafety({ ...base, signingKey: TEST_SIGNING_SEED } as unknown as Cfg),
+      /published test seed/);
+    assert.throws(() => assertProductionSafety({ ...base, signingKey: null } as unknown as Cfg),
+      /SIGNING_KEY is not set/);
   });
 
   test('refuses short secrets and wildcard CORS', () => {

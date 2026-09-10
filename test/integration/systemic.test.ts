@@ -9,7 +9,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { closePool, getPool } from '../../src/db/pool.js';
 import { migrate } from '../../src/db/migrate.js';
-import { attest } from '../../src/domain/attest.js';
+import { attest, type AttestInput } from '../../src/domain/attest.js';
 import { seal, lookup } from '../../src/domain/seal.js';
 import { declareRuleset, commitRule } from '../../src/domain/registry.js';
 import { propagateAdjudications, workspacesWithPendingReversals, ADJUDICATION } from '../../src/domain/systemic.js';
@@ -38,15 +38,15 @@ async function bind(A: Actors, tag: string, how: { ruleRef?: { ruleset: string; 
   assert.equal(out.outcome, 'sealed', tag);
   return out.sealId!;
 }
-async function ruling(A: Actors, tag: string, extra: Record<string, string> = {}): Promise<void> {
-  await attest(A.agent, { aliases: person(tag), facts: [
+async function ruling(A: Actors, tag: string, extra: Record<string, string> = {}, by: 'agent' | 'operator' = 'operator', source = 'state_registry'): Promise<void> {
+  await attest(A[by], { aliases: person(tag), facts: [
     { fact: ADJUDICATION.ruling, type: 'str', value: 'reversed', source: 'state_registry' },
     { fact: ADJUDICATION.ruleset, type: 'str', value: 'medicaid', source: 'state_registry' },
     { fact: ADJUDICATION.ruleId, type: 'str', value: 'renewal.means', source: 'state_registry' },
     { fact: ADJUDICATION.authority, type: 'str', value: 'fair_hearing', source: 'state_registry' },
     { fact: ADJUDICATION.date, type: 'time', value: Date.UTC(2026, 8, 1), source: 'state_registry' },
     ...Object.entries(extra).map(([fact, value]) => ({ fact, type: 'str' as const, value, source: 'state_registry' })),
-  ] }, STRENGTHS);
+  ].map((f) => ({ ...f, source })) as AttestInput[] }, STRENGTHS);
 }
 
 /** Three under the rule by id, one by identical inline content, one under another rule. */
@@ -115,10 +115,24 @@ describe('one overturn', () => {
     assert.equal(await countEvents(ids['p3']!, 'systemic_review'), 0);
   });
 
+  test('propagates only from a person through an authority source: an agent\'s ruling, or an internal one, reaches nothing', async () => {
+    const A = await actors();
+    const ids = await population(A);
+    await ruling(A, 'p1', {}, 'agent');                       // an agent key, even via the authority source
+    assert.deepEqual(await propagateAdjudications(A.ws), { reviews: [], flagged: 0 });
+    assert.deepEqual(await workspacesWithPendingReversals(getPool()), []);
+    await ruling(A, 'p2', {}, 'operator', 'core_ledger');      // a person, but an internal source
+    assert.deepEqual(await propagateAdjudications(A.ws), { reviews: [], flagged: 0 });
+    assert.equal(await countEvents(ids['p3']!, 'systemic_review'), 0);
+    assert.equal((await listFindings(A.operator, { class: 'systemic_review' })).length, 0);
+    await ruling(A, 'p3');                                     // a person, through the hearing authority
+    assert.equal((await propagateAdjudications(A.ws)).flagged, 4);
+  });
+
   test('a reversal that names no rule is about one person, and is recorded as dealt with', async () => {
     const A = await actors();
     const ids = await population(A);
-    await attest(A.agent, { aliases: person('p1'), facts: [
+    await attest(A.operator, { aliases: person('p1'), facts: [
       { fact: ADJUDICATION.ruling, type: 'str', value: 'reversed', source: 'state_registry' } ] }, STRENGTHS);
     const out = await propagateAdjudications(A.ws);
     assert.deepEqual(out, { reviews: [], flagged: 0 });

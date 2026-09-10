@@ -34,6 +34,12 @@ RUN apk add --no-cache tini
 COPY --from=deps  /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
+# Read from disk at request time, not compiled: the format's home (served at
+# `/`) and the independent verifier (embedded in a person's copy). server.ts
+# refuses to start in production without them, so a build that forgets these
+# lines fails loudly rather than 404ing the site.
+COPY web ./web
+COPY spec ./spec
 
 # Non-root. The process needs no filesystem writes at all.
 USER node

@@ -179,3 +179,20 @@ describe('a finding', () => {
     assert.equal((await listFindings(A.operator, {})).length, 1, 'the finding was not');
   });
 });
+
+describe('reading clocks', () => {
+  test('attaches nothing: a new alias presented beside a known one is not bound by a read', async () => {
+    const A = await actors();
+    await startClock(A.agent, { aliases: person('ro1'), scope: 'snap.application', clock: 'snap_30_day',
+      startedAt: daysAgo(1) }, STRENGTHS);
+    const before = await getPool().query<{ n: string }>(
+      'SELECT count(*) AS n FROM subject_aliases WHERE workspace_id = $1', [A.ws]);
+    const found = await clocksFor(A.agent, { aliases: [...person('ro1'), { type: 'device', value: 'shared-kiosk' }] }, STRENGTHS);
+    assert.equal(found.length, 1, 'the known alias resolves the subject');
+    const after = await getPool().query<{ n: string }>(
+      'SELECT count(*) AS n FROM subject_aliases WHERE workspace_id = $1', [A.ws]);
+    assert.equal(after.rows[0]?.n, before.rows[0]?.n, 'the shared device was not bound to anybody');
+    await assert.rejects(() => clocksFor(A.agent, { aliases: [{ type: 'device', value: 'nobody' }] }, STRENGTHS),
+      (e: unknown) => e instanceof ApiError && e.code === 'unknown_subject');
+  });
+});

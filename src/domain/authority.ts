@@ -115,8 +115,6 @@ export const MAX_COOLING_OFF_SECONDS = TIME_BOUNDS.custodian.coolingOffSeconds;
  */
 export const QUORUM_WINDOW_SECONDS = 7 * 24 * 3600;
 
-const JURISDICTION = /^[A-Z]{2}(-[A-Z0-9]{1,3})?$/;
-
 /**
  * Validate a claw rule against the authority that is sealing.
  *

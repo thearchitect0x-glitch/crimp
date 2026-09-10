@@ -15,7 +15,10 @@
  *
  * Nothing about this family is special to the evaluator — it is a set of
  * facts about one person. What is special is what the SWEEP does when it
- * sees `ruling = reversed` with a rule named: it finds every open
+ * sees `ruling = reversed` with a rule named — and WHO may say it: a person
+ * (operator or above) through an `authority`-class source. A ruling is the
+ * one attestation that reaches other people's records, so it is the one an
+ * agent may not make. Then: it finds every open
  * determination made under that rule and puts it under review.
  *
  * WHAT "UNDER REVIEW" MEANS, EXACTLY. The determination is marked due, so
@@ -82,7 +85,16 @@ async function pendingReversals(db: Db, workspaceId: string): Promise<Reversal[]
             (SELECT int_value FROM attestations a WHERE a.workspace_id = r.workspace_id
                AND a.subject_id = r.subject_id AND a.fact = $6) AS date
        FROM attestations r
+       JOIN api_keys k ON k.id = r.attester AND k.workspace_id = r.workspace_id
+       JOIN authority_levels al ON al.level = k.authority
       WHERE r.workspace_id = $1 AND r.fact = $7 AND r.str_value = 'reversed'
+        -- Who may put every determination under a rule into review: a person
+        -- (operator or above), attesting through a source of the authority
+        -- class. An agent holding attestations:write can attest the same
+        -- facts; they propagate nothing. Found by the security sweep — the
+        -- sweep had read the ruling and never asked who said it.
+        AND r.admissibility = 'authority'
+        AND al.rank >= (SELECT rank FROM authority_levels WHERE level = 'operator')
         AND NOT EXISTS (SELECT 1 FROM systemic_reviews s
                          WHERE s.workspace_id = r.workspace_id
                            AND s.appellant_subject_id = r.subject_id
@@ -170,7 +182,11 @@ export async function propagateAdjudications(workspaceId: string): Promise<Propa
 export async function workspacesWithPendingReversals(db: Db): Promise<string[]> {
   const { rows } = await db.query<{ workspace_id: string }>(
     `SELECT DISTINCT r.workspace_id FROM attestations r
+       JOIN api_keys k ON k.id = r.attester AND k.workspace_id = r.workspace_id
+       JOIN authority_levels al ON al.level = k.authority
       WHERE r.fact = $1 AND r.str_value = 'reversed'
+        AND r.admissibility = 'authority'
+        AND al.rank >= (SELECT rank FROM authority_levels WHERE level = 'operator')
         AND NOT EXISTS (SELECT 1 FROM systemic_reviews s
                          WHERE s.workspace_id = r.workspace_id
                            AND s.appellant_subject_id = r.subject_id

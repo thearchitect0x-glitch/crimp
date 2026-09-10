@@ -25,10 +25,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { withTx } from '../db/pool.js';
 import { ApiError } from '../lib/errors.js';
-import { blindAliases, type MergeStrength } from '../lib/blind.js';
 import { rankOf } from './authority.js';
 import { requireScope, type Principal } from './auth.js';
-import { resolveForWrite } from './subject.js';
+import { resolveForRead, thresholdOf } from './subject.js';
+import { blindAliases, mergeCapable, type MergeStrength } from '../lib/blind.js';
 import { loadProof, recordCore, type Proof, DISCLOSURE_AUTHORITY } from './record.js';
 import { signer } from './signer.js';
 import type { FactType } from './rule.js';
@@ -79,7 +79,22 @@ export async function personCopy(
   const aliases = blindAliases(p.workspaceId, args.aliases, strengths);
 
   return withTx(async (tx) => {
-    const { subjectId } = await resolveForWrite(tx, p.workspaceId, aliases, { create: false, doing: 'exporting a person\'s copy' });
+    // The most sensitive read in the system resolves identity from
+    // IDENTITY-GRADE aliases only. A phone or an email is routinely shared
+    // and, bound first-writer-wins, would hand one person another's income.
+    // And it is a read: `resolveForRead` attaches nothing. Both found by the
+    // security sweep.
+    const capable = mergeCapable(aliases, await thresholdOf(tx, p.workspaceId));
+    if (capable.length === 0) {
+      throw new ApiError(400, 'identity_required',
+        'A person\'s copy is issued only against an identity-grade identifier (one the workspace declares '
+        + 'merge-capable). A shared phone or email cannot say whose copy this is.',
+        { presented: aliases.map((a) => a.type) });
+    }
+    const subjectId = await resolveForRead(tx, p.workspaceId, capable);
+    if (subjectId === null) {
+      throw new ApiError(404, 'unknown_subject', 'No subject matches these identifiers.');
+    }
 
     const { rows: facts } = await tx.query<{
       fact: string; fact_type: FactType; bool_value: boolean | null; int_value: string | number | null;

@@ -26,7 +26,7 @@ import { withTx, getPool, type Db } from '../db/pool.js';
 import { ApiError } from '../lib/errors.js';
 import { newId } from '../lib/ids.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
-import { resolveForWrite } from './subject.js';
+import { resolveForWrite, resolveForRead } from './subject.js';
 import { validateScope } from './scope.js';
 import { requireScope, type Principal } from './auth.js';
 import { recordFinding } from './findings.js';
@@ -215,7 +215,15 @@ export async function clocksFor(p: Principal, args: { aliases: unknown },
   requireScope(p, 'determinations:read');
   const aliases = blindAliases(p.workspaceId, args.aliases, strengths);
   return withTx(async (tx) => {
-    const { subjectId } = await resolveForWrite(tx, p.workspaceId, aliases, { create: false, doing: 'reading clocks' });
+    // A READ. `resolveForRead` attaches nothing: `resolveForWrite` binds every
+    // presented alias to the subject it finds even with `create: false`, which
+    // would let a key holding only `determinations:read` bind a shared device
+    // to a refused person. Found by the security sweep; the hot-path lookup
+    // already did this right.
+    const subjectId = await resolveForRead(tx, p.workspaceId, aliases);
+    if (subjectId === null) {
+      throw new ApiError(404, 'unknown_subject', 'No subject matches these aliases.');
+    }
     const { rows } = await tx.query<Row>(
       `SELECT ${COLS} FROM clocks WHERE workspace_id = $1 AND subject_id = $2 ORDER BY started_at DESC`,
       [p.workspaceId, subjectId]);

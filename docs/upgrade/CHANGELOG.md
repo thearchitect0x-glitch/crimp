@@ -733,3 +733,101 @@ literal cut at the wrong brace and broke the page; found by the browser
 console, fixed with brace matching, and the page verified again by hand.
 
 **Tests.** 432 → 445 (4 site unit, 4 verifier-page unit, 2 e2e, 3 notice).
+
+## Security sweep · 10 September 2026
+
+Asked to sweep for holes while the pull requests wait. Read as an attacker
+holding each key class in turn — an agent key with the read scopes, an
+agent key with `attestations:write`, an operator key, no key — then as the
+team that has to run the thing, then with the scanner's findings in hand.
+Six holes found by reading; six fixed. Three more items from CodeQL and one
+from CI, dealt with below. One noted and left, with the reason.
+
+**1 · A read that wrote.** `GET /clocks` resolved the subject through
+`resolveForWrite`, the resolver that *attaches* every unseen alias to
+whichever subject the seen ones name. A key holding only
+`determinations:read` could bind any alias — a stranger's card
+fingerprint — to any person it could name, by asking about their clocks.
+`clocksFor` now resolves through `resolveForRead`, which attaches nothing,
+and answers `404 unknown_subject` when nothing matches. Test: "reading
+clocks attaches nothing".
+
+**2 · Anyone could overturn a rule.** The systemic-review sweep read
+`adjudication.ruling = reversed` and never asked who said it. Any key with
+`attestations:write` — every agent — could put every determination under
+a rule into review by attesting a forged ruling about anyone. Propagation
+now requires the attester's authority to be operator or above *and* the
+source to be of the `authority` class; an agent's ruling, or a person's
+through an internal source, reaches nothing and stays on that one record
+as an ordinary fact. Test: "propagates only from a person through an
+authority source".
+
+**3 · A person's copy through a shared alias.** `POST /subjects/person-copy`
+resolved identity from whatever was presented, weak and medium aliases
+included. A phone or an email is routinely shared, and bound
+first-writer-wins it would hand one person another's income. Only
+identity-grade aliases (the workspace's merge-capable types) decide now,
+and through the read resolver — presenting a stranger's card beside the
+owner's email no longer binds the card to the owner. `400 identity_required`
+when none is presented; `404 unknown_subject` when they match nobody.
+Test: "is issued only against identity-grade identifiers, never resolves
+through a shared one, and attaches nothing".
+
+**4 · The published test seed in production.** `SIGNING_KEY` set to the
+seed the conformance vectors publish would sign real records with a key
+anyone can derive from the repository. `assertProductionSafety` refuses
+it. Hardening: nothing set it by accident before, but the seed is one
+copy-paste from a `.env`.
+
+**5 · The image carried neither the site nor the verifier.** `.dockerignore`
+excluded `web/` and the Dockerfile never copied `spec/`, so the production
+image answered `/` with a 404 and a person's copy would have thrown
+reading `verifier.mjs`. Both are copied now, and `server.ts` refuses to
+start in production without `web/index.html` and `spec/verifier.mjs`, so
+a build that forgets them fails at boot instead of at the first request
+(a warning outside production). Verified by building the image and
+listing both inside it.
+
+**6 · The evaluation log grew without bound.** cap-09 appended a row per
+evaluation and nothing removed one. The sweep now prunes rows older than
+the drift baseline plus seven days; nothing reads further back. Test:
+"the evaluation log is pruned".
+
+**From the scanner.** CodeQL raised three alerts on the upgrade branch and
+held two open on `main`.
+- *Remote property injection*, `applyGuards`: the evaluator's view was a
+  spread copy with rule-named keys `delete`d from it. The name could only
+  ever be a catalogued fact, so the shape was safe; it is now built by
+  filtering, safe by construction, and nothing has to be argued with.
+- *Biased cryptographic random*, ids and API keys (open on `main`): both
+  alphabets hold exactly 32 symbols, so the modulo was uniform and the
+  alert wrong. It is now a five-bit mask, the alphabets are exported, and
+  each module refuses to load if its string is edited to another length.
+  Test: "both alphabets hold exactly 32 distinct symbols".
+- *Unused variable*: a jurisdiction regex in `authority.ts` that the schema
+  and the migration already carry. Removed.
+- *File data in outbound request*, `scripts/decide.ts`: sending the named
+  file as the body is that CLI's whole purpose; the host and credential
+  come from the environment. Dismissed on the alert with that reason.
+
+**From CI.** The DCO gate failed both open pull requests: sixteen commits on
+these branches carried no `Signed-off-by`. Their messages were rewritten
+to add it — trees, authors and dates untouched, verified by an empty diff
+against the originals — and both branches force-pushed together.
+
+**Noted, not fixed.** Constant-conclusion detection (cap-01) and the
+remedy search (cap-02) each evaluate up to 65 536 cells per request, by
+design and bounded. The per-key rate limit is the only ceiling on how
+often a key may ask for that. This is a resource question rather than a
+correctness one: a per-key evaluation budget is the next step if the
+bound is ever felt in practice, and the operator should set it from
+measurements, not from a guess here.
+
+**Found sound, looked for and not found.** Unparameterised SQL; a query
+without a workspace scope; a route whose authorisation differs from the
+domain's; a way past the disclosure gate; a subject id crossing the
+record boundary; unstable signature canonicalisation; unescaped text in
+the notice or the site.
+
+**Tests.** Seven added: 445 → 452 on the upgrade branch; 453 → 460 with the
+SNAP configuration.
