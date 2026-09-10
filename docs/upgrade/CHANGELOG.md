@@ -646,3 +646,32 @@ a key (`skip`).
 
 **Human to do.** Generate `SIGNING_KEY`, set it in the deployment, escrow it
 beside `BLIND_SECRET`. Until then production refuses to start.
+
+## Phase 2b · FHIR projection for CMS-0057-F · 10 September 2026
+
+`src/interop/fhir/map.ts` (the brief's `interop/fhir/`, placed under `src`
+so the build config covers it): `toClaimResponse`, `toTask`, `toBundle`,
+pure functions of the notice (cap-04), which is itself a pure derivation of
+the record — so the same record produces the same bundle forever, and the
+committed fixture (`fixtures/denial.bundle.json`) is asserted byte for byte.
+Read-only; no FHIR server; nothing read in.
+
+Every element CMS-0057-F asks payers to expose through the Patient Access
+API — status, the date approved or denied, when it ends, and a specific
+reason if denied — has a base-resource home: `status`, `created`,
+`preAuthPeriod`, `item.adjudication.reason` with one coding per deciding
+clause (Crimp's own code system, display = the fixed clause text). What the
+record carries and FHIR has no base field for — the rule's citation and
+hash, the record reference, the remedy, the clocks, the review flag —
+travels as extensions under Crimp's canonical URL and as `processNote`
+(remedy, appeal rights), so nothing is dropped and nothing is disguised. A
+pended (`tainted`) or reviewed determination also yields a `Task` focused
+on the ClaimResponse; a completed one does not.
+
+**TODO(interop-confirm):** placement follows FHIR R4 base resources. A
+payer's Da Vinci PAS / PDex profiles constrain further (required codings,
+X12 reason codes, identifier systems) and are applied by the deployment on
+top of this projection — not guessed here.
+
+**Tests.** 4 unit (fixture byte-equality and determinism; every 0057-F
+element located; Task presence rules; reversal shape).
