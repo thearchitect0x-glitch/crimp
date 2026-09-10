@@ -149,14 +149,43 @@ curl -sS localhost:8788/v1/determinations/lookup -H "Authorization: Bearer $CRIM
     "aliases": [{"type":"card_fp","value":"4242"}], "scope": "refund.issue"}'
 ```
 
-Re-attest `carrier.delivered` as `true` and the rule stops holding: the seal
-**lapses** on the next re-evaluation, with no authority involved and nobody
-having won an argument.
+### Now the part that is the whole point
 
-> **The worker is not optional.** `npm run dev:worker` runs the correction
-> channel. Without it, determinations never lapse — the rule that decides
-> whether somebody is still refused is never re-run, and the one error signal
-> that does not require the affected person to complain never fires.
+In a **third** terminal, start the correction channel:
+
+```bash
+npm run dev:worker
+```
+
+> **This is not optional and it is not a background nicety.** Without it,
+> determinations never lapse: the rule deciding whether somebody is still
+> refused is never re-run, and the one error signal that does not require the
+> affected person to complain never fires. The quickstart used to end before
+> this line, so a reader followed every step, saw nothing happen, and would
+> have concluded the correction channel did not work.
+
+Then re-attest the delivery as `true`:
+
+```bash
+curl -sS localhost:8788/v1/attestations -H "Authorization: Bearer $CRIMP_KEY" \
+  -H 'content-type: application/json' -d '{
+    "aliases": [{"type":"card_fp","value":"4242"}],
+    "facts": [{"fact":"carrier.delivered","type":"bool","value":true,"source":"carrier_api"}]}'
+```
+
+Within a minute the worker logs a sweep, and the determination has **lapsed** —
+with no authority involved, no appeal, and nobody having won an argument. A
+fact changed, and the system withdrew its own support:
+
+```bash
+curl -sS localhost:8788/v1/determinations/lookup -H "Authorization: Bearer $CRIMP_KEY" \
+  -H 'content-type: application/json' -d '{
+    "aliases": [{"type":"card_fp","value":"4242"}], "scope": "refund.issue"}'
+# {"determinations":[]}
+```
+
+That is the only error signal in existence that does not require the person it
+was wrong about to have the resources to fight.
 
 ### Other commands
 

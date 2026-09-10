@@ -73,6 +73,14 @@ const claw = {
     authority: { type: 'string', enum: [...AUTHORITIES] },
     evidence_floor: { type: 'string', enum: [...ADMISSIBILITY] },
     cooling_off_seconds: { type: 'integer', minimum: 0, maximum: 7_776_000 },
+    // Four-eyes. A second signature from a DIFFERENT credential, each clearing
+    // every other bar independently — a quorum adds a requirement and relaxes
+    // nothing.
+    quorum: { type: 'integer', enum: [1, 2] },
+    // ISO 3166. Only the place the sealing credential is itself bound to is
+    // accepted: a rule naming a place no key holds is a determination nobody
+    // could ever lift.
+    jurisdiction: { type: ['string', 'null'], pattern: '^[A-Z]{2}(-[A-Z0-9]{1,3})?$' },
   },
 } as const;
 
@@ -162,6 +170,43 @@ export const placeBody = {
     cohort: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
     // Sent in the clear and stored blinded, exactly like an alias value.
     band: { type: 'string', minLength: 1, maxLength: 256 },
+  },
+} as const;
+
+/**
+ * A merge presents aliases and evidence. It does NOT take subject ids: a
+ * caller that could name the subjects to merge could union two it never
+ * demonstrated any connection to.
+ */
+export const mergeBody = {
+  type: 'object',
+  required: ['aliases', 'evidence_sha256', 'evidence_class'],
+  additionalProperties: false,
+  properties: {
+    aliases,
+    evidence_sha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    evidence_class: { type: 'string', enum: [...ADMISSIBILITY] },
+  },
+} as const;
+
+export const carveOutBody = {
+  type: 'object',
+  required: ['alias', 'evidence_sha256', 'evidence_class'],
+  additionalProperties: false,
+  properties: {
+    // One alias, by construction. A carve-out detaches a single binding; a
+    // bulk one would be an un-merge, and there is no such thing.
+    alias: {
+      type: 'object',
+      required: ['type', 'value'],
+      additionalProperties: false,
+      properties: {
+        type: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
+        value: { type: 'string', minLength: 1, maxLength: 256 },
+      },
+    },
+    evidence_sha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    evidence_class: { type: 'string', enum: [...ADMISSIBILITY] },
   },
 } as const;
 

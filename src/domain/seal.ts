@@ -11,7 +11,8 @@ import type pg from 'pg';
 import { withTx, type Db } from '../db/pool.js';
 import { newId, sha256Hex, canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
-import { blindAliases, type MergeStrength, type BlindedAlias } from '../lib/blind.js';
+import { blindAliases, type MergeStrength } from '../lib/blind.js';
+import { resolveForRead, resolveForWrite } from './subject.js';
 import {
   validateRule, canonicalRule, factsReferenced,
   GRAMMAR_VERSION, SUPPORTED_GRAMMAR_VERSIONS,
@@ -21,7 +22,8 @@ import {
 import { evaluate } from './evaluate.js';
 import { validateScope, ancestors, covers } from './scope.js';
 import {
-  validateClawRule, mayClaw, isAuthority, type Authority, type ClawRule,
+  validateClawRule, mayClaw, isAuthority, TIME_BOUNDS, QUORUM_WINDOW_SECONDS,
+  type Authority, type ClawRule,
 } from './authority.js';
 import { meetsFloor, type Admissibility } from './admissibility.js';
 import { requireScope, type Principal } from './auth.js';
@@ -65,61 +67,19 @@ export interface SealResult {
   disposition: Disposition;
   ruleHash: string;
   reason: string;
+  /**
+   * When this determination stops standing.
+   *
+   * Returned because Crimp may have chosen it. An absent expiry from anything
+   * below `custodian` is capped at that authority's ceiling rather than
+   * refused — the door closes itself instead of demanding the caller remember
+   * to close it — and the caller is told what it got rather than left to
+   * assume forever.
+   */
+  expiresAt: Date | null;
 }
 
 /* ── Subject resolution ──────────────────────────────────────────────── */
-
-interface Resolved { subjectId: string; created: boolean }
-
-/**
- * Find or create the subject these aliases identify.
- *
- * Handles the two unambiguous cases. When presented aliases already belong to
- * SEVERAL existing subjects, this refuses rather than guessing: unioning them
- * is monotone and therefore permanent, and a wrong permanent merge drags
- * strangers under somebody else's determination with no way back. The degree-
- * bounded merge with authority-signed carve-outs is its own piece of work and
- * gets its own tests; until it lands, failing closed and recording the refusal
- * is the only honest behaviour.
- */
-async function resolveSubject(
-  tx: pg.PoolClient, workspaceId: string, aliases: readonly BlindedAlias[],
-): Promise<Resolved> {
-  const { rows: existing } = await tx.query<{ subject_id: string }>(
-    `SELECT DISTINCT subject_id FROM subject_aliases
-      WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-        SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-    [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
-  );
-
-  if (existing.length > 1) {
-    throw new ApiError(409, 'merge_required',
-      `These aliases already identify ${existing.length} distinct subjects. Unioning them is `
-      + 'permanent and cannot be undone, so Crimp will not do it implicitly. Resolve the merge '
-      + 'explicitly.', { subjects: existing.length });
-  }
-
-  const subjectId = existing[0]?.subject_id ?? newId('sub');
-  const created = existing.length === 0;
-  if (created) {
-    await tx.query('INSERT INTO subjects (id, workspace_id) VALUES ($1, $2)', [subjectId, workspaceId]);
-  }
-
-  // Attach any aliases not already bound. Monotone: this only ever adds.
-  await tx.query(
-    `INSERT INTO subject_aliases (workspace_id, alias_type, blinded, subject_id, merge_strength)
-     SELECT $1, t, b, $4, s FROM UNNEST($2::text[], $3::text[], $5::text[]) AS u(t, b, s)
-     ON CONFLICT (workspace_id, alias_type, blinded) DO NOTHING`,
-    [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded), subjectId,
-      aliases.map((a) => a.strength)],
-  );
-  await tx.query(
-    `UPDATE subjects SET alias_count =
-       (SELECT count(*) FROM subject_aliases WHERE subject_id = $1) WHERE id = $1`,
-    [subjectId]);
-
-  return { subjectId, created };
-}
 
 /* ── Attested facts ──────────────────────────────────────────────────── */
 
@@ -207,7 +167,25 @@ export async function seal(
         { expiresAt: input.expiresAt.toISOString() });
     }
   }
-  const clawRule = validateClawRule(sealedBy, input.claw);
+
+  // THE CLOSER. A door nobody has to remember to shut.
+  //
+  // Absent expiry means forever, so an agent holding `seals:write` could author
+  // a permanent refusal. Requiring an expiry would have been the obvious fix
+  // and the worse one: a bound the caller can forget is not a bound, and this
+  // bound exists to protect a third party — the person refused — who is not in
+  // the conversation. So it is capped rather than demanded, and the chosen
+  // value is returned so nothing is decided silently.
+  //
+  // `commit` is exempt: it records what an agent told a customer, and expiring
+  // a commitment would erase it rather than end it.
+  const maxDuration = TIME_BOUNDS[sealedBy].maxDurationSeconds;
+  let expiresAt = input.expiresAt ?? null;
+  if (maxDuration !== null && input.disposition !== 'commit') {
+    const ceiling = new Date(Date.now() + maxDuration * 1000);
+    if (expiresAt === null || expiresAt > ceiling) expiresAt = ceiling;
+  }
+  const clawRule = validateClawRule(sealedBy, input.claw, p.jurisdiction);
   const referenced = validateRule(input.rule);
   const rule = input.rule as Rule;
 
@@ -229,8 +207,8 @@ export async function seal(
     // Replay before doing any work. A retry must be cheap and must not
     // re-resolve subjects or re-evaluate anything.
     const { rows: prior } = await tx.query<{
-      id: string; disposition: Disposition; rule_hash: string;
-    }>(`SELECT id, disposition, rule_hash FROM seals
+      id: string; disposition: Disposition; rule_hash: string; expires_at: Date | null;
+    }>(`SELECT id, disposition, rule_hash, expires_at FROM seals
          WHERE workspace_id = $1 AND idempotency_key = $2`,
       [workspaceId, input.idempotencyKey]);
     if (prior[0]) {
@@ -244,10 +222,12 @@ export async function seal(
         sealId: prior[0].id, outcome: 'replayed' as const,
         disposition: prior[0].disposition, ruleHash,
         reason: 'This determination already exists. Returning the original.',
+        expiresAt: prior[0].expires_at,
       };
     }
 
-    const { subjectId } = await resolveSubject(tx, workspaceId, aliases);
+    const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
+      { doing: 'sealing a determination' });
     const { facts, rows } = await loadFacts(tx, workspaceId, subjectId, [...referenced]);
 
     // Throws RuleTypeError (400) on a literal that cannot be compared with the
@@ -267,7 +247,7 @@ export async function seal(
       // Not an error. The agent applied its rule and the rule did not hold, so
       // no determination exists. Recorded nowhere as a seal, returned plainly.
       return {
-        sealId: null, outcome: 'not_applicable' as const,
+        sealId: null, outcome: 'not_applicable' as const, expiresAt: null,
         disposition: input.disposition, ruleHash,
         reason: 'The rule did not hold against the attested facts. No determination was created.',
       };
@@ -278,12 +258,13 @@ export async function seal(
       `INSERT INTO seals (id, workspace_id, subject_id, scope, disposition, rule, rule_hash,
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
                           claw_cooling_off_s, max_uses, idempotency_key, expires_at,
-                          last_evaluated_at, evaluation_due)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),false)`,
+                          claw_quorum, claw_jurisdiction, last_evaluated_at, evaluation_due)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now(),false)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
-        input.idempotencyKey, input.expiresAt ?? null],
+        input.idempotencyKey, expiresAt,
+        clawRule.quorum ?? 1, clawRule.jurisdiction ?? null],
     );
 
     for (const r of rows) {
@@ -303,6 +284,7 @@ export async function seal(
 
     return {
       sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash,
+      expiresAt,
       reason: 'The rule held. The determination is sealed.',
     };
   });
@@ -378,19 +360,12 @@ export async function lookup(p: Principal, args: {
   const aliases = blindAliases(workspaceId, args.aliases, strengths);
 
   return withTx(async (tx) => {
-    const { rows: sub } = await tx.query<{ subject_id: string }>(
-      `SELECT DISTINCT subject_id FROM subject_aliases
-        WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-          SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
-    );
-    if (sub.length === 0) return { determinations: [] };
-    if (sub.length > 1) {
-      throw new ApiError(409, 'merge_required',
-        'These aliases identify several subjects; resolve the merge before asking.',
-        { subjects: sub.length });
-    }
-    const subjectId = sub[0]!.subject_id;
+    // Every alias counts on a read, weak ones included: a determination that
+    // could be escaped by presenting a different device would not be one.
+    // `resolveForRead` also raises `merge_required` and names the endpoint that
+    // resolves it, which is what stopped this being a dead end.
+    const subjectId = await resolveForRead(tx, workspaceId, aliases);
+    if (subjectId === null) return { determinations: [] };
 
     const { rows: found } = await tx.query<{
       id: string; scope: string; disposition: Disposition; state: 'sealed' | 'tainted';
@@ -513,7 +488,7 @@ export async function claw(p: Principal, args: {
   sealId: string;
   evidenceSha256: string;
   evidenceClass: Admissibility;
-}): Promise<{ state: 'clawed' }> {
+}): Promise<{ state: 'clawed' | 'pending'; signaturesNeeded?: number }> {
   requireScope(p, 'seals:claw');
   const workspaceId = p.workspaceId;
   const actor = p.authority;
@@ -525,8 +500,10 @@ export async function claw(p: Principal, args: {
     const { rows } = await tx.query<{
       id: string; state: string; disposition: Disposition; sealed_at: Date;
       claw_authority: Authority; claw_evidence_floor: Admissibility; claw_cooling_off_s: number;
+      claw_quorum: number; claw_jurisdiction: string | null;
     }>(
-      `SELECT id, state, disposition, sealed_at, claw_authority, claw_evidence_floor, claw_cooling_off_s
+      `SELECT id, state, disposition, sealed_at, claw_authority, claw_evidence_floor,
+              claw_cooling_off_s, claw_quorum, claw_jurisdiction
          FROM seals WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
       [args.sealId, workspaceId]);
     const s = rows[0];
@@ -543,6 +520,8 @@ export async function claw(p: Principal, args: {
       authority: s.claw_authority,
       evidenceFloor: s.claw_evidence_floor,
       coolingOffSeconds: s.claw_cooling_off_s,
+      quorum: s.claw_quorum === 2 ? 2 : 1,
+      jurisdiction: s.claw_jurisdiction,
     };
     const tier = tierOf(await pressureOf(tx, s.id));
     const { rule: required, hardened } = harden(s.disposition, base, tier);
@@ -560,6 +539,17 @@ export async function claw(p: Principal, args: {
         { required: required.evidenceFloor, offered: args.evidenceClass, hardened });
     }
 
+    // Where the reversing human is. Checked alongside authority and evidence
+    // rather than after them, because it is the same kind of question: a
+    // property of the credential that the caller cannot state about itself.
+    if (required.jurisdiction != null && p.jurisdiction !== required.jurisdiction) {
+      throw new ApiError(403, 'wrong_jurisdiction',
+        `Reversing this determination requires a credential bound to `
+        + `"${required.jurisdiction}"; this one is `
+        + `${p.jurisdiction === null ? 'unbound' : `bound to "${p.jurisdiction}"`}.`,
+        { required: required.jurisdiction, held: p.jurisdiction });
+    }
+
     const elapsed = (Date.now() - s.sealed_at.getTime()) / 1000;
     if (elapsed < required.coolingOffSeconds) {
       // The one defence immune to a perfectly persuasive argument: you cannot
@@ -570,13 +560,46 @@ export async function claw(p: Principal, args: {
         { remainingSeconds: Math.ceil(required.coolingOffSeconds - elapsed) });
     }
 
+    // ── Quorum ────────────────────────────────────────────────────────
+    //
+    // Every bar above has now been cleared by THIS credential. A quorum adds a
+    // requirement, it never relaxes one, so the second signer clears all of
+    // them independently rather than inheriting the first signer's standing.
+    //
+    // Two signatures from the same key is one signature typed twice, so the
+    // standing half must come from a different key. It also expires: a
+    // dual-control decision that takes longer than a week is not one decision
+    // made by two people, it is two unrelated decisions — and it bounds the
+    // attacker holding one credential now who expects another later.
+    if ((required.quorum ?? 1) === 2) {
+      const { rows: standing } = await tx.query<{ key_id: string }>(
+        `SELECT detail->>'key_id' AS key_id FROM seal_events
+          WHERE seal_id = $1 AND kind = 'claw_pending'
+            AND occurred_at > now() - ($2 || ' seconds')::interval
+          ORDER BY occurred_at DESC`,
+        [s.id, String(QUORUM_WINDOW_SECONDS)]);
+
+      const other = standing.find((r) => r.key_id !== null && r.key_id !== p.keyId);
+      if (!other) {
+        await tx.query(
+          `INSERT INTO seal_events
+             (seal_id, workspace_id, kind, actor, evidence_sha256, evidence_class, detail)
+           VALUES ($1,$2,'claw_pending',$3,$4,$5,$6::jsonb)`,
+          [s.id, workspaceId, actor, args.evidenceSha256, args.evidenceClass,
+            JSON.stringify({ key_id: p.keyId, hardened, pressure_tier: tier })]);
+        // The determination is untouched. A quorum that never completes leaves
+        // it standing, which is the safe direction.
+        return { state: 'pending' as const, signaturesNeeded: 1 };
+      }
+    }
+
     await tx.query(
       `UPDATE seals SET state = 'clawed', settled_at = now() WHERE id = $1`, [s.id]);
     await tx.query(
       `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, evidence_sha256, evidence_class, detail)
        VALUES ($1,$2,'clawed',$3,$4,$5,$6::jsonb)`,
       [s.id, workspaceId, actor, args.evidenceSha256, args.evidenceClass,
-        JSON.stringify({ hardened, pressure_tier: tier, required })]);
+        JSON.stringify({ hardened, pressure_tier: tier, required, key_id: p.keyId })]);
 
     return { state: 'clawed' as const };
   });

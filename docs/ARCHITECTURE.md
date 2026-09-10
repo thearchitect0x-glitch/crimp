@@ -73,6 +73,7 @@ src/
 | `seal_events` | Append-only history. Clawing records, never deletes |
 | `pressure` | Refused attempts, per seal, per declared session |
 | `cohort_types`, `subject_cohorts` | Blinded cohort membership. **Write-only** — see below |
+| `subject_events`, `alias_carve_outs` | Merges, refused merges, and the carve-outs that correct them |
 | `api_keys`, `key_events` | Credentials and every mint and revoke |
 
 ## Three values, not two
@@ -102,6 +103,117 @@ denial is computed only on the population that fought back.
 
 There is no `unless` mechanism separate from the rule. The rule *is* the
 falsification condition — re-evaluating it is what produces a lapse.
+
+## Four axes on a reversal, and the line hardening may not cross
+
+A claw rule declares **who** may reverse, on **what evidence**, after **how
+long**, **how many** of them, and **from where**.
+
+| Axis | Meaning |
+|---|---|
+| `authority` | Must strictly exceed the sealer. A sealer chooses its own jailer and can never be it |
+| `evidenceFloor` | An admissibility class the evidence must dominate |
+| `coolingOffSeconds` | The one defence immune to a perfectly persuasive argument |
+| `quorum` | 1 or 2. Two signatures from **different** credentials, each clearing every other bar independently |
+| `jurisdiction` | ISO 3166. Where the reversing credential must be bound |
+
+**Quorum** is four-eyes for an act that is consequential and hard to undo.
+Standard practice in every regulated industry, and it was inexpressible here.
+The standing half expires after a week: a dual-control decision that takes
+longer is not one decision made by two people, it is two unrelated decisions —
+and it bounds the attacker holding one credential now who expects another
+later. A quorum that never completes leaves the determination **standing**,
+which is the safe direction.
+
+**Jurisdiction** turns *"every reversal affecting a person here was performed
+under authority bound here"* from a promise in a contract into a refusal in
+code. It works because authority is already a property of the credential and
+unforgeable by the caller. A sealer may demand **only the place its own
+credential is bound to**, and a bound key may only mint keys bound to the same
+place — otherwise an operator mints itself a credential elsewhere and satisfies
+a rule written to exclude it, or names a place no key holds and produces a
+determination nobody can ever lift.
+
+### The line
+
+> **Pressure may raise only the bars a legitimate party can clear by acting.**
+
+Pressure is incremented by whoever presents a subject's aliases and is refused,
+so **a third party who knows an identifier can raise it on somebody else's
+determination.** That gives the rule for which axes hardening may touch:
+
+- **Authority** — clearable. Find a higher authority.
+- **Evidence floor** — clearable. Produce better evidence.
+- **Cooling-off** — *not* clearable. Time cannot be routed around.
+- **Quorum** — *not* clearable. A person seeking relief cannot produce a second signer.
+- **Jurisdiction** — carried through unchanged. Moving it would loosen the rule; dropping it certainly would.
+
+So `harden()` spreads `...base` and overrides exactly two fields. If a new axis
+is added to `ClawRule`, decide which side of that line it falls on **before**
+adding it.
+
+## Four gates, not three
+
+A claw rule is checked on **scope**, **authority**, **evidence** and **time**.
+The first three were enforced from the beginning. The fourth was not, and the
+gap is the same shape as every other defect found in this codebase: a principle
+stated clearly, enforced on one axis, silently unenforced on the neighbouring
+one.
+
+`validateClawRule` has always bounded *who* may reverse — an agent may require
+at most one level above itself, because *"an agent that can put determinations
+beyond an operator's reach is a denial-of-service weapon pointed at its own
+workspace."* Cooling-off had one global ceiling for every authority, and a
+determination's duration had none at all. So an agent holding only
+`seals:write` could author a refusal that **never expires** and that nobody,
+including a custodian, could lift **for three months**.
+
+| Sealed by | Max cooling-off | Max duration |
+|---|---|---|
+| `agent` | 1 hour | 30 days |
+| `operator` | 7 days | 1 year |
+| `principal` | 30 days | 5 years |
+| `custodian` | 90 days | unbounded — and unreachable, see below |
+
+Cooling-off is the one defence immune to a perfectly persuasive argument, and
+its entire cost falls on the person still refused. So the authority that can
+impose the longest wait is the one accountable for it.
+
+**The closer.** An absent expiry used to mean forever. Requiring one would have
+been the obvious fix and the worse one — a bound the caller can forget is not a
+bound, and this bound protects a third party who is not in the conversation. So
+it is **capped rather than demanded**, and the chosen value is returned in
+`expires_at` so nothing is decided silently. `commit` is exempt: it records what
+an agent told a customer, and expiring a commitment erases it rather than ending
+it.
+
+**Hardening deliberately does not touch time.** Pressure raises the required
+authority and evidence floor and leaves cooling-off alone. Pressure is
+incremented by whoever presents a subject's aliases and is refused, so a third
+party can raise it on somebody else's determination — and authority and evidence
+can still be met by finding a higher authority or better evidence, while time
+cannot be routed around at all. See ASSURANCE_CASE.md §4.
+
+**A custodian cannot seal.** The claw authority must strictly exceed the sealer
+and nothing exceeds the top of a total order. That is the no-self-reversal rule
+reaching its end, and it is correct: the highest authority governs the system
+rather than deciding cases, because its determinations could never be reversed.
+
+## The join key does not leave the process
+
+No endpoint returns a subject id. Not attestation, not cohort placement, not
+the proof export.
+
+Returning it made attestation an **identity-linkage oracle**: attest one alias,
+attest another, compare the responses, and an agent granted nothing but
+`attestations:write` learns whether two identifiers belong to the same person —
+for the price of two writes. Every other part of the subject design exists to
+prevent precisely that, and the proof export already withheld it with a test
+asserting so. Those two positions were incompatible; this was the open one.
+
+Nothing outside the process needs it. `eraseSubject` is domain-internal, and
+every caller names a subject by presenting aliases, which is the only way it
+should ever be done.
 
 ## The worker is not optional
 
@@ -168,6 +280,58 @@ with `facts_not_attested`.
 
 That is 42 CFR 435.916 in one clause — if the data on hand is stale you may not
 determine from it, you must go and ask.
+
+## Who is this? — resolution, and the union it must not perform
+
+One rule, and it is the one the subject graph is shaped around:
+
+> **A write resolves identity from merge-capable aliases alone. A read looks at
+> everything.**
+
+A weak alias — a device, an IP, a household — must be able to *carry* a
+determination, or a refusal is escaped by presenting a different phone. It must
+never be able to *create* one, or presenting your own card alongside a shared
+tablet unions you with whoever else uses it. Those are different questions and
+they get different code paths: `resolveForWrite` and `resolveForRead` in
+`src/domain/subject.ts`.
+
+Aliases still attach freely on a write, and `ON CONFLICT DO NOTHING` is what
+keeps that safe: an alias already bound to somebody stays bound to them. The
+shared tablet does not move, so its owner is not dragged along.
+
+| | Decides identity | Attaches | May cause a union |
+|---|---|---|---|
+| `strong` — card fingerprint, government id | yes | yes | yes |
+| `medium` — email, phone | only if the workspace lowers `merge_threshold` | yes | only then |
+| `weak` — device, IP, household | never | yes, if free | **never, at any setting** |
+
+When a write finds several subjects it refuses with `merge_required` and names
+the endpoint. It does not guess, and it does not union implicitly.
+
+## Merge, and the carve-out that corrects it
+
+`POST /v1/subjects/merge` is the most dangerous operation in the system: a union
+is monotone, so a wrong one is permanent. Four bounds, none of them a policy
+document:
+
+1. **Every** subject drawn in must be reached by a merge-capable alias — not
+   just "the presentation contains one somewhere".
+2. At most `MAX_SUBJECTS_PER_MERGE` subjects, and at most
+   `MAX_ALIASES_PER_SUBJECT` in the union.
+3. `principal` authority *and* evidence dominating `internal`. An agent's own
+   word — `self`, `signed` — can never union two people.
+4. A standing carve-out blocks the merge that would walk around it.
+
+The body takes aliases and never subject ids: a caller that could name the
+subjects could union two it never demonstrated any connection to.
+
+**A refused merge is recorded, on its own connection.** The refusal is written
+outside the transaction that then rolls back, because otherwise "we record
+refusals" is a comment rather than a fact. A workspace being probed for
+poisonable subjects is visible precisely in the attempts that failed.
+
+`POST /v1/subjects/carve-out` is the only correction, and it is deliberately
+weaker than an undo — see ASSURANCE_CASE.md §4 for exactly how weak.
 
 ## Three fields the contract requires, and why
 

@@ -19,7 +19,9 @@ trustworthy.
 - Attestation with declared sources and an admissibility partial order.
 - Blinded subject aliases with declared merge strength.
 - The seal lifecycle: `seal`, `check`, `claw`, and re-evaluation producing
-  `lapsed` or `tainted`.
+  `lapsed`, `tainted` or `expired`.
+- Subject resolution that a weak alias cannot subvert, the degree-bounded
+  merge, and authority-signed carve-outs.
 - Pressure, and pressure-hardening with its safety valve.
 - The three measurements: source reliability, the wrongful-denial quadrant,
   and threshold cliffs.
@@ -35,12 +37,16 @@ wrongful-denial number. If that number is small, the retail case dies and this
 roadmap changes shape. Two weeks of one partner's data outranks every feature
 below.
 
-- **Subject merge.** Today Crimp refuses with `merge_required` when presented
-  aliases already belong to several subjects, because a monotone merge is
-  permanent and a wrong one drags strangers under somebody else's
-  determination. The degree-bounded merge with authority-signed carve-outs is
-  the largest remaining piece of engineering, and it should be designed against
-  real customer data rather than guessed at.
+- **Carve-outs through the merge closure.** A carve-out blocks the direct
+  merge that would undo it, and not a later one through a third subject. The
+  graph is transitive; a carve-out is one edge. Refusals are recorded, so the
+  remaining route is visible after the fact — closing it before the fact is
+  real work and wants a real case to be designed against.
+- **The merge threshold, exposed.** `workspaces.merge_threshold` exists and
+  defaults to `strong`. There is no endpoint to change it, so today it takes a
+  SQL statement. That is deliberate for now: lowering it is a decision about
+  whether an email identifies a person, and it should be harder than a POST
+  until somebody has a reason.
 - **The scope DAG.** Scopes are a tree today, so a seal on `money.out` does not
   catch a refund. A DAG is a superset, so every seal written under the tree
   stays valid — widening is safe, which is why this order.
@@ -61,6 +67,10 @@ below.
 - **Re-rehearse continuity** once a production database exists. The 6 September
   rehearsal covered a system with no deployment; a rehearsal that covers less
   than the current system has stopped being a rehearsal.
+
+- **Quorum on a merge.** A merge is permanent and unreviewable, which makes it
+  a stronger candidate for dual control than a claw. `claw.quorum` exists; the
+  merge path has no equivalent.
 
 ## Later — under consideration, not committed
 

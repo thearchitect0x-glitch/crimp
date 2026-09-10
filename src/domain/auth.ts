@@ -28,6 +28,14 @@ export interface Principal {
   keyId: string;
   authority: Authority;
   scopes: ReadonlySet<string>;
+  /**
+   * Where this credential is bound, or null for unbound.
+   *
+   * A property of the credential, exactly like authority, and for the same
+   * reason: a caller that could state its own jurisdiction could state any of
+   * them, and a jurisdiction a request can assert is not a jurisdiction.
+   */
+  jurisdiction: string | null;
 }
 
 export const SCOPES = [
@@ -42,6 +50,11 @@ export const SCOPES = [
   // configuration act, and an agent that could do it could shape the very
   // measurement that exists to catch it.
   'cohorts:write',
+  // Merge and its carve-out share one scope. A key that can union two people
+  // and cannot separate them is worse than a key that can do neither. Also
+  // absent from AGENT_SCOPES, and gated on `principal` on top of the scope:
+  // a union is permanent, and permanence is not something a scope conveys.
+  'subjects:merge',
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 
@@ -91,6 +104,8 @@ export async function mintKey(args: {
   scopes: readonly Scope[];
   label: string;
   by: Principal | null;
+  /** ISO 3166 code binding this credential to a place, e.g. "US" or "US-CA". */
+  jurisdiction?: string | null;
 }): Promise<MintedKey> {
   if (!isAuthority(args.authority)) {
     throw new ApiError(400, 'invalid_request', `authority must be one of: ${AUTHORITIES.join(', ')}.`);
@@ -99,6 +114,20 @@ export async function mintKey(args: {
     if (!(SCOPES as readonly string[]).includes(s)) {
       throw new ApiError(400, 'invalid_request', `Unknown scope "${s}".`, { scope: s });
     }
+  }
+  const jurisdiction = args.jurisdiction ?? null;
+  if (jurisdiction !== null && !/^[A-Z]{2}(-[A-Z0-9]{1,3})?$/.test(jurisdiction)) {
+    throw new ApiError(400, 'invalid_request',
+      'jurisdiction must be an ISO 3166 code such as "US" or a subdivision such as "US-CA".');
+  }
+  // A key may not bind a key it mints to a place it is not itself bound to.
+  // Otherwise an operator in one jurisdiction mints itself a credential in
+  // another and satisfies a rule written to exclude it.
+  if (args.by?.jurisdiction != null && jurisdiction !== args.by.jurisdiction) {
+    throw new ApiError(403, 'forbidden',
+      `A key bound to "${args.by.jurisdiction}" may only mint keys bound to the same place, `
+      + `not ${jurisdiction === null ? 'unbound keys' : `"${jurisdiction}"`}.`,
+      { holder: args.by.jurisdiction, minting: jurisdiction });
   }
 
   if (args.by !== null) {
@@ -130,10 +159,11 @@ export async function mintKey(args: {
   const secret = randomToken(40);
 
   await getPool().query(
-    `INSERT INTO api_keys (id, workspace_id, prefix, secret_mac, authority, scopes, label, issued_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    `INSERT INTO api_keys (id, workspace_id, prefix, secret_mac, authority, scopes, label,
+                           issued_by, jurisdiction)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [id, args.workspaceId, prefix, mac(secret), args.authority, args.scopes, args.label,
-      args.by?.keyId ?? null]);
+      args.by?.keyId ?? null, jurisdiction]);
   await getPool().query(
     `INSERT INTO key_events (workspace_id, key_id, kind, by_key_id, authority, scopes)
      VALUES ($1,$2,'minted',$3,$4,$5)`,
@@ -173,10 +203,10 @@ export async function verifyKey(presented: string | undefined, db: Db = getPool(
   const secret = m?.[2] ?? '';
 
   const { rows } = prefix === '' ? { rows: [] } : await db.query<{
-    id: string; workspace_id: string; secret_mac: string;
-    authority: Authority; scopes: string[]; revoked_at: Date | null;
+    id: string; workspace_id: string; secret_mac: string; authority: Authority;
+    scopes: string[]; revoked_at: Date | null; jurisdiction: string | null;
   }>(
-    `SELECT id, workspace_id, secret_mac, authority, scopes, revoked_at
+    `SELECT id, workspace_id, secret_mac, authority, scopes, revoked_at, jurisdiction
        FROM api_keys WHERE prefix = $1`, [prefix]);
 
   const row = rows[0];
@@ -197,6 +227,7 @@ export async function verifyKey(presented: string | undefined, db: Db = getPool(
     keyId: row.id,
     authority: row.authority,
     scopes: new Set(row.scopes),
+    jurisdiction: row.jurisdiction,
   };
 }
 

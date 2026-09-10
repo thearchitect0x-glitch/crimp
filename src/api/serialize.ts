@@ -24,6 +24,8 @@ export interface WireClaw {
   authority: string;
   evidence_floor: string;
   cooling_off_seconds?: number;
+  quorum?: number;
+  jurisdiction?: string | null;
 }
 
 export function clawFromWire(w: WireClaw): ClawRule {
@@ -31,6 +33,8 @@ export function clawFromWire(w: WireClaw): ClawRule {
     authority: w.authority as ClawRule['authority'],
     evidenceFloor: w.evidence_floor as ClawRule['evidenceFloor'],
     coolingOffSeconds: w.cooling_off_seconds ?? 0,
+    quorum: w.quorum === 2 ? 2 : 1,
+    jurisdiction: w.jurisdiction ?? null,
   };
 }
 
@@ -77,6 +81,7 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
     disposition: r.disposition,
     rule_hash: r.ruleHash,
     reason: r.reason,
+    expires_at: r.expiresAt?.toISOString() ?? null,
   };
 }
 
