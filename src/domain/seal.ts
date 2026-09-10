@@ -11,7 +11,8 @@ import type pg from 'pg';
 import { withTx, type Db } from '../db/pool.js';
 import { newId, sha256Hex, canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
-import { blindAliases, type MergeStrength, type BlindedAlias } from '../lib/blind.js';
+import { blindAliases, type MergeStrength } from '../lib/blind.js';
+import { resolveForRead, resolveForWrite } from './subject.js';
 import {
   validateRule, canonicalRule, factsReferenced,
   GRAMMAR_VERSION, SUPPORTED_GRAMMAR_VERSIONS,
@@ -68,58 +69,6 @@ export interface SealResult {
 }
 
 /* ── Subject resolution ──────────────────────────────────────────────── */
-
-interface Resolved { subjectId: string; created: boolean }
-
-/**
- * Find or create the subject these aliases identify.
- *
- * Handles the two unambiguous cases. When presented aliases already belong to
- * SEVERAL existing subjects, this refuses rather than guessing: unioning them
- * is monotone and therefore permanent, and a wrong permanent merge drags
- * strangers under somebody else's determination with no way back. The degree-
- * bounded merge with authority-signed carve-outs is its own piece of work and
- * gets its own tests; until it lands, failing closed and recording the refusal
- * is the only honest behaviour.
- */
-async function resolveSubject(
-  tx: pg.PoolClient, workspaceId: string, aliases: readonly BlindedAlias[],
-): Promise<Resolved> {
-  const { rows: existing } = await tx.query<{ subject_id: string }>(
-    `SELECT DISTINCT subject_id FROM subject_aliases
-      WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-        SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-    [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
-  );
-
-  if (existing.length > 1) {
-    throw new ApiError(409, 'merge_required',
-      `These aliases already identify ${existing.length} distinct subjects. Unioning them is `
-      + 'permanent and cannot be undone, so Crimp will not do it implicitly. Resolve the merge '
-      + 'explicitly.', { subjects: existing.length });
-  }
-
-  const subjectId = existing[0]?.subject_id ?? newId('sub');
-  const created = existing.length === 0;
-  if (created) {
-    await tx.query('INSERT INTO subjects (id, workspace_id) VALUES ($1, $2)', [subjectId, workspaceId]);
-  }
-
-  // Attach any aliases not already bound. Monotone: this only ever adds.
-  await tx.query(
-    `INSERT INTO subject_aliases (workspace_id, alias_type, blinded, subject_id, merge_strength)
-     SELECT $1, t, b, $4, s FROM UNNEST($2::text[], $3::text[], $5::text[]) AS u(t, b, s)
-     ON CONFLICT (workspace_id, alias_type, blinded) DO NOTHING`,
-    [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded), subjectId,
-      aliases.map((a) => a.strength)],
-  );
-  await tx.query(
-    `UPDATE subjects SET alias_count =
-       (SELECT count(*) FROM subject_aliases WHERE subject_id = $1) WHERE id = $1`,
-    [subjectId]);
-
-  return { subjectId, created };
-}
 
 /* ── Attested facts ──────────────────────────────────────────────────── */
 
@@ -247,7 +196,8 @@ export async function seal(
       };
     }
 
-    const { subjectId } = await resolveSubject(tx, workspaceId, aliases);
+    const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
+      { doing: 'sealing a determination' });
     const { facts, rows } = await loadFacts(tx, workspaceId, subjectId, [...referenced]);
 
     // Throws RuleTypeError (400) on a literal that cannot be compared with the
@@ -378,19 +328,12 @@ export async function lookup(p: Principal, args: {
   const aliases = blindAliases(workspaceId, args.aliases, strengths);
 
   return withTx(async (tx) => {
-    const { rows: sub } = await tx.query<{ subject_id: string }>(
-      `SELECT DISTINCT subject_id FROM subject_aliases
-        WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-          SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)],
-    );
-    if (sub.length === 0) return { determinations: [] };
-    if (sub.length > 1) {
-      throw new ApiError(409, 'merge_required',
-        'These aliases identify several subjects; resolve the merge before asking.',
-        { subjects: sub.length });
-    }
-    const subjectId = sub[0]!.subject_id;
+    // Every alias counts on a read, weak ones included: a determination that
+    // could be escaped by presenting a different device would not be one.
+    // `resolveForRead` also raises `merge_required` and names the endpoint that
+    // resolves it, which is what stopped this being a dead end.
+    const subjectId = await resolveForRead(tx, workspaceId, aliases);
+    if (subjectId === null) return { determinations: [] };
 
     const { rows: found } = await tx.query<{
       id: string; scope: string; disposition: Disposition; state: 'sealed' | 'tainted';

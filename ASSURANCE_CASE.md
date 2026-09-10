@@ -129,10 +129,33 @@ than a documented gap. The *precondition* is enforced — `DECOY_MAC` must match
 real MAC in length or the length guard short-circuits and the comparison is
 skipped — but the timing property itself is upheld by review, not by CI.
 
-**Subject merge is unimplemented and fails closed.** When presented aliases
-already belong to several subjects, Crimp refuses with `merge_required`. This is
-correct-but-incomplete: merges are monotone and permanent, and a wrong one drags
-strangers under somebody else's determination with no way back.
+**A carve-out closes the direct route back, not every route.** A carve-out
+detaches one alias from one subject and blocks a merge naming that subject. It
+cannot stop a *later* merge, through some third subject, from re-associating
+what an authority separated — the graph is transitive and a carve-out is a
+single edge. The direct attempt is refused with `carve_out_standing` and every
+merge is recorded, so the route that remains is visible after the fact rather
+than prevented before it. Closing it properly means carrying carve-outs
+forward through the merge closure, which is real work and wants a real case.
+
+**A carve-out is not an un-merge, and nothing is.** It stops the wrong binding
+applying from now on. It does not restore the subject a union destroyed and it
+does not touch the determinations that union already produced — those stay on
+the record, because rewriting history to hide a mistake is a worse property
+than having made it.
+
+**One lossy step in a merge.** Where two subjects hold the same fact, the
+freshest assertion survives and the superseded one is deleted with its subject.
+Crimp never stored historical values anyway, so nothing is lost that was ever
+retrievable — but the merge is where that design decision becomes visible.
+
+**`medium` aliases decide identity only if a workspace says so.** The default
+merge threshold is `strong`, so a presentation whose strong alias is unknown
+creates a new subject even when an email would have found an existing one. That
+means more subjects and more `merge_required` than a laxer rule would produce.
+It is the safe direction — an explicit merge is bounded, authorised and
+recorded; an implicit one is none of those — but it is a real usability cost and
+it is chosen, not accidental.
 
 **The correction channel is only as current as the sweep.** A determination
 lapses when the worker reaches it, not the instant a fact changes. An
