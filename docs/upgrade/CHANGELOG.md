@@ -562,3 +562,43 @@ threshold strict — which is why `minDelta` exists and is stated.
 reported at all for rules where a rising refusal rate is the intended effect
 of a policy change (the finding will fire on the day the change lands, which
 is arguably the point).
+
+## cap-10 · Human decisions through the same gate · 10 September 2026
+
+**What a caseworker's decision is.** `POST /decisions` (`decide()`,
+`src/domain/decisions.ts`; CLI `scripts/decide.ts`): a committed rule by
+`ruleset` + `rule_id`, and facts, each with a source. That is the whole body.
+The facts are attested under the caseworker's credential (`attester` = key
+id, cap-01), the rule is resolved as of the decision date (cap-08), the
+evaluator says what follows, and the seal, reasons, remedy, notice and
+record are exactly what an agent's decision produces. A person, not an
+agent: operator authority or above.
+
+**No outcome field, by shape.** The schema has no `outcome`, `decision`,
+`rule` or `disposition`, and `additionalProperties: false` makes each a
+400, not an ignored key — tested for all four. A fact without a source is a
+400 at the schema and `unknown_source` in the domain.
+
+**The one thing the human path needed that the agent path did not.**
+Disposition. An agent chooses `bind` / `permit` / `commit` per seal — the
+*kind* of determination, not its outcome. At a keyboard that choice is an
+outcome field wearing a hat. So a registered rule may now carry its
+**disposition** (`rules.disposition`, migration 018; `commitRule({
+disposition })`); set, it binds every seal made under the rule, agent or
+person (`disposition_fixed_by_rule`), and the human path *requires* it
+(`rule_has_no_disposition`). A caseworker who wants to decide something the
+committed policy does not express commits the policy first, on the record.
+
+**Default claw.** A person sealed it, so only a higher person may overrule:
+`principal`, on `internal` evidence, no cooling-off — an operational default,
+not a legal parameter; any tighter rule may be passed.
+
+**Tests.** 412 → 419 (6 integration, 1 e2e): attester on the facts and on
+the record; the evaluator still decides (`not_applicable` when the facts do
+not satisfy the rule); agents refused; a rule without disposition refused;
+an uncommitted rule refused; an undeclared source refused; a rule's
+disposition binds the agent path too; every outcome-shaped field refused by
+the schema.
+
+**Human to confirm.** The default claw; whether the CLI should be shipped at
+all or replaced by the deployment's own case-management integration.

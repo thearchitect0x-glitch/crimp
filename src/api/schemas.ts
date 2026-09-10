@@ -173,6 +173,29 @@ export const ruleBody = {
     effective_to: { type: ['string', 'null'], maxLength: 64 },
     scope: { type: ['string', 'null'], maxLength: 127 },
     note: { type: ['string', 'null'], maxLength: 1000 },
+    disposition: { type: ['string', 'null'], enum: ['bind', 'permit', 'commit', null] },
+  },
+} as const;
+
+/**
+ * cap-10. A caseworker's decision. Read what is NOT here: no `rule`, no
+ * `disposition`, no `outcome`, no `decision`. `additionalProperties: false`
+ * is what makes their absence a refusal rather than an omission.
+ */
+export const decisionBody = {
+  type: 'object',
+  required: ['idempotency_key', 'aliases', 'scope', 'ruleset', 'rule_id', 'facts'],
+  additionalProperties: false,
+  properties: {
+    idempotency_key: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[\\w.:-]+$' },
+    aliases,
+    scope: { type: 'string', maxLength: 127 },
+    ruleset: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
+    rule_id: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}(\\.[a-z][a-z0-9_]{0,30}){0,3}$' },
+    facts: attestBody.properties.facts,
+    as_of: { type: ['string', 'null'], maxLength: 64 },
+    expires_at: { type: ['string', 'null'], maxLength: 64 },
+    claw,
   },
 } as const;
 

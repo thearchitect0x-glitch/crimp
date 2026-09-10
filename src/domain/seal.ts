@@ -305,6 +305,14 @@ export async function seal(
     const registered = await resolveRule(getPool(), workspaceId,
       input.ruleRef.ruleset, input.ruleRef.ruleId, asOf ?? new Date());
     assertScopeWithin(registered, scope);
+    // cap-10. A rule that says what kind of determination it makes binds
+    // every seal under it. Otherwise "disposition" is an outcome field.
+    if (registered.disposition !== null && registered.disposition !== input.disposition) {
+      throw new ApiError(400, 'disposition_fixed_by_rule',
+        `Rule "${registered.ruleId}" makes a ${registered.disposition}; it cannot be sealed as a `
+        + `${input.disposition}. The kind of determination is committed with the rule, not chosen per seal.`,
+        { ruleId: registered.ruleId, fixed: registered.disposition, requested: input.disposition });
+    }
     if (ruleText !== undefined) {
       validateRule(ruleText);
       const inlineHash = sha256Hex(canonicalRule(ruleText as Rule));

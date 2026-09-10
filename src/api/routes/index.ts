@@ -5,7 +5,7 @@ import { authorized } from '../app.js';
 import {
   attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
   carveOutBody, mintKeyBody, windowQuery, errors, rulesetBody, ruleBody, closeRuleBody, catalogueBody,
-  clockBody, findingsQuery, sourceBody,
+  clockBody, findingsQuery, sourceBody, decisionBody,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
@@ -28,6 +28,7 @@ import { listFindings } from '../../domain/findings.js';
 import { noticeFor } from '../../domain/notice.js';
 import { harmLedger } from '../../domain/harm.js';
 import { declareSource, listSources } from '../../domain/sources.js';
+import { decide } from '../../domain/decisions.js';
 import type { Admissibility } from '../../domain/admissibility.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
@@ -220,6 +221,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     Body: {
       rule_id: string; rule: unknown; legal_authority: string; effective_from: string;
       effective_to?: string | null; scope?: string | null; note?: string | null;
+      disposition?: 'bind' | 'permit' | 'commit' | null;
     };
   }>('/rulesets/:ruleset/rules', {
     schema: { body: ruleBody, response: errors },
@@ -238,6 +240,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       effectiveTo: timestamp(req.body.effective_to, 'effective_to'),
       scope: req.body.scope ?? null,
       note: req.body.note ?? null,
+      disposition: req.body.disposition ?? null,
     });
     reply.code(out.outcome === 'committed' ? 201 : 200);
     return { outcome: out.outcome, ...registeredRuleToWire(out) };
@@ -266,6 +269,29 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const p = await authorized(req, 'rules:read');
     const versions = await ruleHistory(p, req.params.ruleset, req.params.rule_id);
     return { versions: versions.map(registeredRuleToWire) };
+  });
+
+  /* ── A caseworker's decision (cap-10) ────────────────────────────── */
+  app.post<{
+    Body: {
+      idempotency_key: string; aliases: unknown; scope: string; ruleset: string; rule_id: string;
+      facts: WireFact[]; as_of?: string | null; expires_at?: string | null; claw?: WireClaw;
+    };
+  }>('/decisions', { schema: { body: decisionBody, response: errors } }, async (req, reply) => {
+    const p = await authorized(req, 'seals:write');
+    const out = await decide(p, {
+      idempotencyKey: req.body.idempotency_key,
+      aliases: req.body.aliases,
+      scope: req.body.scope,
+      ruleset: req.body.ruleset,
+      ruleId: req.body.rule_id,
+      facts: req.body.facts.map(factFromWire),
+      asOf: timestamp(req.body.as_of, 'as_of'),
+      expiresAt: timestamp(req.body.expires_at, 'expires_at'),
+      claw: req.body.claw === undefined ? null : clawFromWire(req.body.claw),
+    }, await loadStrengths(p.workspaceId));
+    reply.code(out.outcome === 'sealed' ? 201 : 200);
+    return { ...sealToWire(out), attested: out.attested, attester: out.attester };
   });
 
   /* ── The hot path: a query ───────────────────────────────────────── */

@@ -147,6 +147,7 @@ export function registeredRuleToWire(r: RegisteredRule): Record<string, unknown>
     rule: r.rule,
     grammar_version: r.grammarVersion,
     scope: r.scope,
+    disposition: r.disposition,
     committed_by: r.committedBy,
     committed_at: r.committedAt.toISOString(),
     note: r.note,

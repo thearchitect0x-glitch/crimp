@@ -107,6 +107,12 @@ export interface RegisteredRule extends RuleRef {
   rule: Rule;
   grammarVersion: string;
   scope: string | null;
+  /**
+   * cap-10. What kind of determination this rule makes — refusal, grant,
+   * record — fixed at commit. Null leaves it to the caller; set, it binds
+   * every seal under the rule, and a caseworker's decision requires it.
+   */
+  disposition: 'bind' | 'permit' | 'commit' | null;
   committedBy: string;
   committedAt: Date;
   note: string | null;
@@ -116,6 +122,7 @@ interface RuleRow {
   ruleset: string; rule_id: string; version: string; rule: Rule; grammar_version: string;
   legal_authority: string; scope: string | null; effective_from: Date; effective_to: Date | null;
   committed_by: string; committed_at: Date; note: string | null;
+  disposition: 'bind' | 'permit' | 'commit' | null;
 }
 
 const fromRow = (r: RuleRow): RegisteredRule => ({
@@ -123,6 +130,7 @@ const fromRow = (r: RuleRow): RegisteredRule => ({
   grammarVersion: r.grammar_version, legalAuthority: r.legal_authority, scope: r.scope,
   effectiveFrom: r.effective_from, effectiveTo: r.effective_to,
   committedBy: r.committed_by, committedAt: r.committed_at, note: r.note,
+  disposition: r.disposition,
 });
 
 export async function declareRuleset(p: Principal, args: {
@@ -187,6 +195,7 @@ export async function commitRule(p: Principal, args: {
   effectiveTo?: Date | null;
   scope?: string | null;
   note?: string | null;
+  disposition?: 'bind' | 'permit' | 'commit' | null;
 }): Promise<RegisteredRule & { outcome: 'committed' | 'already_committed' }> {
   requireScope(p, 'rules:write');
   requireCommitAuthority(p);
@@ -209,6 +218,10 @@ export async function commitRule(p: Principal, args: {
     throw new ApiError(400, 'invalid_request', 'effective_to must be after effective_from.');
   }
   const scope = args.scope == null ? null : validateScope(args.scope);
+  const disposition = args.disposition ?? null;
+  if (disposition !== null && !['bind', 'permit', 'commit'].includes(disposition)) {
+    throw new ApiError(400, 'invalid_request', 'disposition must be bind, permit or commit, or absent.');
+  }
 
   // The same validation a seal runs. A rule that cannot be sealed cannot be
   // committed either, and hearing that here is cheaper than hearing it later.
@@ -232,7 +245,7 @@ export async function commitRule(p: Principal, args: {
     // commit of it is a replay, not a conflict.
     const { rows: prior } = await tx.query<RuleRow>(
       `SELECT ruleset, rule_id, version, rule, grammar_version, legal_authority, scope,
-              effective_from, effective_to, committed_by, committed_at, note
+              effective_from, effective_to, committed_by, committed_at, note, disposition
          FROM rules WHERE workspace_id = $1 AND ruleset = $2 AND rule_id = $3 AND version = $4`,
       [p.workspaceId, args.ruleset, args.ruleId, version]);
     if (prior[0]) return { ...fromRow(prior[0]), outcome: 'already_committed' as const };
@@ -241,13 +254,13 @@ export async function commitRule(p: Principal, args: {
       const { rows } = await tx.query<RuleRow>(
         `INSERT INTO rules (workspace_id, ruleset, rule_id, version, rule, grammar_version,
                             legal_authority, scope, effective_from, effective_to,
-                            committed_by, committed_key, note)
-         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)
+                            committed_by, committed_key, note, disposition)
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          RETURNING ruleset, rule_id, version, rule, grammar_version, legal_authority, scope,
-                   effective_from, effective_to, committed_by, committed_at, note`,
+                   effective_from, effective_to, committed_by, committed_at, note, disposition`,
         [p.workspaceId, args.ruleset, args.ruleId, version, JSON.stringify(rule), GRAMMAR_VERSION,
           legalAuthority, scope, args.effectiveFrom, effectiveTo, p.authority, p.keyId,
-          args.note ?? null]);
+          args.note ?? null, disposition]);
       return { ...fromRow(rows[0]!), outcome: 'committed' as const };
     } catch (err) {
       // The failed INSERT has aborted `tx`; anything asked from here on is
@@ -257,7 +270,7 @@ export async function commitRule(p: Principal, args: {
         // Two commits of the same content raced. The second is a replay.
         const { rows: raced } = await getPool().query<RuleRow>(
           `SELECT ruleset, rule_id, version, rule, grammar_version, legal_authority, scope,
-                  effective_from, effective_to, committed_by, committed_at, note
+                  effective_from, effective_to, committed_by, committed_at, note, disposition
              FROM rules WHERE workspace_id = $1 AND ruleset = $2 AND rule_id = $3 AND version = $4`,
           [p.workspaceId, args.ruleset, args.ruleId, version]);
         if (raced[0]) return { ...fromRow(raced[0]), outcome: 'already_committed' as const };
@@ -305,7 +318,7 @@ export async function closeRule(p: Principal, args: {
         WHERE workspace_id = $1 AND ruleset = $2 AND rule_id = $3 AND version = $4
           AND effective_from < $5
         RETURNING ruleset, rule_id, version, rule, grammar_version, legal_authority, scope,
-                  effective_from, effective_to, committed_by, committed_at, note`,
+                  effective_from, effective_to, committed_by, committed_at, note, disposition`,
       [p.workspaceId, args.ruleset, args.ruleId, args.version, args.effectiveTo, p.authority]);
     if (rows[0]) return fromRow(rows[0]);
   } catch (err) {
@@ -344,7 +357,7 @@ export async function resolveRule(
 ): Promise<RegisteredRule> {
   const { rows } = await db.query<RuleRow>(
     `SELECT ruleset, rule_id, version, rule, grammar_version, legal_authority, scope,
-            effective_from, effective_to, committed_by, committed_at, note
+            effective_from, effective_to, committed_by, committed_at, note, disposition
        FROM rules
       WHERE workspace_id = $1 AND ruleset = $2 AND rule_id = $3
         AND tstzrange(effective_from, effective_to, '[)') @> $4::timestamptz`,
@@ -371,7 +384,7 @@ export async function ruleHistory(
   requireScope(p, 'rules:read');
   const { rows } = await getPool().query<RuleRow>(
     `SELECT ruleset, rule_id, version, rule, grammar_version, legal_authority, scope,
-            effective_from, effective_to, committed_by, committed_at, note
+            effective_from, effective_to, committed_by, committed_at, note, disposition
        FROM rules WHERE workspace_id = $1 AND ruleset = $2 AND rule_id = $3
       ORDER BY effective_from`,
     [p.workspaceId, ruleset, ruleId]);
