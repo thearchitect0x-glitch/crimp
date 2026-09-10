@@ -19,9 +19,10 @@ no authority involved and nobody having won an argument.
 
 ## Why it exists, in one number
 
-Medicare Advantage overturns **80.7%** of appealed denials. Only **6.2%** of
-denials are ever appealed. Nobody can tell you the error rate among the other
-93.8%, because if nobody appealed then nobody looked.
+Medicare Advantage overturned **83.2%** of appealed denials in 2022, and only
+about **10%** of denials were ever appealed (KFF analysis of CMS data). Nobody
+can tell you the error rate among the other ~90%, because if nobody appealed
+then nobody looked.
 
 `lapse` measures that population. It is the only correction channel that does
 not require the affected person to have the resources to fight. Everything else

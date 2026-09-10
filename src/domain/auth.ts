@@ -55,6 +55,13 @@ export const SCOPES = [
   // absent from AGENT_SCOPES, and gated on `principal` on top of the scope:
   // a union is permanent, and permanence is not something a scope conveys.
   'subjects:merge',
+  // Reading a determination back, and the higher bar for reading it back WITH
+  // the values that decided it. Both absent from AGENT_SCOPES: `seal` already
+  // returns the value-free reasons to whoever created the determination, and
+  // an agent that could disclose thresholds could map every cliff in the
+  // policy from inside the workspace it is supposed to be constrained by.
+  'seals:read',
+  'seals:disclose',
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 

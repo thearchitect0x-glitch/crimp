@@ -1,0 +1,238 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Deimos AI LLC
+/**
+ * The examiner's artifact, and the disclosure that is itself on the record.
+ *
+ * The product's central claim is that an examiner can re-run a sealed rule
+ * years later and get the identical answer. That claim was untestable from
+ * outside: there was no way to get the rule, its hash, the grammar it was
+ * evaluated under, and the digests it rested on, out of the system. A
+ * reproducibility promise with no export is a promise nobody can call in.
+ *
+ * WHAT A PROOF CONTAINS AND WHAT IT DOES NOT. The rule as written, its
+ * canonical hash, the grammar version, the reason set, and for every fact the
+ * seal read: its name, type, source, admissibility, when it was asserted, and
+ * `sha256(canonicalize({t, v}))` of the value. NOT the value. An examiner
+ * holding the institution's own records recomputes the digest, compares, and
+ * re-runs the rule; Crimp never held the value to leak.
+ *
+ * WHY DISCLOSURE IS A SEPARATE, RECORDED ACT. See `explain.ts` — the short
+ * version is that the specificity a regulator requires and the probe an
+ * adversary runs are the same request, so it is answered under authority and
+ * written down rather than refused or handed out.
+ */
+import { withTx, getPool, type Db } from '../db/pool.js';
+import { ApiError } from '../lib/errors.js';
+import { rankOf } from './authority.js';
+import { requireScope, type Principal } from './auth.js';
+import { disclose, type DisclosedReason, type Reason } from './explain.js';
+import type { Disposition } from './seal.js';
+import type { Facts, Fact, FactType, Rule } from './rule.js';
+
+/** Reading the values that decided a determination is an operator act. */
+export const DISCLOSURE_AUTHORITY = 'operator';
+
+export interface SealedFact {
+  fact: string;
+  factType: FactType;
+  /** sha256(canonicalize({ t: factType, v: value })). The value itself is nowhere. */
+  valueSha256: string;
+  source: string;
+  admissibility: string;
+  assertedAt: Date;
+}
+
+export interface SealEvent {
+  kind: string;
+  actor: string | null;
+  evidenceSha256: string | null;
+  evidenceClass: string | null;
+  occurredAt: Date;
+}
+
+export interface Proof {
+  sealId: string;
+  scope: string;
+  disposition: Disposition;
+  state: string;
+  rule: Rule;
+  ruleHash: string;
+  grammarVersion: string;
+  sealedBy: string;
+  sealedAt: Date;
+  expiresAt: Date | null;
+  reasons: Reason[];
+  facts: SealedFact[];
+  events: SealEvent[];
+  /** How to check this without trusting Crimp. */
+  verify: {
+    ruleHash: string;
+    valueDigest: string;
+    note: string;
+  };
+}
+
+interface SealRow {
+  id: string; scope: string; disposition: Disposition; state: string; rule: Rule;
+  rule_hash: string; grammar_version: string; sealed_by: string; sealed_at: Date;
+  expires_at: Date | null; reasons: Reason[]; subject_id: string;
+}
+
+async function loadSeal(db: Db, workspaceId: string, sealId: string): Promise<SealRow> {
+  const { rows } = await db.query<SealRow>(
+    `SELECT id, scope, disposition, state, rule, rule_hash, grammar_version, sealed_by,
+            sealed_at, expires_at, reasons, subject_id
+       FROM seals WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, sealId]);
+  const seal = rows[0];
+  if (seal === undefined) {
+    // A cross-tenant read is a 404, never a hint that the record exists
+    // elsewhere. Same rule as everywhere else in this codebase.
+    throw new ApiError(404, 'not_found', 'No such determination.');
+  }
+  return seal;
+}
+
+/**
+ * Everything an examiner needs, and nothing that identifies a person.
+ *
+ * Note what is absent: the subject id. A proof is about a determination, not
+ * about a person, and handing back the internal identity key would make this
+ * endpoint a way to enumerate one workspace's subjects.
+ */
+export async function proof(p: Principal, sealId: string): Promise<Proof> {
+  requireScope(p, 'seals:read');
+  const db = getPool();
+  const seal = await loadSeal(db, p.workspaceId, sealId);
+
+  const { rows: facts } = await db.query<{
+    fact: string; fact_type: FactType; value_sha256: string;
+    source: string; admissibility: string; asserted_at: Date;
+  }>(
+    `SELECT fact, fact_type, value_sha256, source, admissibility, asserted_at
+       FROM seal_facts WHERE seal_id = $1 ORDER BY fact`, [sealId]);
+
+  const { rows: events } = await db.query<{
+    kind: string; actor: string | null; evidence_sha256: string | null;
+    evidence_class: string | null; occurred_at: Date;
+  }>(
+    `SELECT kind, actor, evidence_sha256, evidence_class, occurred_at
+       FROM seal_events WHERE seal_id = $1 ORDER BY occurred_at, id`, [sealId]);
+
+  return {
+    sealId: seal.id,
+    scope: seal.scope,
+    disposition: seal.disposition,
+    state: seal.state,
+    rule: seal.rule,
+    ruleHash: seal.rule_hash,
+    grammarVersion: seal.grammar_version,
+    sealedBy: seal.sealed_by,
+    sealedAt: seal.sealed_at,
+    expiresAt: seal.expires_at,
+    reasons: seal.reasons,
+    facts: facts.map((f) => ({
+      fact: f.fact, factType: f.fact_type, valueSha256: f.value_sha256,
+      source: f.source, admissibility: f.admissibility, assertedAt: f.asserted_at,
+    })),
+    events: events.map((e) => ({
+      kind: e.kind, actor: e.actor, evidenceSha256: e.evidence_sha256,
+      evidenceClass: e.evidence_class, occurredAt: e.occurred_at,
+    })),
+    // Stated in the artifact itself rather than in documentation somebody has
+    // to still be hosting in 2032. A proof that does not say how to check it
+    // is a proof that will not be checked.
+    verify: {
+      ruleHash: 'sha256(canonical JSON of `rule`: object keys sorted, '
+        + 'commutative children of all/any sorted by their canonical form)',
+      valueDigest: 'sha256(canonical JSON of {"t": fact_type, "v": value})',
+      note: 'Recompute each value digest from your own record of the value, compare, then '
+        + 're-run `rule` under grammar_version. Crimp never held the values, so it cannot '
+        + 'have altered them.',
+    },
+  };
+}
+
+export interface Disclosure {
+  sealId: string;
+  reasons: DisclosedReason[];
+  /** The event id this disclosure was recorded as. Asking why is on the record. */
+  recordedAt: Date;
+}
+
+/**
+ * The reasons, with the values that produced them — recorded.
+ *
+ * VALUES COME FROM CURRENT ATTESTATIONS, not from the seal, and that is not a
+ * shortcut. The seal holds digests by design, so the historical value is not
+ * recoverable from anywhere in this system. Each returned reason therefore
+ * carries the digest comparison too: `matchesSeal` says whether the value
+ * being disclosed is the one the determination actually rested on. A notice
+ * built on a fact that has since changed is a different statement, and saying
+ * so is the honest behaviour.
+ */
+export async function disclosure(p: Principal, sealId: string): Promise<Disclosure> {
+  requireScope(p, 'seals:disclose');
+  if (rankOf(p.authority) < rankOf(DISCLOSURE_AUTHORITY)) {
+    throw new ApiError(403, 'insufficient_authority',
+      `Disclosing the values behind a determination requires ${DISCLOSURE_AUTHORITY} `
+      + `authority; this key is ${p.authority}. The values are what turn threshold `
+      + 'discovery from a search into a single call.',
+      { required: DISCLOSURE_AUTHORITY, held: p.authority });
+  }
+
+  return withTx(async (tx) => {
+    const seal = await loadSeal(tx, p.workspaceId, sealId);
+    const names = [...new Set(seal.reasons.map((r) => r.fact))];
+
+    const { rows } = await tx.query<{
+      fact: string; fact_type: FactType; bool_value: boolean | null;
+      int_value: string | number | null; str_value: string | null;
+      source: string; admissibility: string;
+    }>(
+      `SELECT fact, fact_type, bool_value, int_value, str_value, source, admissibility
+         FROM attestations
+        WHERE workspace_id = $1 AND subject_id = $2 AND fact = ANY($3::text[])`,
+      [p.workspaceId, seal.subject_id, names]);
+
+    const facts: Record<string, Fact> = {};
+    const provenance: Record<string, { source: string; admissibility: string }> = {};
+    for (const r of rows) {
+      const value = r.fact_type === 'bool' ? r.bool_value!
+        : r.fact_type === 'str' ? r.str_value! : Number(r.int_value);
+      facts[r.fact] = { type: r.fact_type, value };
+      provenance[r.fact] = { source: r.source, admissibility: r.admissibility };
+    }
+
+    const out = disclose(seal.reasons, facts as Facts, provenance);
+
+    const { rows: rec } = await tx.query<{ occurred_at: Date }>(
+      `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, detail)
+       VALUES ($1,$2,'disclosed',$3,$4::jsonb) RETURNING occurred_at`,
+      [sealId, p.workspaceId, p.authority,
+        // What was revealed, never the values revealed. The record of a
+        // disclosure must not become a second copy of the disclosure.
+        JSON.stringify({ facts: names, key_id: p.keyId })]);
+
+    return { sealId, reasons: out, recordedAt: rec[0]!.occurred_at };
+  });
+}
+
+/** Every disclosure made in this workspace. Who asked why, and when. */
+export async function disclosures(
+  p: Principal, days = 90,
+): Promise<Array<{ sealId: string; actor: string; facts: string[]; occurredAt: Date }>> {
+  requireScope(p, 'insight:read');
+  const { rows } = await getPool().query<{
+    seal_id: string; actor: string; detail: { facts: string[] }; occurred_at: Date;
+  }>(
+    `SELECT seal_id, actor, detail, occurred_at FROM seal_events
+      WHERE workspace_id = $1 AND kind = 'disclosed'
+        AND occurred_at > now() - ($2 || ' days')::interval
+      ORDER BY occurred_at DESC LIMIT 500`,
+    [p.workspaceId, String(days)]);
+  return rows.map((r) => ({
+    sealId: r.seal_id, actor: r.actor,
+    facts: r.detail.facts ?? [], occurredAt: r.occurred_at,
+  }));
+}

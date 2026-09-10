@@ -22,6 +22,8 @@ trustworthy.
   `lapsed`, `tainted` or `expired`.
 - Subject resolution that a weak alias cannot subvert, the degree-bounded
   merge, and authority-signed carve-outs.
+- Structured reasons on every determination, fuzz-verified for sufficiency AND
+  accuracy; the examiner's proof export; and disclosure as a recorded act.
 - Pressure, and pressure-hardening with its safety valve.
 - The three measurements: source reliability, the wrongful-denial quadrant,
   and threshold cliffs.
@@ -50,6 +52,10 @@ below.
 - **The scope DAG.** Scopes are a tree today, so a seal on `money.out` does not
   catch a refund. A DAG is a superset, so every seal written under the tree
   stays valid — widening is safe, which is why this order.
+- **An offline verifier.** The proof export states how to check itself, but
+  nobody should have to write the checker. A tiny published tool that takes a
+  proof and the institution's own values and re-runs the rule is what turns the
+  reproducibility claim from a sentence into something an examiner can run.
 - **MCP tools and a published OpenAPI document**, so an agent can discover the
   surface rather than be told about it.
 - **A metrics export in Operational Report Workbook shape.** CMS takes

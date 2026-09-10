@@ -157,6 +157,18 @@ It is the safe direction — an explicit merge is bounded, authorised and
 recorded; an implicit one is none of those — but it is a real usability cost and
 it is chosen, not accidental.
 
+**A disclosure is gated and recorded, not prevented.** An operator who is
+entitled to produce an adverse action notice can also map exactly where a
+threshold sits, because those are the same request. The control is authority
+plus an audit record, not refusal — refusal would break the legal obligation
+the feature exists to meet. An operator key that leaks is therefore a
+policy-disclosure risk as well as a data one.
+
+**Disclosed values come from CURRENT attestations, not from the seal.** The
+historical value is not stored anywhere, by design, so a notice produced long
+after the determination may cite a value that has since changed. The digest in
+the proof is what pins what the determination actually rested on.
+
 **The correction channel is only as current as the sweep.** A determination
 lapses when the worker reaches it, not the instant a fact changes. An
 attestation or an erasure marks it due so it jumps the queue, but the latency

@@ -4,10 +4,12 @@
  * Cohorts: the measurement the product is for, and the one that could become a
  * weapon.
  *
- * 80.7% of appealed denials are overturned and 6.2% of denials are appealed.
- * The 6.2% are not a random draw. Without cohorts you can measure that errors
- * exist; with them you can measure WHOSE errors go uncorrected, which is the
- * only question those numbers actually raise.
+ * In 2022 Medicare Advantage denied 7.4% of prior authorization requests, about
+ * 10% of those denials were appealed, and 83.2% of the appeals were overturned
+ * (KFF analysis of CMS data). The ~90% who never appealed are not a random
+ * draw. Without cohorts you can measure that errors exist; with them you can
+ * measure WHOSE errors go uncorrected, which is the only question those numbers
+ * actually raise.
  *
  * A system where institutions tag people by attribute is a discrimination tool
  * wearing a fairness label, so the constraints are structural rather than

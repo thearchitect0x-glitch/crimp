@@ -13,6 +13,7 @@ import { newId, sha256Hex, canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
 import { resolveForRead, resolveForWrite } from './subject.js';
+import { reasons, type Reason } from './explain.js';
 import {
   validateRule, canonicalRule, factsReferenced,
   GRAMMAR_VERSION, SUPPORTED_GRAMMAR_VERSIONS,
@@ -67,6 +68,15 @@ export interface SealResult {
   disposition: Disposition;
   ruleHash: string;
   reason: string;
+  /**
+   * The clauses that decided it, value-free.
+   *
+   * Returned to whoever created the determination without any further gate:
+   * every field is a projection of the rule they just submitted, so it
+   * discloses nothing they did not already send. The observed values are a
+   * separate, recorded act — see `disclosure()`.
+   */
+  reasons: Reason[];
   /**
    * When this determination stops standing.
    *
@@ -207,8 +217,9 @@ export async function seal(
     // Replay before doing any work. A retry must be cheap and must not
     // re-resolve subjects or re-evaluate anything.
     const { rows: prior } = await tx.query<{
-      id: string; disposition: Disposition; rule_hash: string; expires_at: Date | null;
-    }>(`SELECT id, disposition, rule_hash, expires_at FROM seals
+      id: string; disposition: Disposition; rule_hash: string;
+      reasons: Reason[]; expires_at: Date | null;
+    }>(`SELECT id, disposition, rule_hash, reasons, expires_at FROM seals
          WHERE workspace_id = $1 AND idempotency_key = $2`,
       [workspaceId, input.idempotencyKey]);
     if (prior[0]) {
@@ -222,6 +233,11 @@ export async function seal(
         sealId: prior[0].id, outcome: 'replayed' as const,
         disposition: prior[0].disposition, ruleHash,
         reason: 'This determination already exists. Returning the original.',
+        // The reasons the ORIGINAL was decided on, not a fresh derivation
+        // against today's facts. A replay must return the determination that
+        // was made, or a retry after an attestation changed would report a
+        // different decision under the same identifier. Same for the expiry.
+        reasons: prior[0].reasons,
         expiresAt: prior[0].expires_at,
       };
     }
@@ -250,20 +266,30 @@ export async function seal(
         sealId: null, outcome: 'not_applicable' as const, expiresAt: null,
         disposition: input.disposition, ruleHash,
         reason: 'The rule did not hold against the attested facts. No determination was created.',
+        // Which clauses failed, so the caller knows why their own rule did not
+        // apply. Nothing is stored: no determination exists to attach it to.
+        reasons: reasons(rule, facts, FALSE),
       };
     }
+
+    // Derived here and stored, because it cannot be re-derived later: knowing
+    // which branch of an `any` fired needs the facts as they were, and those
+    // are kept only as digests.
+    const why = reasons(rule, facts, TRUE);
 
     const sealId = newId('seal');
     await tx.query(
       `INSERT INTO seals (id, workspace_id, subject_id, scope, disposition, rule, rule_hash,
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
                           claw_cooling_off_s, max_uses, idempotency_key, expires_at,
-                          claw_quorum, claw_jurisdiction, last_evaluated_at, evaluation_due)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now(),false)`,
+                          reasons, claw_quorum, claw_jurisdiction,
+                          last_evaluated_at, evaluation_due)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,
+               $17,$18,now(),false)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
-        input.idempotencyKey, expiresAt,
+        input.idempotencyKey, expiresAt, JSON.stringify(why),
         clawRule.quorum ?? 1, clawRule.jurisdiction ?? null],
     );
 
@@ -285,7 +311,7 @@ export async function seal(
     return {
       sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash,
       expiresAt,
-      reason: 'The rule held. The determination is sealed.',
+      reason: 'The rule held. The determination is sealed.', reasons: why,
     };
   });
 }
