@@ -11,6 +11,7 @@ import { getPool } from '../db/pool.js';
 import { reevaluate, type Reevaluation } from '../domain/seal.js';
 import { advanceClocks, resolveMissed } from '../domain/clocks.js';
 import { propagateAdjudications, workspacesWithPendingReversals } from '../domain/systemic.js';
+import { recordDrift, DRIFT } from '../domain/drift.js';
 
 export interface PassResult {
   workspaces: number;
@@ -22,7 +23,17 @@ export interface PassResult {
   clocks: { met: number; missed: number };
   /** cap-06. Rulings propagated, and determinations placed under review, this pass. */
   systemic: { reviews: number; flagged: number };
+  /** cap-09. Drift findings newly recorded this pass. */
+  drift: number;
 }
+
+/**
+ * A drift check is a fortnight of daily rates per rule; once an hour per
+ * workspace is plenty, and a finding is deduplicated per window anyway. Per
+ * replica, which is fine: the dedupe is in the database.
+ */
+const lastDriftCheck = new Map<string, number>();
+const DRIFT_EVERY_MS = 3600e3;
 
 /**
  * A pass is bounded, and that is deliberate.
@@ -37,6 +48,8 @@ export interface PassResult {
 export async function sweepOnce(opts: {
   batchSize?: number;
   maxBatchesPerWorkspace?: number;
+  /** Run the drift check regardless of when it last ran. Tests, mostly. */
+  forceDrift?: boolean;
 } = {}): Promise<PassResult> {
   const batchSize = opts.batchSize ?? 200;
   const maxBatches = opts.maxBatchesPerWorkspace ?? 5;
@@ -61,7 +74,7 @@ export async function sweepOnce(opts: {
              OR (expires_at IS NOT NULL AND expires_at <= now()))`);
 
   const out: PassResult = { workspaces: due.length, examined: 0, changes: [], backlogged: 0,
-    clocks: { met: 0, missed: 0 }, systemic };
+    clocks: { met: 0, missed: 0 }, systemic, drift: 0 };
 
   for (const { workspace_id: ws } of due) {
     let remaining = 0;
@@ -85,6 +98,18 @@ export async function sweepOnce(opts: {
     out.clocks.met += a.met;
     out.clocks.missed += a.missed;
     await resolveMissed(ws);
+  }
+
+  // Drift: only workspaces that evaluated anything in the current window,
+  // and not more than once an hour each.
+  const { rows: active } = await pool.query<{ workspace_id: string }>(
+    `SELECT DISTINCT workspace_id FROM evaluation_log
+      WHERE occurred_at > now() - ($1 || ' hours')::interval`, [String(DRIFT.windowHours)]);
+  for (const { workspace_id: ws } of active) {
+    const last = lastDriftCheck.get(ws) ?? 0;
+    if (!opts.forceDrift && Date.now() - last < DRIFT_EVERY_MS) continue;
+    lastDriftCheck.set(ws, Date.now());
+    out.drift += (await recordDrift(ws)).length;
   }
   return out;
 }

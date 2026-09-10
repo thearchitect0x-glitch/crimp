@@ -518,3 +518,47 @@ rather than optional before any procedural rule may be committed under it
 435.916(b)(1) that "decidable either way" closes the procedural path — a
 substantive denial from facts on file is still a decision on the merits, and
 that is the reading taken here.
+
+## cap-09 · Drift and outage detection · 10 September 2026
+
+**What had to exist first.** Two of the three outcomes left no trace: a rule
+that did not hold created no seal, and a rule that could not be answered
+raised an error. A monitor cannot count what was never written down. So
+every evaluation now leaves one row in `evaluation_log` — workspace, rule
+key, outcome (`yes` / `no` / `unknown`), reason code — **and nothing else**:
+no subject, no facts, no values. The test asserts the table has no column a
+subject could go in. Written after the transaction settles, so a refusal that
+rolled everything back is still counted as the `unknown` it was; a replay is
+not an evaluation and is not counted.
+
+**The measure, as the brief specifies it.** Per rule and metric — the rate
+of `unknown`, of `no`, and of each refusal reason — 14 days of daily rates
+give a mean and a sample standard deviation; the 24-hour window drifts if
+its rate exceeds the **lower** of mean + 3σ and 2 × mean. Two floors the
+brief does not state and a zero baseline makes necessary, declared in
+`DRIFT` and reported here: at least **20 evaluations** in the window (fewer
+is anecdote, not a rate), a move of at least **0.05** absolute (a rule that
+had never returned unknown and returns one today has had a Tuesday, not a
+drift), and at least **3 baseline days**. Engineering parameters, not legal
+ones.
+
+**A finding, never an outcome.** Class `drift`, subject kind `rule`, detail
+carrying baseline, current and threshold. One per rule, metric and window.
+Nothing in the seal path reads this module. The sweep runs the check for
+workspaces that evaluated anything in the window, at most once an hour each.
+
+**Tests.** 407 → 412 (5 integration, synthetic streams with controlled
+timestamps): a feed outage taking unknown from 3.3% to 83% is detected in
+one window on both the outcome and the reason, with the exact threshold; a
+day like every other is not drift; a small move, a thin window and a short
+baseline are not drift; recorded once and reachable from the sweep; the seal
+path writes yes / no / unknown-with-reason and nothing about the person.
+
+**One expectation of mine the test corrected.** With a perfectly steady
+baseline, mean + 3σ *is* the mean, so "whichever is lower" makes the
+threshold strict — which is why `minDelta` exists and is stated.
+
+**Human to confirm.** The three floors; whether `no`-rate drift should be
+reported at all for rules where a rising refusal rate is the intended effect
+of a policy change (the finding will fire on the day the change lands, which
+is arguably the point).

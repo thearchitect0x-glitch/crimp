@@ -35,6 +35,7 @@ import {
 import { loadCatalogue, assertCatalogued, applyGuards, guardsOf } from './catalogue.js';
 import { corrections, favourable, type Remedy } from './remedy.js';
 import { harmOf, harmToStored } from './harm.js';
+import { logEvaluation } from './drift.js';
 import { classify, tierOf, harden, PRESSURE_WINDOW_DAYS, type Pressure } from './lifecycle.js';
 
 export type Disposition = 'bind' | 'permit' | 'commit';
@@ -339,6 +340,29 @@ export async function seal(
   const ruleHash = sha256Hex(canonicalRule(rule));
   const aliases = blindAliases(workspaceId, input.aliases, strengths);
 
+  // cap-09. Every evaluation leaves a subject-free row — outcome and reason,
+  // per rule — because two of the three outcomes otherwise leave nothing a
+  // monitor could count. Written after the transaction settles, so a refusal
+  // that rolled everything back is still counted as the `unknown` it was.
+  const ruleKey = ruleRef === null ? ruleHash.slice(0, 16) : `${ruleRef.ruleset}/${ruleRef.ruleId}`;
+  let result: SealResult;
+  try {
+    result = await sealInTx();
+  } catch (e) {
+    if (e instanceof ApiError && UNDECIDED.has(e.code)) {
+      const guarded = (e.detail as { guarded?: unknown[] } | undefined)?.guarded;
+      await logEvaluation(workspaceId, ruleKey, 'unknown',
+        e.code === 'facts_not_attested' && Array.isArray(guarded) && guarded.length > 0
+          ? 'delivery_unattested' : e.code);
+    }
+    throw e;
+  }
+  if (result.outcome !== 'replayed') {
+    await logEvaluation(workspaceId, ruleKey, result.outcome === 'sealed' ? 'yes' : 'no', null);
+  }
+  return result;
+
+  async function sealInTx(): Promise<SealResult> {
   return withTx(async (tx) => {
     // Replay before doing any work. A retry must be cheap and must not
     // re-resolve subjects or re-evaluate anything.
@@ -488,7 +512,13 @@ export async function seal(
       reason: 'The rule held. The determination is sealed.', reasons: why,
     };
   });
+  }
 }
+
+/** Refusals that mean "not answered", as opposed to "malformed" or "not allowed". */
+const UNDECIDED: ReadonlySet<string> = new Set([
+  'facts_not_attested', 'cross_program_fact_available', 'ex_parte_rule_not_in_force', 'rule_type_mismatch',
+]);
 
 /* ── Lookup: a query, not a gate ─────────────────────────────────────── */
 
