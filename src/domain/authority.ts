@@ -60,8 +60,62 @@ export const QUORUM_WINDOW_SECONDS = 7 * 24 * 3600;
 
 const JURISDICTION = /^[A-Z]{2}(-[A-Z0-9]{1,3})?$/;
 
-/** A day is the default ceiling on how far an agent may put a seal out of reach. */
-export const MAX_COOLING_OFF_SECONDS = 90 * 24 * 3600;
+/**
+ * THE TIME AXIS, which the authority ladder never bounded.
+ *
+ * `validateClawRule` has always bounded WHO may reverse a determination: an
+ * agent may require at most one level above itself, because "an agent that can
+ * put determinations beyond an operator's reach is a denial-of-service weapon
+ * pointed at its own workspace." That reasoning was written down, and it was
+ * enforced on exactly one axis.
+ *
+ * Cooling-off had a single global ceiling of ninety days for every authority,
+ * and a determination's duration had none at all — absent `expires_at` means
+ * forever. So an agent holding nothing but `seals:write` could author a
+ * refusal that never expires and that NOBODY, including a custodian, can lift
+ * for three months. That is the identical weapon the ladder refuses, reached
+ * along the axis nobody checked. (The comment above this constant used to say
+ * "a day" while the constant said ninety; the ladder below is what it should
+ * have said.)
+ *
+ * WHY THESE SHAPES. Cooling-off is the one defence immune to a perfectly
+ * persuasive argument — you cannot talk time into passing — and the cost of it
+ * falls entirely on the person still refused. So the authority that can impose
+ * the longest wait should be the one accountable for the wait: an hour for an
+ * automated process, ninety days only for the top of the ladder. Duration is
+ * the same argument about permanence: an agent should not be able to author a
+ * determination that outlives the quarter.
+ *
+ * The numbers are round because they are policy, not measurement, and a round
+ * number is easier to argue with than a precise-looking one.
+ */
+export interface TimeBound {
+  /** Longest reversal delay this authority may impose. */
+  coolingOffSeconds: number;
+  /** Longest a determination it seals may stand. `null` is unbounded. */
+  maxDurationSeconds: number | null;
+}
+
+const DAY = 24 * 3600;
+
+/**
+ * `custodian` is present for type completeness and is UNREACHABLE through
+ * `seal()`. The claw authority must strictly exceed the sealer, and nothing
+ * exceeds the top of a total order, so a custodian cannot seal anything. That
+ * is the no-self-reversal rule reaching its logical end rather than an
+ * oversight: the highest authority governs the system, it does not decide
+ * cases, because its determinations could never be reversed by anyone. Tested
+ * in `claw-time.test.ts` so it stays a known property.
+ */
+export const TIME_BOUNDS: Record<Authority, TimeBound> = {
+  agent: { coolingOffSeconds: 3600, maxDurationSeconds: 30 * DAY },
+  operator: { coolingOffSeconds: 7 * DAY, maxDurationSeconds: 365 * DAY },
+  principal: { coolingOffSeconds: 30 * DAY, maxDurationSeconds: 5 * 365 * DAY },
+  custodian: { coolingOffSeconds: 90 * DAY, maxDurationSeconds: null },
+};
+
+/** The ceiling for the highest authority. Nothing may exceed it. */
+export const MAX_COOLING_OFF_SECONDS = TIME_BOUNDS.custodian.coolingOffSeconds;
 
 /**
  * Validate a claw rule against the authority that is sealing.
@@ -94,10 +148,14 @@ export function validateClawRule(
   if (!Number.isSafeInteger(claw.coolingOffSeconds) || claw.coolingOffSeconds < 0) {
     throw new ApiError(400, 'invalid_claw_rule', 'Cooling-off must be a non-negative integer of seconds.');
   }
-  if (claw.coolingOffSeconds > MAX_COOLING_OFF_SECONDS) {
+  const bound = TIME_BOUNDS[sealedBy];
+  if (claw.coolingOffSeconds > bound.coolingOffSeconds) {
     throw new ApiError(400, 'invalid_claw_rule',
-      `Cooling-off may be at most ${MAX_COOLING_OFF_SECONDS} seconds.`,
-      { limit: MAX_COOLING_OFF_SECONDS });
+      `A "${sealedBy}" seal may impose at most ${bound.coolingOffSeconds} seconds of `
+      + `cooling-off, not ${claw.coolingOffSeconds}. The wait falls entirely on the person `
+      + 'still refused, so the authority that can impose the longest one is the authority '
+      + 'accountable for it.',
+      { sealedBy, limit: bound.coolingOffSeconds, requested: claw.coolingOffSeconds });
   }
 
   // A sealer may demand only the place its OWN credential is bound to.

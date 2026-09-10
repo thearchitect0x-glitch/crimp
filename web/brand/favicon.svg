@@ -1,0 +1,12 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright 2026 Deimos AI LLC -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none">
+  <title>Crimp</title>
+  <!-- The 16px cut: the pinch alone. Interior strands are dropped, not shrunk. -->
+  <rect width="48" height="48" rx="11" fill="#0B0D0E"/>
+  <g stroke="#F2F4F5" stroke-linecap="round" stroke-linejoin="round" stroke-width="4.4">
+    <path d="M11 14 H18 C22 14 22.5 20.5 24 20.5 C25.5 20.5 26 14 30 14 H37"/>
+    <path d="M11 34 H18 C22 34 22.5 27.5 24 27.5 C25.5 27.5 26 34 30 34 H37"/>
+    <path d="M11 14 V34"/><path d="M37 14 V34"/>
+  </g>
+</svg>

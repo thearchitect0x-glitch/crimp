@@ -173,6 +173,43 @@ export const placeBody = {
   },
 } as const;
 
+/**
+ * A merge presents aliases and evidence. It does NOT take subject ids: a
+ * caller that could name the subjects to merge could union two it never
+ * demonstrated any connection to.
+ */
+export const mergeBody = {
+  type: 'object',
+  required: ['aliases', 'evidence_sha256', 'evidence_class'],
+  additionalProperties: false,
+  properties: {
+    aliases,
+    evidence_sha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    evidence_class: { type: 'string', enum: [...ADMISSIBILITY] },
+  },
+} as const;
+
+export const carveOutBody = {
+  type: 'object',
+  required: ['alias', 'evidence_sha256', 'evidence_class'],
+  additionalProperties: false,
+  properties: {
+    // One alias, by construction. A carve-out detaches a single binding; a
+    // bulk one would be an un-merge, and there is no such thing.
+    alias: {
+      type: 'object',
+      required: ['type', 'value'],
+      additionalProperties: false,
+      properties: {
+        type: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
+        value: { type: 'string', minLength: 1, maxLength: 256 },
+      },
+    },
+    evidence_sha256: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    evidence_class: { type: 'string', enum: [...ADMISSIBILITY] },
+  },
+} as const;
+
 export const clawBody = {
   type: 'object',
   required: ['evidence_sha256', 'evidence_class'],

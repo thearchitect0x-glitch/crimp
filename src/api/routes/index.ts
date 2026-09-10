@@ -3,8 +3,8 @@
 import type { FastifyInstance } from 'fastify';
 import { authorized } from '../app.js';
 import {
-  attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mintKeyBody,
-  windowQuery, errors,
+  attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
+  carveOutBody, mintKeyBody, windowQuery, errors,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
@@ -15,6 +15,7 @@ import { attest } from '../../domain/attest.js';
 import { seal, lookup, exercise, claw } from '../../domain/seal.js';
 import { sourceReliability, quadrant, cliffs } from '../../domain/insight.js';
 import { declareCohort, placeInCohort } from '../../domain/cohort.js';
+import { mergeSubjects, carveOut } from '../../domain/merge.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -42,7 +43,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       aliases: req.body.aliases,
       facts: req.body.facts.map(factFromWire),
     }, await loadStrengths(p.workspaceId));
-    return { subject_id: out.subjectId, count: out.count };
+    // NO SUBJECT ID. It is the join key, and returning it made this endpoint an
+    // identity-linkage oracle: attest one alias, attest another, compare the
+    // two responses, and an agent holding nothing but `attestations:write`
+    // learns whether two identifiers belong to the same human being — which is
+    // information the institution never chose to give it, for the price of two
+    // writes.
+    //
+    // The proof export already withheld it, with a test asserting so and the
+    // comment "a proof is about a determination, not a person". Those two
+    // positions were incompatible and this was the open one. Nothing outside
+    // this process needs the identifier: erasure is domain-internal, and every
+    // caller identifies a subject by presenting aliases.
+    return { count: out.count };
   });
 
   /* ── Seal ────────────────────────────────────────────────────────── */
@@ -115,6 +128,37 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       : { state: out.state };
   });
 
+  /* ── Subjects: the merge, and its only correction ────────────────── */
+  app.post<{ Body: { aliases: unknown; evidence_sha256: string; evidence_class: string } }>(
+    '/subjects/merge', { schema: { body: mergeBody, response: errors } }, async (req) => {
+      const p = await authorized(req, 'subjects:merge');
+      const out = await mergeSubjects(p, {
+        aliases: req.body.aliases,
+        evidenceSha256: req.body.evidence_sha256,
+        evidenceClass: req.body.evidence_class,
+      }, await loadStrengths(p.workspaceId));
+      // Always 200. A merge that found one subject created nothing, and a merge
+      // that absorbed three destroyed rather than created — neither is a 201.
+      return {
+        subject_id: out.subjectId, outcome: out.outcome,
+        absorbed: out.absorbed, alias_count: out.aliasCount,
+      };
+    });
+
+  app.post<{
+    Body: { alias: { type: string; value: string }; evidence_sha256: string; evidence_class: string };
+  }>('/subjects/carve-out', {
+    schema: { body: carveOutBody, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'subjects:merge');
+    const out = await carveOut(p, {
+      alias: req.body.alias,
+      evidenceSha256: req.body.evidence_sha256,
+      evidenceClass: req.body.evidence_class,
+    }, await loadStrengths(p.workspaceId));
+    return { subject_id: out.subjectId, alias_count: out.aliasCount };
+  });
+
   /* ── Cohorts: two ways in, no way out ────────────────────────────── */
   app.post<{ Body: { cohort: string; description?: string | null } }>('/cohorts', {
     schema: { body: cohortBody, response: errors },
@@ -137,9 +181,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       band: req.body.band,
     }, await loadStrengths(p.workspaceId));
     reply.code(201);
-    // The subject id and nothing else. Echoing the band back would make this
-    // endpoint a read path for the value it exists to blind.
-    return { subject_id: out.subjectId };
+    // Neither the band nor the subject id. Echoing the band would make this a
+    // read path for the value it exists to blind; echoing the subject id would
+    // make it the same linkage oracle as attestation, reachable by anyone who
+    // can place a cohort.
+    return { placed: true };
   });
 
   /* ── The measurements ────────────────────────────────────────────── */

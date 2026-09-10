@@ -81,6 +81,7 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
     disposition: r.disposition,
     rule_hash: r.ruleHash,
     reason: r.reason,
+    expires_at: r.expiresAt?.toISOString() ?? null,
   };
 }
 
