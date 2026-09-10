@@ -13,6 +13,8 @@ import { config as loadEnv } from 'dotenv';
 loadEnv({ quiet: true });
 
 const DEV_SECRET = 'dev-secret-do-not-use-in-production';
+/** Bytes 0..31: the seed the test suite and the published vectors sign with. Never a production key. */
+export const TEST_SIGNING_SEED = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 
 function env(name: string, fallback?: string): string {
   const v = process.env[name];
@@ -78,6 +80,9 @@ export function assertProductionSafety(cfg: typeof config = config): void {
   if (cfg.blindSecret === DEV_SECRET) fail.push('BLIND_SECRET is the development default.');
   if (cfg.blindSecret.length < 32) fail.push('BLIND_SECRET is shorter than 32 characters.');
   if (cfg.signingKey === null) fail.push('SIGNING_KEY is not set; records would be unsigned.');
+  else if (cfg.signingKey === TEST_SIGNING_SEED) {
+    fail.push('SIGNING_KEY is the published test seed; every record would be signed with a key printed in the conformance vectors.');
+  }
   if (cfg.blindSecret === cfg.authSecret) {
     fail.push('BLIND_SECRET must differ from AUTH_SECRET — they have different rotation semantics '
       + 'and sharing them makes an auth rotation silently orphan every subject.');

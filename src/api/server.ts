@@ -11,9 +11,13 @@
 import { buildApp } from './app.js';
 import { config, assertProductionSafety } from '../lib/config.js';
 import { migrate } from '../db/migrate.js';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { closePool } from '../db/pool.js';
 
 assertProductionSafety();
+assertRuntimeFiles();
 
 const app = buildApp();
 
@@ -40,3 +44,19 @@ main().catch((err: unknown) => {
   app.log.error({ err }, 'failed to start');
   process.exit(1);
 });
+
+/**
+ * Two things are read from disk at request time and are not under dist/:
+ * the format's home (`web/`, served at `/`) and the independent verifier
+ * (`spec/verifier.mjs`, embedded in a person's copy). An image built without
+ * them starts, answers /healthz, and then 404s the site and 500s the copy.
+ * Refuse to start in production instead; warn elsewhere.
+ */
+function assertRuntimeFiles(): void {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const missing = ['web/index.html', 'spec/verifier.mjs'].filter((f) => !existsSync(join(root, f)));
+  if (missing.length === 0) return;
+  const msg = `runtime files missing from this build: ${missing.join(', ')} - the Dockerfile must COPY web/ and spec/`;
+  if (config.isProduction) { console.error(msg); process.exit(1); }
+  console.warn(msg);
+}

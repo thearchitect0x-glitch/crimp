@@ -61,7 +61,7 @@ async function subjectsBehind(
 }
 
 /** The workspace's declared threshold for what may cause a union. */
-async function thresholdOf(
+export async function thresholdOf(
   tx: pg.PoolClient, workspaceId: string,
 ): Promise<MergeStrength> {
   const { rows } = await tx.query<{ merge_threshold: MergeStrength }>(

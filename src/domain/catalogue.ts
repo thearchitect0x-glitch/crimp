@@ -261,19 +261,26 @@ export function applyGuards(
   catalogue: Catalogue, facts: Facts, referenced: Iterable<string>,
 ): { facts: Facts; withheld: Withheld[] } {
   if (catalogue.size === 0) return { facts, withheld: [] };
-  const out: Record<string, Fact> = { ...facts };
   const withheld: Withheld[] = [];
+  const names = new Set<string>();
   for (const name of referenced) {
     const entry = catalogue.get(name);
     if (entry === undefined || entry.guardedBy === null) continue;
     const guard = facts[entry.guardedBy];
     const observed = guard === undefined ? null : String(guard.value);
     if (observed === entry.guardValue) continue;
-    delete out[name];
+    names.add(name);
     withheld.push({
       fact: name, guardedBy: entry.guardedBy, requires: entry.guardValue!,
       observed, reason: 'delivery_unattested',
     });
   }
+  if (names.size === 0) return { facts, withheld };
+  // The evaluator's view is BUILT from what remains, never a copy with
+  // rule-named keys deleted from it. `name` can only be a catalogued fact
+  // here, so the old shape was safe; this one is safe by construction, and
+  // the scanner (js/remote-property-injection) no longer has to be argued
+  // with.
+  const out: Facts = Object.fromEntries(Object.entries(facts).filter(([n]) => !names.has(n)));
   return { facts: out, withheld };
 }

@@ -7,8 +7,9 @@ coverage
 .github
 test
 docs
-web
 scripts
 *.md
+!web/**/*.md
+!spec/**/*.md
 .env
 .env.*

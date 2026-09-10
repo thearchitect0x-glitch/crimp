@@ -127,3 +127,16 @@ describe('drift', () => {
     assert.equal((await listFindings(A.operator, { class: 'drift' })).length, 0);
   });
 });
+
+describe('the evaluation log', () => {
+  test('is pruned by the sweep past the baseline it feeds', async () => {
+    const ws = await freshWorkspace();
+    await getPool().query(
+      `INSERT INTO evaluation_log (workspace_id, rule_key, outcome, reason, occurred_at) VALUES
+         ($1,'old','yes',null, now() - interval '40 days'), ($1,'recent','yes',null, now() - interval '2 days')`, [ws]);
+    await sweepOnce();
+    const { rows } = await getPool().query<{ rule_key: string }>(
+      'SELECT rule_key FROM evaluation_log WHERE workspace_id = $1', [ws]);
+    assert.deepEqual(rows.map((r) => r.rule_key), ['recent']);
+  });
+});

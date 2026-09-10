@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { closePool } from '../../src/db/pool.js';
+import { closePool, getPool } from '../../src/db/pool.js';
 import { migrate } from '../../src/db/migrate.js';
 import { attest } from '../../src/domain/attest.js';
 import { seal } from '../../src/domain/seal.js';
@@ -65,6 +65,23 @@ describe('a person\'s copy', () => {
       assert.equal(steps.find((s: { step: string }) => s.step === 'signature')?.ok, true);
       assert.equal(steps.find((s: { step: string }) => s.step === 're-evaluation')?.ok, true);
     }
+  });
+
+  test('is issued only against identity-grade identifiers, never resolves through a shared one, and attaches nothing', async () => {
+    const A = await actors();
+    await attest(A.agent, { aliases: person('owner'), facts: [
+      { fact: 'household.income', type: 'int', value: 3000, source: 'state_registry' } ] }, STRENGTHS);
+    // A phone alone (medium) cannot say whose copy this is.
+    await assert.rejects(() => personCopy(A.operator, { aliases: [{ type: 'email', value: 'owner@example.com' }] }, STRENGTHS),
+      (e: unknown) => e instanceof ApiError && e.code === 'identity_required');
+    // A stranger's own card beside the owner's shared email: not the owner's data.
+    await assert.rejects(() => personCopy(A.operator, { aliases: [
+      { type: 'card_fp', value: 'card-stranger' }, { type: 'email', value: 'owner@example.com' } ] }, STRENGTHS),
+    (e: unknown) => e instanceof ApiError && e.code === 'unknown_subject');
+    // And the stranger's card was not bound to the owner by asking.
+    const { rows } = await getPool().query<{ n: string }>(
+      'SELECT count(*) AS n FROM subject_aliases WHERE workspace_id = $1', [A.ws]);
+    assert.equal(Number(rows[0]?.n), 2, 'owner\'s two aliases, nothing else');
   });
 
   test('is an operator\'s act, and only for a person the system knows', async () => {

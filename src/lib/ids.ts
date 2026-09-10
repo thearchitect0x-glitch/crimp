@@ -2,13 +2,23 @@
 // Copyright 2026 Deimos AI LLC
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 
-const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz'; // Crockford-ish, no i/l/o/u
+/**
+ * Crockford-ish, no i/l/o/u. EXACTLY 32 symbols, and that is load-bearing:
+ * a byte masked to its low five bits selects one of 32 uniformly, whereas a
+ * modulo over any size that does not divide 256 favours the low symbols
+ * (CodeQL js/biased-cryptographic-random). The check below turns an edit to
+ * the string into a failure at load rather than a bias nobody measures.
+ */
+export const ID_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
+if (ID_ALPHABET.length !== 32 || new Set(ID_ALPHABET).size !== 32) {
+  throw new Error('ID_ALPHABET must hold exactly 32 distinct symbols');
+}
 
 /** URL-safe, sortable-enough identifier with a type prefix. */
 export function newId(prefix: string, bytes = 16): string {
   const buf = randomBytes(bytes);
   let out = '';
-  for (const b of buf) out += ALPHABET[b % ALPHABET.length];
+  for (const b of buf) out += ID_ALPHABET[b & 31];
   return `${prefix}_${out}`;
 }
 

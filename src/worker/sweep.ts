@@ -100,6 +100,12 @@ export async function sweepOnce(opts: {
     await resolveMissed(ws);
   }
 
+  // The evaluation log is a fortnight of rates, not a history. Rows older
+  // than the baseline plus a margin are read by nothing and are pruned here,
+  // so the table stays the size of the question it answers.
+  await pool.query(`DELETE FROM evaluation_log WHERE occurred_at < now() - ($1 || ' days')::interval`,
+    [String(DRIFT.baselineDays + 7)]);
+
   // Drift: only workspaces that evaluated anything in the current window,
   // and not more than once an hour each.
   const { rows: active } = await pool.query<{ workspace_id: string }>(
