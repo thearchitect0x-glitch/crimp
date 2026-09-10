@@ -4,6 +4,9 @@
  * The app factory. Stateless, so it scales horizontally and is trivially
  * testable through `app.inject` without a socket.
  */
+import fastifyStatic from '@fastify/static';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -195,6 +198,18 @@ export function buildApp(): FastifyInstance {
   });
 
   void app.register(registerRoutes, { prefix: '/v1' });
+
+  /**
+   * The format's home — `web/`, static, no build step. Registered last so
+   * every explicit route above wins over the wildcard; a running Crimp
+   * therefore answers `GET /verify.html` with the browser verifier, and a
+   * person holding a notice has somewhere to go. src/api and dist/api sit
+   * at the same depth, so the same relative path serves both.
+   */
+  void app.register(fastifyStatic, {
+    root: join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'web'),
+    prefix: '/', index: ['index.html'], decorateReply: false,
+  });
 
   return app;
 }

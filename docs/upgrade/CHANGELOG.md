@@ -700,3 +700,36 @@ Other people's data is asserted absent by string search on the whole
 export.
 
 **Tests.** 430 → 432.
+
+## The format's home · 10 September 2026
+
+**What it is, and is not.** A static `web/` directory — the specification
+rendered, the extensions document, the browser verifier, the CLI and the
+vectors — served by the API at `/` after its own routes, and ready to be
+copied to a public host from a separate format repository once the
+provisional is filed. Not a product site; the product's audience is served
+by the deck and the letter until there is a deployment to point at. The
+keys endpoint is deliberately *not* here: `/.well-known/crimp-keys.json` is
+each issuer's own.
+
+**Generated from the sources of truth** by `scripts/site.ts` (`npm run
+site`): a ~120-line markdown converter for exactly the constructs the two
+documents use, a template for the home page whose vector counts come from
+`vectors.json`, and copies of the verifier, CLI and vectors. The committed
+output is asserted equal to a fresh generation by a test, so editing
+`docs/SPEC.md` without regenerating fails the suite.
+
+**`VERIFY_URL`.** Absent, a notice says the record can be checked; set,
+it says where (`…/verify.html`), in text and HTML. Never inside the record
+itself — the record must not depend on a page still being hosted.
+
+**Two things the visual check found.** The spec's §7.0 subsections were
+out of order (a after f) — reordered. And `spec/verifier.html` was stale:
+a 0.1 label and the 0.1 vector set embedded in a 0.2 verifier, so its
+self-test badge counted 24. It now embeds the current vectors, self-tests
+every group the published runner does (37), and a test holds it to the
+vectors and the spec's version. My first replacement of the embedded
+literal cut at the wrong brace and broke the page; found by the browser
+console, fixed with brace matching, and the page verified again by hand.
+
+**Tests.** 432 → 445 (4 site unit, 4 verifier-page unit, 2 e2e, 3 notice).

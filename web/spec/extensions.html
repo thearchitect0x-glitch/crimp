@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Determination Format — extensions in 0.2</title>
+<meta name="description" content="Every field, class, family, finding and error code the 0.2 upgrade added.">
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <a class="wordmark" href="/" aria-label="crimp — home">
+    <svg viewBox="0 0 48 48" width="28" height="28" fill="none" aria-hidden="true">
+      <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.4">
+        <path d="M7 11 H16 C20.5 11 21 19 24 19 C27 19 27.5 11 32 11 H41"/>
+        <path d="M7 37 H16 C20.5 37 21 29 24 29 C27 29 27.5 37 32 37 H41"/>
+        <path d="M7 11 V37"/><path d="M41 11 V37"/>
+      </g>
+      <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
+        <path d="M12 17 Q20 24 24 24" stroke-width="2.6"/><path d="M12 31 Q20 24 24 24" stroke-width="2.6"/>
+        <path d="M24 24 H36" stroke-width="3.2"/>
+      </g>
+    </svg>
+    <span>crimp</span><span class="sep" aria-hidden="true">/</span><span class="dim">determination format</span>
+  </a>
+  <nav aria-label="Site">
+      <a href="/">Home</a>
+      <a href="/verify.html">Verify</a>
+      <a href="/spec/">Specification</a>
+      <a href="/spec/extensions.html" aria-current="page">Extensions</a>
+      <a href="/spec/vectors.json">Vectors</a>
+      <a href="/spec/verify-cli.mjs">CLI</a>
+  </nav>
+</header>
+<main id="main" class="with-toc">
+<nav class="toc" aria-label="Contents"><p class="toc-title">Contents</p><ol><li class="l2"><a href="#1-record-fields-spec-7-0a-f">1 · Record fields (SPEC §7.0a–f)</a></li><li class="l2"><a href="#2-fact-families-and-catalogue-classes">2 · Fact families and catalogue classes</a></li><li class="l3"><a href="#2-1-catalogue-classes">2.1 Catalogue classes</a></li><li class="l3"><a href="#2-2-the-notice-delivery-convention">2.2 The notice-delivery convention</a></li><li class="l3"><a href="#2-3-the-adjudication-family">2.3 The adjudication family</a></li><li class="l3"><a href="#2-4-clocks-not-facts">2.4 Clocks (not facts)</a></li><li class="l2"><a href="#3-finding-classes">3 · Finding classes</a></li><li class="l2"><a href="#4-event-kinds-added">4 · Event kinds added</a></li><li class="l2"><a href="#5-error-codes-added">5 · Error codes added</a></li><li class="l2"><a href="#6-defensive-publication-and-the-timestamp-procedure">6 · Defensive publication, and the timestamp procedure</a></li></ol></nav>
+<article class="prose">
+<h1 id="determination-format-extensions-in-0-2">Determination Format — extensions in 0.2</h1>
+<p><strong>Status: prepared, not published.</strong> This file documents every fact family, finding class, event kind, record field and error code the 0.2 upgrade added, so that a second implementer has the whole surface in one place. It is written to be publishable as a defensive publication; whether and when it is published is a decision for the company, and nothing in the repository publishes it.</p>
+<p>Everything here is <em>additive</em>. A 0.1 record validates unchanged under 0.2 (vector: &quot;a record without rule_ref or as_of is a valid record&quot;), and a 0.1 verifier ignores every new field because none participates in a hash it already checks.</p>
+<hr>
+<h2 id="1-record-fields-spec-7-0a-f">1 · Record fields (SPEC §7.0a–f)</h2>
+<div class="table"><table>
+<thead><tr><th>Field</th><th>Section</th><th>Type</th><th>Hashed?</th><th>Meaning</th></tr></thead>
+<tbody><tr><td><code>as_of</code></td><td>§7.0a</td><td>ISO timestamp or null</td><td>no</td><td>The date the decision is <em>about</em>; selects the rule version; never read by evaluation</td></tr><tr><td><code>rule_ref</code></td><td>§7.0a</td><td>object or null</td><td>no</td><td>Snapshot of the registered rule: <code>ruleset, rule_id, version, legal_authority, effective_from, effective_to</code>. <code>version</code> MUST equal <code>rule_hash</code></td></tr><tr><td><code>facts[].attester</code></td><td>§7.0b</td><td>string or null</td><td>no</td><td>The credential that asserted the fact, as the issuer identifies it</td></tr><tr><td><code>remedy</code></td><td>§7.0d</td><td>object or null</td><td>no</td><td>Every minimal correction set, each fact described by its cell; <code>target</code>, <code>exhaustive</code>, <code>evaluations</code></td></tr><tr><td><code>review_flagged_at</code></td><td>§7.0e</td><td>ISO timestamp or null</td><td>no</td><td>When a ruling against another determination under the same rule placed this one under review</td></tr><tr><td><code>signature</code></td><td>§7.0f</td><td><code>{kid, alg, sig}</code> or null</td><td>—</td><td>Ed25519 over the generic canonical JSON of the sealed core</td></tr></tbody>
+</table></div>
+<p>The <strong>sealed core</strong> (what <code>signature</code> covers) is exactly: <code>seal_id, scope, disposition, rule, rule_hash, grammar_version, sealed_by, sealed_at, expires_at, as_of, rule_ref, reasons, facts, remedy</code>.</p>
+<p>Grammar (§3.x): <strong>constant conclusions are refused</strong> at admission — any subtree that evaluates the same under every assignment in which its facts are present. Exact per single fact; bounded at 65 536 assignments across facts. Admission narrowed; evaluation unchanged; <code>grammar_version</code> stays <code>1</code>. Set operators over booleans are refused (they could never evaluate).</p>
+<hr>
+<h2 id="2-fact-families-and-catalogue-classes">2 · Fact families and catalogue classes</h2>
+<p>Facts remain scalar (<code>bool</code>, <code>int</code>, <code>str</code>, <code>time</code>) with dotted names. The 0.2 upgrade adds no fact <em>type</em>; it adds <strong>conventions</strong> — families of scalar facts under a prefix — and a <strong>catalogue</strong> that declares what a fact is.</p>
+<h3 id="2-1-catalogue-classes">2.1 Catalogue classes</h3>
+<div class="table"><table>
+<thead><tr><th>Class</th><th>Meaning</th><th>Constraint</th></tr></thead>
+<tbody><tr><td><code>plain</code></td><td>An ordinary fact</td><td>—</td></tr><tr><td><code>delivery</code></td><td>A notice's delivery status</td><td><code>str</code>, values fixed to <code>delivered | returned | unknown</code></td></tr><tr><td><code>non_response</code></td><td>&quot;They did not respond / return / appear&quot;</td><td>MUST name a <code>delivery</code> fact as its guard (<code>guarded_by</code>, <code>guard_value</code>, default <code>delivered</code>)</td></tr></tbody>
+</table></div>
+<p>A workspace with any catalogued fact is <strong>closed</strong>: rules and attestations may name only catalogued facts. A synonym for a guarded fact is therefore not detected — it is impossible.</p>
+<h3 id="2-2-the-notice-delivery-convention">2.2 The notice-delivery convention</h3>
+<p>A notice is a prefix, e.g. <code>notice.renewal.*</code>:</p>
+<div class="table"><table>
+<thead><tr><th>Fact</th><th>Type</th><th>Values</th><th>Role</th></tr></thead>
+<tbody><tr><td><code>notice.&lt;name&gt;.delivered_status</code></td><td><code>str</code></td><td><code>delivered | returned | unknown</code></td><td>The guard. <code>unknown</code> is a positive claim by a named source</td></tr><tr><td><code>notice.&lt;name&gt;.channel</code></td><td><code>str</code></td><td><code>mail | e_notice | portal | sms</code> (convention; enforce with <code>allowed_values</code>)</td><td></td></tr><tr><td><code>notice.&lt;name&gt;.sent_at</code></td><td><code>time</code></td><td>epoch ms</td><td></td></tr><tr><td><code>notice.&lt;name&gt;.notice_id</code></td><td><code>str</code></td><td></td><td></td></tr><tr><td><code>notice.&lt;name&gt;.evidence</code></td><td><code>str</code></td><td>e.g. <code>usps_return</code>, <code>ncoa_match</code>, <code>read_receipt</code></td><td></td></tr></tbody>
+</table></div>
+<p>Staleness is the existing fact expiry: attest delivery with an <code>expires_at</code> matching the response window.</p>
+<p><strong>Guard semantics (issuing-system behaviour, §7.0c):</strong> before evaluation, a <code>non_response</code> fact is withheld unless its guard holds. The evaluator is unchanged; Kleene monotonicity keeps the record reproducible; a guard that <em>held</em> is committed to <code>facts[]</code>, a withheld fact is not. Applied on re-evaluation too. Refusal reason: <code>delivery_unattested</code>.</p>
+<h3 id="2-3-the-adjudication-family">2.3 The adjudication family</h3>
+<p>Attested about the appellant by the hearing authority as a named source:</p>
+<div class="table"><table>
+<thead><tr><th>Fact</th><th>Type</th><th>Values</th></tr></thead>
+<tbody><tr><td><code>adjudication.ruling</code></td><td><code>str</code></td><td><code>reversed | affirmed | remanded</code></td></tr><tr><td><code>adjudication.ruleset</code></td><td><code>str</code></td><td>ruleset of the rule the ruling condemns</td></tr><tr><td><code>adjudication.rule_id</code></td><td><code>str</code></td><td>its id</td></tr><tr><td><code>adjudication.pattern</code></td><td><code>str</code></td><td>optional: a fact the rule may not rest on</td></tr><tr><td><code>adjudication.authority</code></td><td><code>str</code></td><td><code>fair_hearing | state_review | court | …</code></td></tr><tr><td><code>adjudication.date</code></td><td><code>time</code></td><td>when the ruling issued</td></tr></tbody>
+</table></div>
+<p>A <code>reversed</code> ruling naming a rule propagates once (see <code>systemic_review</code>). <code>fair_hearing_90_day</code> is met by <code>adjudication.ruling</code>.</p>
+<h3 id="2-4-clocks-not-facts">2.4 Clocks (not facts)</h3>
+<p>A clock is a record-bound object — name, start, due, <code>running | met | missed</code> — that a rule <strong>cannot</strong> read. Seven federal defaults in <code>clocks.config.ts</code>, each <code>TODO(legal-confirm)</code>. A missed clock is a finding.</p>
+<hr>
+<h2 id="3-finding-classes">3 · Finding classes</h2>
+<p>A finding is addressed to the institution, carries <strong>no subject identifier</strong>, and never changes an outcome — there is no code path from <code>findings</code> to a determination's state.</p>
+<div class="table"><table>
+<thead><tr><th>Class</th><th>Subject kind</th><th>Raised by</th><th>Detail</th></tr></thead>
+<tbody><tr><td><code>agency_timeliness</code></td><td><code>clock</code></td><td>the sweep, once per clock, when due passes unmet</td><td>clock, scope, authority, started/due, resolved_at, late_hours</td></tr><tr><td><code>systemic_review</code></td><td><code>rule</code></td><td>the sweep, once per reversed ruling naming a rule</td><td>ruleset, rule_id, pattern, adjudication (authority, date), affected seal ids, count</td></tr><tr><td><code>drift</code></td><td><code>rule</code></td><td>the sweep, at most hourly per workspace, once per rule/metric/window</td><td>metric, baseline (mean, sd, days), current (rate, evaluations), threshold</td></tr></tbody>
+</table></div>
+<p>Drift parameters (engineering, stated): 14-day baseline, 24-hour window, lower of mean + 3σ and 2 × mean, ≥ 20 evaluations, ≥ 0.05 absolute move, ≥ 3 baseline days.</p>
+<hr>
+<h2 id="4-event-kinds-added">4 · Event kinds added</h2>
+<div class="table"><table>
+<thead><tr><th>Kind</th><th>On</th><th>Detail</th></tr></thead>
+<tbody><tr><td><code>systemic_review</code></td><td>each affected determination</td><td>the ruling's identity</td></tr><tr><td><code>lapsed</code> (detail extended)</td><td>a lapsed <code>bind</code></td><td><code>harm{ programme, days_without_coverage, days_owed, window_days, authority, refused_at, reversed_at }</code></td></tr><tr><td><code>sealed</code> (detail extended)</td><td>a procedural determination</td><td><code>ex_parte{ ruleset, rule_id, version, outcome, missing }</code> or <code>{ outcome: &quot;not_declared&quot; }</code></td></tr><tr><td><code>tainted</code> (detail extended)</td><td>a guarded determination</td><td><code>guarded[]</code>: which fact was withheld and why</td></tr></tbody>
+</table></div>
+<hr>
+<h2 id="5-error-codes-added">5 · Error codes added</h2>
+<p><code>constant_conclusion</code>, <code>invalid_citation</code>, <code>rule_window_overlap</code>, <code>unknown_ruleset</code>, <code>unknown_rule</code>, <code>no_rule_in_force</code>, <code>rule_ref_mismatch</code>, <code>rule_scope_mismatch</code>, <code>uncatalogued_fact</code>, <code>catalogue_type_mismatch</code>, <code>catalogue_type_fixed</code>, <code>value_not_allowed</code>, <code>guard_required</code>, <code>guard_not_delivery</code>, <code>unknown_clock</code>, <code>programme_not_configured</code>, <code>language_unavailable</code>, <code>cross_program_fact_available</code>, <code>ex_parte_rule_not_in_force</code>, <code>procedural_needs_registry</code>, <code>source_class_fixed</code>, <code>disposition_fixed_by_rule</code>, <code>rule_has_no_disposition</code>. Each carries a stable <code>code</code>, a sentence that says what to do, and a <code>detail</code> object; agents branch on <code>code</code>.</p>
+<hr>
+<h2 id="6-defensive-publication-and-the-timestamp-procedure">6 · Defensive publication, and the timestamp procedure</h2>
+<p><strong>Why publish the format and not the measurement.</strong> The format — what a determination <em>is</em>, how it is hashed, signed and verified — is worth more open than closed: a second implementation is what makes it a standard, and this document plus <code>docs/SPEC.md</code>, <code>spec/verifier.mjs</code> and <code>spec/vectors/vectors.json</code> is what a second implementer needs. What the company protects is elsewhere and is not described in this file.</p>
+<p><strong>Prior-art timestamping.</strong> The procedure already used for the company's own disclosure documents applies to any file here before it is published:</p>
+<ol><li>Produce the file's SHA-256: <code>shasum -a 256 &lt;file&gt;</code>.</li><li>Anchor it in the Bitcoin blockchain with OpenTimestamps: <code>ots stamp &lt;file&gt;</code> → <code>&lt;file&gt;.ots</code>. The <code>.ots</code> proof is small, free, and needs no account; it becomes verifiable once the calendar's aggregate is mined (typically within hours).</li><li>Upgrade and verify later: <code>ots upgrade &lt;file&gt;.ots</code>, then <code>ots verify &lt;file&gt;.ots</code> against a local or public Bitcoin node — no trust in the calendar server is required.</li><li>Keep the file and its <code>.ots</code> together, unchanged. A changed byte is a different hash and an unrelated proof.</li></ol>
+<p>A file timestamped this way establishes that its content existed no later than the anchoring block's time. That is what a defensive publication needs, and it is the same evidence the invention disclosure already has.</p>
+<p><strong>Nothing in this repository publishes anything.</strong> Publishing — committing this file to a public repository, posting it, or filing it — is a company decision, to be taken after the provisional application is on file, and not before.</p>
+</article>
+</main>
+<footer class="site">
+  <p>The Determination Format is published under the Apache-2.0 licence by Deimos AI LLC.
+     The format is open; the systems that issue records are their issuers' own.
+     <a href="/spec/">Specification</a> · <a href="/spec/extensions.html">Extensions</a> ·
+     <a href="/spec/vectors.json">Vectors</a> · <a href="/spec/verifier.mjs">Verifier source</a></p>
+</footer>
+</body>
+</html>

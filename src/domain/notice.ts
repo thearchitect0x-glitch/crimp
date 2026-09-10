@@ -22,6 +22,7 @@
  * re-derived, so none appears.
  */
 import { getPool } from '../db/pool.js';
+import { config } from '../lib/config.js';
 import { ApiError } from '../lib/errors.js';
 import { requireScope, type Principal } from './auth.js';
 import { proof, disclosure, type Proof } from './record.js';
@@ -66,6 +67,8 @@ export interface Notice {
   valuesDisclosed: boolean;
   /** Fact name → what to call it on the page, from the catalogue where one exists. */
   labels: Record<string, string>;
+  /** Where the record can be checked (the format's home), if the deployment has said. */
+  verifyUrl: string | null;
 }
 
 /* ── Derivation (pure) ───────────────────────────────────────────────── */
@@ -82,6 +85,7 @@ export function deriveNotice(input: {
   clocks?: NoticeClock[];
   catalogue?: Catalogue;
   language?: string;
+  verifyUrl?: string | null;
 }): Notice {
   const p = input.proof;
   const programme = programmeOf(p.scope);
@@ -129,6 +133,7 @@ export function deriveNotice(input: {
     appeal: { ...cfg.appeal, programme: cfg.name },
     valuesDisclosed: input.disclosed != null,
     labels,
+    verifyUrl: input.verifyUrl ?? null,
   };
 }
 
@@ -140,7 +145,7 @@ export interface Labels {
   inForce: string; why: string; facts: string; source: string; remedy: string; remedyAny: string;
   remedyAll: string; clocks: string; appeal: string; appealBy: string; days: string;
   observed: string; needed: string; notCase: string; and: string; or: string; unknownValue: string;
-  reference: string; verify: string; underReview: string;
+  reference: string; verify: string; underReview: string; checkAt: string;
   op: Record<string, string>;
 }
 
@@ -155,6 +160,7 @@ export const LABELS_EN: Labels = {
     + 'number lets anyone with the record check every statement above.',
   underReview: 'This decision is under review following a ruling on the rule it applied. '
     + 'It still stands until it is changed, and you will be told if it is.',
+  checkAt: 'Check it at',
   op: { eq: 'is', ne: 'is not', lt: 'is less than', lte: 'is at most', gt: 'is more than',
     gte: 'is at least', in: 'is one of', nin: 'is not one of' },
 };
@@ -242,7 +248,7 @@ export function renderText(n: Notice, L: Labels = LABELS_EN): string {
   out.push(n.appeal.text);
   out.push(`${L.appealBy} ${n.appeal.days} ${L.days}. ${L.authority}: ${n.appeal.authority}`);
   out.push('', `${L.reference}: ${n.sealId}`);
-  out.push(L.verify);
+  out.push(n.verifyUrl ? `${L.verify} ${L.checkAt} ${n.verifyUrl}/verify.html` : L.verify);
   return out.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n') + '\n';
 }
 
@@ -286,7 +292,9 @@ export function renderHtml(n: Notice, L: Labels = LABELS_EN): string {
   }
   parts.push(`<h2>${esc(L.appeal)}</h2><p>${esc(n.appeal.text)}</p>`
     + `<p>${esc(L.appealBy)} ${n.appeal.days} ${esc(L.days)}. <small>${esc(L.authority)}: ${esc(n.appeal.authority)}</small></p>`);
-  parts.push(`<footer><p>${esc(L.reference)}: <code>${esc(n.sealId)}</code></p><p><small>${esc(L.verify)}</small></p></footer>`);
+  parts.push(`<footer><p>${esc(L.reference)}: <code>${esc(n.sealId)}</code></p><p><small>${esc(L.verify)}`
+    + (n.verifyUrl ? ` ${esc(L.checkAt)} <a href="${esc(n.verifyUrl)}/verify.html">${esc(n.verifyUrl)}/verify.html</a>` : '')
+    + '</small></p></footer>');
   parts.push('</article>');
   return parts.join('\n') + '\n';
 }
@@ -365,6 +373,7 @@ export async function noticeFor(p: Principal, sealId: string, opts: {
     })),
     catalogue: await loadCatalogue(db, p.workspaceId),
     language,
+    verifyUrl: config.verifyUrl,
   });
   if (language !== 'en') {
     const t = await opts.translator?.appealText(notice.programme, language);

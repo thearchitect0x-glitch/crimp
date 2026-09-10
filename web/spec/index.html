@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Determination Format — specification</title>
+<meta name="description" content="The normative specification of the Determination Format.">
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <a class="wordmark" href="/" aria-label="crimp — home">
+    <svg viewBox="0 0 48 48" width="28" height="28" fill="none" aria-hidden="true">
+      <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.4">
+        <path d="M7 11 H16 C20.5 11 21 19 24 19 C27 19 27.5 11 32 11 H41"/>
+        <path d="M7 37 H16 C20.5 37 21 29 24 29 C27 29 27.5 37 32 37 H41"/>
+        <path d="M7 11 V37"/><path d="M41 11 V37"/>
+      </g>
+      <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
+        <path d="M12 17 Q20 24 24 24" stroke-width="2.6"/><path d="M12 31 Q20 24 24 24" stroke-width="2.6"/>
+        <path d="M24 24 H36" stroke-width="3.2"/>
+      </g>
+    </svg>
+    <span>crimp</span><span class="sep" aria-hidden="true">/</span><span class="dim">determination format</span>
+  </a>
+  <nav aria-label="Site">
+      <a href="/">Home</a>
+      <a href="/verify.html">Verify</a>
+      <a href="/spec/" aria-current="page">Specification</a>
+      <a href="/spec/extensions.html">Extensions</a>
+      <a href="/spec/vectors.json">Vectors</a>
+      <a href="/spec/verify-cli.mjs">CLI</a>
+  </nav>
+</header>
+<main id="main" class="with-toc">
+<nav class="toc" aria-label="Contents"><p class="toc-title">Contents</p><ol><li class="l2"><a href="#1-why-this-exists-as-a-separate-document">1 · Why this exists as a separate document</a></li><li class="l2"><a href="#2-terms">2 · Terms</a></li><li class="l2"><a href="#3-the-rule-grammar-normative">3 · The rule grammar (normative)</a></li><li class="l3"><a href="#3-1-what-the-grammar-deliberately-excludes">3.1 What the grammar deliberately excludes</a></li><li class="l3"><a href="#3-2-there-is-no-present-absent-operator">3.2 There is no <code>present</code> / <code>absent</code> operator</a></li><li class="l3"><a href="#3-x-constant-conclusions-0-2-normative">3.x Constant conclusions (0.2, normative)</a></li><li class="l2"><a href="#4-three-valued-evaluation-normative">4 · Three-valued evaluation (normative)</a></li><li class="l3"><a href="#4-1-why-unknown-is-the-whole-design">4.1 Why <code>unknown</code> is the whole design</a></li><li class="l2"><a href="#5-canonical-form-and-the-rule-hash-normative">5 · Canonical form and the rule hash (normative)</a></li><li class="l2"><a href="#6-fact-commitments-normative">6 · Fact commitments (normative)</a></li><li class="l3"><a href="#6-1-commitment-agility">6.1 Commitment agility</a></li><li class="l2"><a href="#7-the-determination-record">7 · The determination record</a></li><li class="l3"><a href="#7-0a-optional-fields-added-in-0-2-a-registered-rule-and-the-date-it-is-about">7.0a Optional fields added in 0.2 — a registered rule, and the date it is about</a></li><li class="l3"><a href="#7-0b-optional-field-added-in-0-2-the-attester-facts">7.0b Optional field added in 0.2 — the attester (facts[])</a></li><li class="l3"><a href="#7-0c-issuing-system-behaviour-that-does-not-appear-in-the-record-guards">7.0c Issuing-system behaviour that does NOT appear in the record — guards</a></li><li class="l3"><a href="#7-0d-optional-field-added-in-0-2-the-remedy">7.0d Optional field added in 0.2 — the remedy</a></li><li class="l3"><a href="#7-0e-optional-field-added-in-0-2-under-review">7.0e Optional field added in 0.2 — under review</a></li><li class="l3"><a href="#7-0f-optional-field-added-in-0-2-the-issuer-s-signature">7.0f Optional field added in 0.2 — the issuer's signature</a></li><li class="l3"><a href="#7-1-reasons">7.1 Reasons</a></li><li class="l2"><a href="#8-verification-procedure-normative">8 · Verification procedure (normative)</a></li><li class="l2"><a href="#9-versioning">9 · Versioning</a></li><li class="l2"><a href="#10-what-this-format-does-not-do">10 · What this format does not do</a></li><li class="l2"><a href="#10a-conformance">10a · Conformance</a></li><li class="l2"><a href="#11-implementations">11 · Implementations</a></li></ol></nav>
+<article class="prose">
+<h1 id="the-determination-format">The Determination Format</h1>
+<p><strong>Version 0.2 · draft · 9 September 2026</strong></p>
+<p>A determination is a record that a named rule was applied to named facts and produced a stated outcome, sealed before the outcome was known, and re-runnable by anyone holding the facts.</p>
+<p>This document specifies the format and the verification procedure. It is written so that a third party can implement a verifier <strong>without access to any Crimp source code</strong>, and it is published for that purpose.</p>
+<blockquote><p><strong>Status.</strong> Deliberately published as prior art. Anyone may implement it, verify against it, or build on it. The format is not patented and will not be patented — a specification nobody may implement is not a specification. Corrections and competing implementations are the point.</p></blockquote>
+<hr>
+<h2 id="1-why-this-exists-as-a-separate-document">1 · Why this exists as a separate document</h2>
+<p>An institution making an automated adverse decision is, in several jurisdictions, already obliged to say why:</p>
+<ul><li><strong>ECOA / Regulation B</strong> requires the specific principal reasons for an adverse action. CFPB Circular 2022-03 states that a complex algorithm does not excuse a creditor from giving them.</li><li><strong>CMS-0057-F</strong> requires a specific denial reason on prior authorization.</li><li><strong>Goldberg v. Kelly</strong>, 397 U.S. 254 (1970), requires <em>&quot;timely and adequate notice detailing the reasons for termination&quot;</em> before benefits are ended.</li></ul>
+<p>None of those obligations is met by an audit log, because an audit log records what a system <em>did</em> rather than demonstrating that what it did <strong>follows from the rule it claims to have applied.</strong> The difference is the whole subject of this document.</p>
+<h2 id="2-terms">2 · Terms</h2>
+<div class="table"><table>
+<thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+<tbody><tr><td><strong>Subject</strong></td><td>The person or entity a determination concerns. Never identified in this format</td></tr><tr><td><strong>Fact</strong></td><td>A typed value asserted by a named source with a declared admissibility</td></tr><tr><td><strong>Rule</strong></td><td>A bounded boolean expression over facts. §3</td></tr><tr><td><strong>Determination</strong></td><td>A sealed record of one rule applied to one subject's facts</td></tr><tr><td><strong>Verifier</strong></td><td>Any party holding the facts, checking a determination without trusting its issuer</td></tr></tbody>
+</table></div>
+<h2 id="3-the-rule-grammar-normative">3 · The rule grammar (normative)</h2>
+<p>A rule is JSON. Exactly one of four shapes:</p>
+<pre><code>rule      := comparison | { &quot;all&quot;: [rule, ...] } | { &quot;any&quot;: [rule, ...] } | { &quot;not&quot;: rule }
+comparison:= { &quot;fact&quot;: string, &quot;op&quot;: op, &quot;value&quot;: literal }
+op        := &quot;eq&quot; | &quot;ne&quot; | &quot;lt&quot; | &quot;lte&quot; | &quot;gt&quot; | &quot;gte&quot; | &quot;in&quot; | &quot;nin&quot;
+literal   := boolean | integer | string | [integer|string, ...]</code></pre>
+<p><strong>Limits.</strong> Depth ≤ 8. Nodes ≤ 64. Set members ≤ 64. Fact names match <code>^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,3}$</code>, at most 96 characters. Strings at most 256 characters.</p>
+<p><strong><code>all</code> and <code>any</code> MUST NOT be empty.</strong> A vacuously true rule is a decision about nobody, stated as a decision about somebody.</p>
+<h3 id="3-1-what-the-grammar-deliberately-excludes">3.1 What the grammar deliberately excludes</h3>
+<p>No loops, no recursion, no user-defined functions, <strong>no arithmetic</strong>, no external calls, and no clock. Evaluation is a bounded walk over a bounded tree, so it is <strong>total</strong>: every rule terminates and yields one of exactly three values.</p>
+<p>This is the load-bearing constraint. A rule that needs more than this is not a rule, it is a program, and a program cannot be re-run in ten years with confidence that it means what it meant. It also has a consequence worth stating plainly: <strong>an implementation of this format cannot compute eligibility.</strong> It can verify that a computed value satisfied a stated threshold. Deriving the value is another system's job.</p>
+<h3 id="3-2-there-is-no-present-absent-operator">3.2 There is no <code>present</code> / <code>absent</code> operator</h3>
+<p>This is the most consequential omission and it is deliberate.</p>
+<p>A rule cannot ask whether a fact exists. To act on a fact being false, the false value <strong>must be attested</strong> — <code>renewal_form_received = false</code>, carrying a source and an admissibility class that somebody is accountable for.</p>
+<p>Without this, a system cannot distinguish <em>&quot;we checked and it is not there&quot;</em> from <em>&quot;we never looked&quot;</em>, and the second silently satisfies the first. In 2024 roughly <strong>69% of 25.2 million Medicaid disenrollments were procedural</strong> — people removed for missing paperwork rather than for any determination of ineligibility. That is absence of evidence being treated as evidence of absence, at national scale.</p>
+<p>This format does not make that impossible. <strong>It makes it attributable.</strong> An institution must assert the absence as a positive, sourced claim rather than inferring it from silence.</p>
+<h3 id="3-x-constant-conclusions-0-2-normative">3.x Constant conclusions (0.2, normative)</h3>
+<p>A rule, or any subtree of it, that evaluates to the same truth under <strong>every</strong> assignment in which the facts it names are present decides nothing about those facts. It can only test whether they were attested — the presence operator this grammar withholds, rebuilt from parts:</p>
+<pre><code>any[ a = 1, a ≠ 1 ]        true  whenever a is attested, whatever it says
+all[ a = 1, a ≠ 1 ]        false whenever a is attested
+any[ a = true, a = false ] a bool has two values, and this names both
+any[ a &lt; 5, a &gt; 3 ]        covers every integer</code></pre>
+<p>An implementation MUST refuse such a rule at admission. Detection is exact and bounded:</p>
+<ul><li>For each fact a subtree names, its literals partition the fact's values into finitely many cells no comparison can distinguish — for an integer literal <em>n</em>, the cells below, at and above it (<em>n</em>−1, <em>n</em>, <em>n</em>+1 represent them all); for strings, each literal and one string that is none of them; for booleans, both. Evaluating one representative per cell is exact.</li><li>A subtree over <strong>one</strong> fact is always checked.</li><li>A subtree over several facts is checked when the product of its cell counts is at most <strong>65 536</strong>; above that it is not checked. The bound is part of the format so that two implementations refuse the same rules.</li><li>A subtree whose literals for one fact are of mixed kinds cannot be judged and is not refused here (it cannot evaluate against any typed fact either).</li></ul>
+<p>This narrows <em>admission</em>, not <em>evaluation</em>. A rule sealed under 0.1 evaluates identically under 0.2 and remains verifiable; it would be refused if resubmitted. Vectors: <code>refuse</code> (five added) and <code>admit</code> (new group).</p>
+<h2 id="4-three-valued-evaluation-normative">4 · Three-valued evaluation (normative)</h2>
+<p>Values are <code>true</code>, <code>false</code>, <code>unknown</code>. Kleene's strong three-valued logic.</p>
+<p><strong>A fact that is absent, or whose attestation has expired, evaluates to <code>unknown</code> — never to <code>false</code>.</strong></p>
+<div class="table"><table>
+<thead><tr><th></th><th><code>all</code></th><th><code>any</code></th><th><code>not</code></th></tr></thead>
+<tbody><tr><td>any child <code>false</code></td><td><code>false</code></td><td>—</td><td>—</td></tr><tr><td>any child <code>true</code></td><td>—</td><td><code>true</code></td><td>—</td></tr><tr><td>else any child <code>unknown</code></td><td><code>unknown</code></td><td><code>unknown</code></td><td><code>unknown</code></td></tr><tr><td>else</td><td><code>true</code></td><td><code>false</code></td><td>invert</td></tr></tbody>
+</table></div>
+<p>A comparison whose literal cannot be compared with the fact's declared type is an <strong>error</strong>, not <code>unknown</code>. Missing data is a fact about the world; comparing a string to an integer is a mistake in the rule, and it must be refused loudly rather than absorbed.</p>
+<h3 id="4-1-why-unknown-is-the-whole-design">4.1 Why <code>unknown</code> is the whole design</h3>
+<p><code>unknown</code> is not an error state to be eliminated. It is the answer that says <em>we do not know</em>, and preserving it is what separates this format from a boolean one.</p>
+<p>It is also, in at least one jurisdiction, a legal trigger. <strong>42 CFR 435.916(b)(1)</strong> requires a state to attempt Medicaid renewal from data already in its possession <em>before</em> requesting anything from the beneficiary. Under this format:</p>
+<div class="table"><table>
+<thead><tr><th>Re-evaluation</th><th>Meaning</th><th>Permitted action</th></tr></thead>
+<tbody><tr><td><code>true</code></td><td>Still eligible on data held</td><td>Renew. Do not contact the person</td></tr><tr><td><code>false</code></td><td>A determination, with reasons</td><td>Act, and give the reasons</td></tr><tr><td><strong><code>unknown</code></strong></td><td><strong>Cannot determine from data held</strong></td><td><strong>This — and only this — is when you may lawfully ask</strong></td></tr></tbody>
+</table></div>
+<h2 id="5-canonical-form-and-the-rule-hash-normative">5 · Canonical form and the rule hash (normative)</h2>
+<pre><code>rule_hash = SHA-256( UTF-8( canonical(rule) ) )</code></pre>
+<p><code>canonical(rule)</code> is JSON with:</p>
+<ol><li>Object keys sorted by Unicode code point.</li><li>No insignificant whitespace.</li><li>Children of <code>all</code> and <code>any</code> sorted by their own canonical form — these operators are commutative, so two rules differing only in child order are the same rule and MUST produce the same hash.</li><li><code>in</code> / <code>nin</code> set members sorted and de-duplicated.</li><li>Integers rendered without exponent or leading zeros. <strong>Non-integer numbers are not permitted anywhere in the grammar</strong>, so no float formatting question arises. This is why.</li><li>Strings normalised to Unicode NFC.</li></ol>
+<h2 id="6-fact-commitments-normative">6 · Fact commitments (normative)</h2>
+<p>A determination records a commitment to each fact it read, never the value:</p>
+<pre><code>value_sha256 = SHA-256( UTF-8( canonical({ &quot;t&quot;: fact_type, &quot;v&quot;: value }) ) )</code></pre>
+<p><code>fact_type</code> is one of <code>bool</code>, <code>int</code>, <code>str</code>, <code>time</code>. <code>time</code> is an integer of epoch milliseconds. String values are NFC-normalised before hashing.</p>
+<p><strong>The issuer does not retain the value.</strong> A verifier holding the institution's own record recomputes the digest and compares. This is what makes the format verifiable <em>without</em> trusting the issuer, and it is why erasure of the underlying facts does not invalidate any determination.</p>
+<h3 id="6-1-commitment-agility">6.1 Commitment agility</h3>
+<p>Every commitment carries <code>commitment_scheme</code>, currently <code>&quot;sha256-v1&quot;</code>. A verifier MUST refuse a scheme it does not implement rather than guess.</p>
+<p>This exists because commitments cannot be recomputed later — the values are gone. A format that hard-codes one hash forecloses every future verification technique, including proving correct application in zero knowledge, which requires a commitment the prover can work with. The scheme is versioned so that option stays open; it is not exercised yet.</p>
+<h2 id="7-the-determination-record">7 · The determination record</h2>
+<pre><code class="language-jsonc">{
+  &quot;seal_id&quot;: &quot;seal_…&quot;,
+  &quot;scope&quot;: &quot;refund.issue&quot;,
+  &quot;disposition&quot;: &quot;bind&quot; | &quot;permit&quot; | &quot;commit&quot;,
+  &quot;state&quot;: &quot;sealed&quot; | &quot;tainted&quot; | &quot;lapsed&quot; | &quot;expired&quot; | &quot;clawed&quot;,
+  &quot;rule&quot;: { … },
+  &quot;rule_hash&quot;: &quot;…64 hex…&quot;,
+  &quot;grammar_version&quot;: &quot;1&quot;,
+  &quot;commitment_scheme&quot;: &quot;sha256-v1&quot;,
+  &quot;sealed_by&quot;: &quot;agent&quot; | &quot;operator&quot; | &quot;principal&quot; | &quot;custodian&quot;,
+  &quot;sealed_at&quot;: &quot;2026-09-07T12:00:00.000Z&quot;,
+  &quot;expires_at&quot;: &quot;2026-10-07T12:00:00.000Z&quot; | null,
+  &quot;reasons&quot;: [
+    { &quot;path&quot;: &quot;all[1]&quot;, &quot;fact&quot;: &quot;prior_refunds_90d&quot;, &quot;op&quot;: &quot;lt&quot;,
+      &quot;value&quot;: 3, &quot;truth&quot;: &quot;true&quot;, &quot;polarity&quot;: &quot;direct&quot; }
+  ],
+  &quot;facts&quot;: [
+    { &quot;fact&quot;: &quot;prior_refunds_90d&quot;, &quot;fact_type&quot;: &quot;int&quot;,
+      &quot;value_sha256&quot;: &quot;…&quot;, &quot;source&quot;: &quot;core_ledger&quot;,
+      &quot;admissibility&quot;: &quot;internal&quot;, &quot;asserted_at&quot;: &quot;…&quot; }
+  ],
+  &quot;events&quot;: [ { &quot;kind&quot;: &quot;sealed&quot;, &quot;actor&quot;: &quot;agent&quot;, &quot;occurred_at&quot;: &quot;…&quot; } ]
+}</code></pre>
+<p><strong>There is no subject identifier, by design.</strong> A determination is about a decision, not about a person. Including one would make a set of determinations a way to enumerate a population.</p>
+<h3 id="7-0a-optional-fields-added-in-0-2-a-registered-rule-and-the-date-it-is-about">7.0a Optional fields added in 0.2 — a registered rule, and the date it is about</h3>
+<p>Both fields are <strong>optional</strong>. A record without them is a valid 0.2 record; a 0.1 verifier that ignores them verifies a 0.2 record identically, because neither participates in any hash or in evaluation.</p>
+<pre><code class="language-jsonc">{
+  // The date this determination is ABOUT. Not always when it was made:
+  // retroactive eligibility looks back three months. Null means &quot;as of
+  // sealed_at&quot;. Never read by evaluation — time enters only as a fact.
+  &quot;as_of&quot;: &quot;2026-06-01T00:00:00.000Z&quot; | null,
+
+  // A snapshot of the registered rule this was sealed under, if any.
+  // `rule` and `rule_hash` above remain the source of truth for verification;
+  // this exists to CITE and to GROUP, never to dereference.
+  &quot;rule_ref&quot;: {
+    &quot;ruleset&quot;: &quot;medicaid&quot;,
+    &quot;rule_id&quot;: &quot;renewal.income_test&quot;,
+    &quot;version&quot;: &quot;…64 hex — equal to rule_hash…&quot;,
+    &quot;legal_authority&quot;: &quot;42 CFR 435.916(b)&quot;,
+    &quot;effective_from&quot;: &quot;2026-01-01T00:00:00.000Z&quot;,
+    &quot;effective_to&quot;: null
+  } | null
+}</code></pre>
+<p><strong><code>rule_ref.version</code> MUST equal <code>rule_hash</code></strong> when both are present. A verifier that checks the snapshot checks this and nothing else about it — the registry is an institution's own record, and a proof MUST remain verifiable if that registry no longer exists.</p>
+<p><strong>Why the version is the hash.</strong> A registered rule is therefore immutable by construction: you cannot edit a hash, only commit a successor with a new effective window. Two institutions that commit identical policy text share one version, so <em>&quot;how often does this policy shape lapse&quot;</em> can be asked across institutions without sharing a fact about any person.</p>
+<p><strong>Which version governs.</strong> Selection by <code>as_of</code> happens before evaluation, in the issuing system. Re-evaluation re-runs the rule <strong>as sealed</strong> — the decision-date version — because the rule is inline. A law that applies retroactively would require substituting a successor at re-evaluation, which changes <code>rule_hash</code> and therefore what the record <em>is</em>; that is a format decision this version does not make. See <code>docs/upgrade/BLOCKERS.md</code>.</p>
+<h3 id="7-0b-optional-field-added-in-0-2-the-attester-facts">7.0b Optional field added in 0.2 — the attester (facts[])</h3>
+<p>Each entry of <code>facts[]</code> MAY carry <code>attester</code>: the credential that asserted the fact, as the issuer identifies it (an opaque string, never a person's name). Absent or <code>null</code> in 0.1 records. Not part of any hash.</p>
+<h3 id="7-0c-issuing-system-behaviour-that-does-not-appear-in-the-record-guards">7.0c Issuing-system behaviour that does NOT appear in the record — guards</h3>
+<p>An issuing system MAY withhold a fact from evaluation until another fact holds — Crimp withholds a <em>non-response</em> fact until the corresponding <em>delivery</em> fact says <code>delivered</code>. This is invisible in the format on purpose, and safe because of §4: strong Kleene evaluation is monotone in information. A determination that sealed <code>true</code> with a fact withheld is <code>true</code> under every value of that fact, so an examiner who holds the value re-runs the rule and reproduces the outcome. A withheld fact is not in <code>facts[]</code>, because the evaluator did not read it; a guard that <em>held</em> IS in <code>facts[]</code>, although the rule does not name it, because the determination rested on it — an examiner sees the delivery evidence committed beside the non-response it unlocked. Refusals caused by a guard are reported to the caller as <code>delivery_unattested</code> and are never sealed.</p>
+<h3 id="7-0d-optional-field-added-in-0-2-the-remedy">7.0d Optional field added in 0.2 — the remedy</h3>
+<p>A record MAY carry <code>remedy</code>: every <strong>minimal</strong> set of fact changes that would move the rule to <code>target</code>. For a refusal, <code>target</code> is <code>false</code> — what would make it lapse. It is derived from the rule and the facts' <em>cells</em>, never their values, so it discloses nothing the rule itself does not.</p>
+<pre><code class="language-jsonc">&quot;remedy&quot;: {
+  &quot;target&quot;: &quot;false&quot;,
+  &quot;exhaustive&quot;: true,        // false if the search stopped at the bound
+  &quot;evaluations&quot;: 6,
+  &quot;sets&quot;: [                  // each set is one minimal remedy, facts sorted
+    [ { &quot;fact&quot;: &quot;prior_refunds_90d&quot;, &quot;fact_type&quot;: &quot;int&quot;,
+        &quot;constraints&quot;: [     // every clause on this fact, with the truth it must take
+          { &quot;path&quot;: &quot;all[1]&quot;, &quot;op&quot;: &quot;lt&quot;, &quot;value&quot;: 3, &quot;truth&quot;: &quot;false&quot; } ] } ]
+  ]
+} | null</code></pre>
+<p><strong>Semantics (normative).</strong> A <em>cell</em> of a fact is a maximal set of values on which every clause of the rule naming that fact has the same truth. A correction set is a set of facts together with one cell each such that placing those facts in those cells moves the rule to <code>target</code>; it is <em>minimal</em> if no correction set of smaller size exists. <code>sets</code> MUST contain every minimal correction set and nothing else, with facts sorted by name and sets sorted by their canonical JSON. <code>constraints</code> describes the cell by the truth of each clause on that fact.</p>
+<p><strong>Bound.</strong> Sizes are searched in increasing order, one evaluation per distinct cell per fact (two representatives in one cell are one move), and the search stops after <strong>65 536</strong> evaluations. If it stops before the first size with a witness is completed, <code>exhaustive</code> is <code>false</code> and <code>sets</code> holds what was found. The bound is part of the format so that two implementations report the same thing.</p>
+<p><strong>Verification.</strong> A verifier holding the values MAY check <em>effectiveness</em>: for each set, choose any value in each described cell, re-evaluate, and require <code>target</code>. Minimality is a search property; a verifier that does not re-run the search does not claim it.</p>
+<h3 id="7-0e-optional-field-added-in-0-2-under-review">7.0e Optional field added in 0.2 — under review</h3>
+<p>A record MAY carry <code>review_flagged_at</code>: when a ruling against another determination made under the same rule placed this one under review. The determination's <code>state</code> is unchanged by it — review is visibility, not outcome — and a <code>systemic_review</code> event on the record says which ruling. Null or absent if never. Not part of any hash.</p>
+<h3 id="7-0f-optional-field-added-in-0-2-the-issuer-s-signature">7.0f Optional field added in 0.2 — the issuer's signature</h3>
+<p>A record MAY carry <code>signature</code>:</p>
+<pre><code class="language-jsonc">&quot;signature&quot;: { &quot;kid&quot;: &quot;…16 hex…&quot;, &quot;alg&quot;: &quot;ed25519&quot;, &quot;sig&quot;: &quot;…base64, 64 bytes…&quot; } | null</code></pre>
+<p><strong>What is signed.</strong> The <em>sealed core</em>: the object with exactly these members of the record, absent ones as <code>null</code> —</p>
+<p><code>seal_id, scope, disposition, rule, rule_hash, grammar_version, sealed_by, sealed_at, expires_at, as_of, rule_ref, reasons, facts, remedy</code></p>
+<p>— serialised as <strong>generic canonical JSON</strong>: object keys sorted by code point, strings NFC-normalised, <code>undefined</code> members dropped, non-finite numbers <code>null</code>, no whitespace. This is <em>not</em> the §5 rule canonical form: <code>rule</code> is signed <strong>as written</strong>, so a verifier does not re-canonicalise it. Nothing that moves is signed — not <code>state</code>, not <code>events</code>, not <code>review_flagged_at</code> — so a signature made at seal time stays valid for the life of the record.</p>
+<p><strong>Keys.</strong> Ed25519. <code>kid</code> is the first 16 hex of SHA-256 of the raw 32-byte public key. An issuer publishes <code>{ &quot;keys&quot;: [{ &quot;kid&quot;, &quot;alg&quot;, &quot;public_key&quot; }] }</code> at <code>/.well-known/crimp-keys.json</code>; a verifier MUST check against keys it obtained and kept itself, never keys fetched from a URL inside the record.</p>
+<p><strong>Verification (§8 step 8).</strong> If <code>signature</code> is present and the verifier holds a key for its <code>kid</code>: recompute the core, verify. If no key is held, report <em>unverifiable</em>, not invalid. If <code>signature</code> is absent, report <em>unsigned</em>: an unsigned record is internally consistent at best and says nothing about who issued it. Vectors: <code>signature</code> (new group).</p>
+<h3 id="7-1-reasons">7.1 Reasons</h3>
+<p>A reason locates a clause of the rule that carried the outcome. <code>path</code> is its position (<code>all[1]</code>, <code>any[0].not.all[2]</code>). <code>polarity</code> is <code>negated</code> when the clause sits under an <strong>odd</strong> number of <code>not</code> segments — a consumer may verify this by counting, and <code>not(not(x))</code> is <code>direct</code>.</p>
+<p>Two properties MUST hold and SHOULD be tested by any implementation:</p>
+<ul><li><strong>Sufficiency</strong> — restricting the facts to those the reasons name yields the same outcome. Catches under-reporting.</li><li><strong>Accuracy</strong> — every reason's own truth equals the outcome it is offered for, or its negation under <code>negated</code> polarity. Catches over-reporting.</li></ul>
+<p>Accuracy is the one that matters and the one that is easy to miss. Sufficiency is monotone: adding wrong reasons only keeps <em>more</em> facts, so it can never fail in the direction of over-reporting. An implementation checking only sufficiency will happily report that somebody was refused because of a condition they actually satisfied — which is itself an inaccurate-reason violation.</p>
+<h2 id="8-verification-procedure-normative">8 · Verification procedure (normative)</h2>
+<p>A verifier holding a determination and the institution's own record of the facts:</p>
+<ol><li><strong>Check the grammar version.</strong> Refuse an unsupported one. Do not guess.</li><li><strong>Check the commitment scheme.</strong> Same.</li><li><strong>Recompute <code>rule_hash</code></strong> from <code>rule</code> by §5. It MUST match. If <code>rule_ref</code> is present (§7.0a), <code>rule_ref.version</code> MUST equal <code>rule_hash</code>. Nothing else about <code>rule_ref</code> is verifiable without the issuer's registry, and a verifier MUST NOT require that registry to exist.</li><li><strong>Recompute each <code>value_sha256</code></strong> from the held values by §6. A mismatch means the value changed or the record is wrong — the verifier reports it and does not attempt to decide which.</li><li><strong>Re-evaluate</strong> <code>rule</code> against the held values by §4.</li><li><strong>Compare</strong> the result to <code>state</code>:</li></ol>
+<div class="table"><table>
+<thead><tr><th>Re-evaluation</th><th>Consistent states</th></tr></thead>
+<tbody><tr><td><code>true</code></td><td><code>sealed</code>, <code>clawed</code>, <code>expired</code></td></tr><tr><td><code>false</code></td><td><code>lapsed</code>, <code>clawed</code>, <code>expired</code></td></tr><tr><td><code>unknown</code></td><td><code>tainted</code>, <code>clawed</code>, <code>expired</code></td></tr></tbody>
+</table></div>
+<ol><li><strong>Check the reasons</strong> against §7.1.</li><li><strong>Check the signature</strong> against §7.0f, under a key the verifier holds.</li></ol>
+<p><code>clawed</code> and <code>expired</code> are consistent with any outcome: the first records a person having overruled, the second the determination having run out, and neither claims anything about the rule.</p>
+<h2 id="9-versioning">9 · Versioning</h2>
+<p><code>grammar_version</code> may only be widened in ways that leave every existing rule's meaning unchanged. Anything that could change how an already-sealed rule evaluates MUST increment it, and an implementation MUST refuse a version it cannot reproduce rather than re-decide under semantics nobody agreed to.</p>
+<p><strong>The grammar cannot be narrowed.</strong> Every rule ever sealed is evaluated by it forever, and a bug in v1 semantics is a bug maintained for the life of the format, because the alternative is silently re-deciding decided cases.</p>
+<h2 id="10-what-this-format-does-not-do">10 · What this format does not do</h2>
+<p>Stated because a specification that only lists its strengths is marketing.</p>
+<ul><li><strong>It does not make facts true.</strong> The institution asserts them. A party that attests falsely produces a mathematically perfect proof of a wrong decision. Admissibility classes narrow this and do not close it.</li><li><strong>It does not compute eligibility.</strong> §3.1.</li><li><strong>It does not prove a rule is fair.</strong> It proves a rule was applied. Whether three prior refunds is the right threshold is a value judgment, and no format derives one.</li><li><strong>It does not prevent absence being asserted as fact.</strong> §3.2. It makes it attributable, which is a different and smaller claim.</li></ul>
+<h2 id="10a-conformance">10a · Conformance</h2>
+<p>Machine-readable vectors: <code>spec/vectors/vectors.json</code>. Plain JSON, no dependency on any implementation.</p>
+<p>An implementation claiming conformance MUST pass all of them. They cover canonical form and rule hashes (§5), value commitments (§6), three-valued evaluation (§4), reason sufficiency, accuracy and path construction (§7.1), and the rules the grammar must refuse (§3).</p>
+<p>Writing them found two defects in the reference implementation on the first run, and a third an hour later:</p>
+<ul><li>set members were sorted but <strong>not de-duplicated</strong>, so <code>in [&quot;CA&quot;]</code> and <code>in [&quot;CA&quot;,&quot;CA&quot;]</code> — the same rule — produced different hashes and therefore two determinations neither of which could be found from the other</li><li>a reason path under <code>not</code> carried a <strong>dangling separator</strong> (<code>not.</code>)</li><li>path segments were <strong>concatenated without a separator</strong> when nested, giving <code>any[0]not.not</code> instead of <code>any[0].not.not</code>, which makes polarity unverifiable by a consumer</li></ul>
+<p>Two of those change what a determination <em>is</em>, and canonical form decides the rule hash — so they were free to fix only because no determination has been sealed in production yet. <strong>After the first one, they would not have been.</strong></p>
+<h2 id="11-implementations">11 · Implementations</h2>
+<div class="table"><table>
+<thead><tr><th></th><th></th></tr></thead>
+<tbody><tr><td><strong>Reference</strong></td><td>Crimp, <code>crimpgate.com</code>. Apache-2.0</td></tr><tr><td><strong>Independent verifier</strong></td><td><code>spec/verifier.mjs</code> — no dependencies, no imports from the reference, runs in Node and in a browser. <code>spec/verifier.html</code> is the same code as a keyless offline page</td></tr></tbody>
+</table></div>
+<p>The second exists to test <strong>this document</strong>, not the software. A specification is only a standard if a stranger can implement it from the text, and the only way to find out whether the text is sufficient is to write a second implementation and see whether the two agree. They pass the same vectors. If they ever disagree, at least one is wrong, and establishing which is the point.</p>
+<p>Alternative implementations are welcome and are the reason this is published. A determination produced by one implementation MUST verify under another.</p>
+</article>
+</main>
+<footer class="site">
+  <p>The Determination Format is published under the Apache-2.0 licence by Deimos AI LLC.
+     The format is open; the systems that issue records are their issuers' own.
+     <a href="/spec/">Specification</a> · <a href="/spec/extensions.html">Extensions</a> ·
+     <a href="/spec/vectors.json">Vectors</a> · <a href="/spec/verifier.mjs">Verifier source</a></p>
+</footer>
+</body>
+</html>

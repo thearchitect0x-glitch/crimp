@@ -52,6 +52,17 @@ export const config = {
    */
   get signingKey(): string | null { return process.env['SIGNING_KEY'] || null; },
 
+  /**
+   * Where a person can check a record: the format's home, serving the
+   * browser verifier. Absent, a notice says the record can be checked and
+   * not where; set, it says where. Never a URL inside the record itself —
+   * the record must not depend on a page still being hosted.
+   */
+  get verifyUrl(): string | null {
+    const v = process.env['VERIFY_URL'] || null;
+    return v === null ? null : v.replace(/\/+$/, '');
+  },
+
   dbPoolMax: Number(process.env['DB_POOL_MAX'] ?? 10),
   dbSsl: process.env['DB_SSL'] === 'true',
   statementTimeoutMs: Number(process.env['STATEMENT_TIMEOUT_MS'] ?? 10_000),

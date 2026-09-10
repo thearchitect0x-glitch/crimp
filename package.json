@@ -28,7 +28,8 @@
     "conformance": "tsx scripts/conformance.ts && node scripts/conformance-verifier.mjs",
     "dev:worker": "tsx watch src/worker/main.ts",
     "start:worker": "node dist/worker/main.js",
-    "sweep": "tsx scripts/sweep.ts"
+    "sweep": "tsx scripts/sweep.ts",
+    "site": "tsx scripts/site.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.2",
