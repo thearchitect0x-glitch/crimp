@@ -295,3 +295,69 @@ determination record by design. They will be documented in
 **Human to confirm.** Every interval and citation in `clocks.config.ts`;
 whether the deployment's state has tighter standards; the CMS-0057-F
 compliance date that applies to the payer; and B2.
+
+## cap-04 · Notice as derivation · 10 September 2026
+
+**What a notice is here.** A pure function of the record. `deriveNotice(proof,
+disclosed?, clocks, catalogue)` rearranges what is already sealed — outcome,
+rule with citation and effective date, the clauses that decided it, the facts
+relied on with sources, the remedy (cap-02), the clocks (cap-03), and the
+programme's appeal rights — into one object; `renderText` and `renderHtml`
+lay it out. Nothing is added, nothing is "now", so the same record yields the
+same bytes forever, and the tests assert exactly that on a real record.
+
+**No generated prose, enforced by shape.** A clause is rendered from a fixed
+table of operator phrases; a negated clause is said with the *complement*
+operator ("is at most 2000", not "it is not the case that it is more than
+2000"), which is exact because the grammar is total over a typed fact and
+which halves the reading grade. Appeal rights are config with a citation
+(`notice.config.ts`: Medicaid, SNAP, prior authorization — each
+`TODO(legal-confirm)`); a scope whose programme has no entry is **refused**
+(`programme_not_configured`) rather than issued without appeal rights. Labels
+come from the catalogue's `description` where one exists, so the page says
+"Monthly household income", and the dotted name otherwise.
+
+**Two fidelities, kept.** A notice without values names the clause, the fact
+and its source. `values: true` goes through `disclosure()` — operator
+authority, recorded as a `disclosed` event — because a notice with values IS
+a disclosure and this module must not be a second door. Tested: an agent
+asking for values is refused and nothing is recorded; an operator asking gets
+them and the event count goes to one.
+
+**Readability, reported.** Flesch–Kincaid over the plain-text rendering, with
+the usual syllable heuristic, against the brief's target of 8. Never enforced.
+The reference notice in the unit fixture measures **grade 10.2**
+(143 words, 8 sentences) — above target, and honestly so:
+citations, identifiers and the fixed appeal text count as words a person has
+to read. Where the grade lands is now a number the programme can see and
+work on in config, which is the point of reporting rather than blocking.
+
+**Translation, hook only.** `NoticeTranslator` supplies labels and fixed
+appeal text for a language; the record is never translated (a fact name is
+an identifier, a citation is a citation). No implementation ships. Asking for
+a language without a translator is `language_unavailable`, not English with
+a shrug.
+
+**API.** `POST /seals/:id/notice?format=json|text|html&values=&language=` —
+a POST like the disclosure, because with values it records one.
+
+**Tests.** 367 → 379 (8 unit, 3 integration, 1 e2e): determinism and
+no-"now"; fixed statement per (disposition, state); unconfigured programme
+refused; catalogue label used in reasons and remedy; complement phrasing;
+values only when disclosed; HTML escaping of record content; reading grade
+reported not enforced; disclosure gate and event on the real path; translator
+hook replaces labels and appeal text and leaves the citation alone; the three
+wire formats.
+
+**Two things I had wrong, caught by the tests.** `wouldHaveNeeded` is defined
+only for a clause that *failed*; in a refusal the clause *held*, so it never
+appears — the remedy is what answers "what would change this", and the test
+now says so. And an empty "lead" line was emitted before a single-set remedy.
+
+**Second implementation / format.** None: a notice is derived from the
+record and is not itself part of it.
+
+**Human to confirm.** Every appeal window, citation and sentence in
+`notice.config.ts`; whether the deployment's programmes use different
+statements for outcomes than the fixed words in `STATEMENT`; and the
+reading-grade target itself.

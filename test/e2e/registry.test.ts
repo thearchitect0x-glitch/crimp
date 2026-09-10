@@ -144,3 +144,34 @@ describe('the registry over HTTP', () => {
     assert.equal(rec.json().rule_ref, null);
   });
 });
+
+describe('the notice over HTTP', () => {
+  test('text, html and json forms of one record', async () => {
+    const k = await keys();
+    await app.inject({ method: 'POST', url: '/v1/attestations', headers: bearer(k.agent),
+      payload: { aliases: person('nt1'), facts: [
+        { fact: 'carrier.delivered', type: 'bool', value: false, source: 'carrier_api' },
+        { fact: 'prior_refunds_90d', type: 'int', value: 1, source: 'core_ledger' },
+      ] } });
+    const s = await app.inject({ method: 'POST', url: '/v1/seals', headers: bearer(k.agent),
+      payload: { idempotency_key: 'nt1', aliases: person('nt1'), scope: 'snap.refund',
+        disposition: 'bind', claw: CLAW, rule: RULE } });
+    assert.equal(s.statusCode, 201, s.body);
+    const id = s.json().seal_id;
+
+    const text = await app.inject({ method: 'POST', url: `/v1/seals/${id}/notice?format=text`, headers: bearer(k.operator) });
+    assert.equal(text.statusCode, 200, text.body);
+    assert.match(text.headers['content-type'] as string, /^text\/plain/);
+    assert.match(text.body, /^Notice of decision\n/);
+    const html = await app.inject({ method: 'POST', url: `/v1/seals/${id}/notice?format=html`, headers: bearer(k.operator) });
+    assert.match(html.headers['content-type'] as string, /^text\/html/);
+    assert.match(html.body, /<article class="notice"/);
+    const json = await app.inject({ method: 'POST', url: `/v1/seals/${id}/notice`, headers: bearer(k.operator) });
+    assert.equal(json.json().readability.target, 8);
+    assert.equal(json.json().notice.appeal.programme, 'SNAP');
+
+    const unconfigured = await app.inject({ method: 'POST', url: `/v1/seals/${id}/notice?language=fr`, headers: bearer(k.operator) });
+    assert.equal(unconfigured.statusCode, 400);
+    assert.equal(unconfigured.json().error.code, 'language_unavailable');
+  });
+});

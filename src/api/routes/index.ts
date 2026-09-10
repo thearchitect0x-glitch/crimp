@@ -25,6 +25,7 @@ import { catalogueFact, listCatalogue, type FactClass } from '../../domain/catal
 import type { FactType } from '../../domain/rule.js';
 import { startClock, clocksFor, timeliness } from '../../domain/clocks.js';
 import { listFindings } from '../../domain/findings.js';
+import { noticeFor } from '../../domain/notice.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -261,6 +262,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const p = await authorized(req, 'seals:read');
     return proofToWire(await proof(p, req.params.id));
   });
+
+  // cap-04. The notice is derived from the record; with values it IS a
+  // disclosure and is recorded as one, so it is a POST like the disclosure.
+  app.post<{ Params: { id: string }; Querystring: { values?: string; language?: string; format?: string } }>(
+    '/seals/:id/notice', {
+      schema: { querystring: { type: 'object', additionalProperties: false, properties: {
+        values: { type: 'string', enum: ['true', 'false'] },
+        language: { type: 'string', pattern: '^[a-z]{2}(-[A-Z]{2})?$' },
+        format: { type: 'string', enum: ['json', 'text', 'html'] },
+      } }, response: errors },
+    }, async (req, reply) => {
+      const p = await authorized(req, 'seals:read');
+      const out = await noticeFor(p, req.params.id, {
+        values: req.query.values === 'true',
+        ...(req.query.language !== undefined ? { language: req.query.language } : {}),
+      });
+      if (req.query.format === 'text') return reply.type('text/plain; charset=utf-8').send(out.text);
+      if (req.query.format === 'html') return reply.type('text/html; charset=utf-8').send(out.html);
+      return { notice: out.notice, readability: out.readability, text: out.text, html: out.html };
+    });
 
   // A POST, because it has a side effect: the disclosure is recorded. Nobody
   // anywhere currently records who asked why a person was refused, and for a
