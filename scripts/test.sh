@@ -15,6 +15,8 @@ COVERAGE=0
 PORT=${CRIMP_DB_PORT:-5434}
 export DATABASE_URL="postgres://crimp:crimp@localhost:${PORT}/crimp_test"
 export NODE_ENV=test
+# A fixed Ed25519 seed (bytes 0..31), so signed records in tests are reproducible.
+export SIGNING_KEY="${SIGNING_KEY:-AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=}"
 
 bash scripts/dev-db.sh up >/dev/null
 docker exec crimp-pg psql -U crimp -d crimp -q \

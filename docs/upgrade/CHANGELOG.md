@@ -602,3 +602,47 @@ the schema.
 
 **Human to confirm.** The default claw; whether the CLI should be shipped at
 all or replaced by the deployment's own case-management integration.
+
+## Phase 2a · Record signatures and the `verify` CLI · 10 September 2026
+
+**Why signatures came first.** The brief asks for "a `verify` CLI that
+validates a record's signature against published keys offline". The format
+had no signature. Its hashes let a stranger check that the rule and the
+values are what the record says; they do not let the stranger check that
+*this institution* issued it — a fabricated record with correct internal
+hashes verifies perfectly. So: SPEC §7.0f.
+
+**What is signed.** The *sealed core* — `seal_id, scope, disposition, rule,
+rule_hash, grammar_version, sealed_by, sealed_at, expires_at, as_of,
+rule_ref, reasons, facts, remedy` — as generic canonical JSON (keys sorted,
+strings NFC, `undefined` dropped; **not** the §5 rule form, so the rule is
+signed as written). Nothing that moves: not `state`, not `events`, not the
+review flag. Signed once at seal time (inside the transaction, from the same
+loader the proof uses), under one Ed25519 key per deployment from
+`SIGNING_KEY` (32-byte seed, base64; required in production, and
+`assertProductionSafety` says so). Public key at
+`/.well-known/crimp-keys.json` under a `kid` derived from it. Escrow like
+`BLIND_SECRET`.
+
+**The CLI.** `node spec/verify-cli.mjs record.json [--values v.json]
+[--keys k.json]`: no dependencies, no network, exit 0 iff every step that
+*could* run passed. A step that could not run (no values, no key) is
+reported as such — which exposed a pre-existing verifier defect: "no values
+supplied" was scored as a *failed* commitments step. Unverifiable is `null`,
+not `false`; fixed in both verifier copies.
+
+**Second implementation.** `spec/verifier.mjs` and the html copy gained
+`canonicalJson`, `core()`, and a `signature` step over WebCrypto Ed25519
+(Node 20+, current browsers). Verified only under keys the caller supplies
+— a verifier that fetched the key from the record's own URL would be asking
+the issuer to vouch for itself.
+
+**Tests.** 419 → 430. Conformance 52 → 60 (three `signature` vectors, signed
+from a published test seed; Ed25519 is deterministic so the reference
+re-signs and compares) and 34 → 37. An e2e test seals through the API,
+fetches the published key, and runs the CLI on the three files a stranger
+would have — valid, tampered (disposition changed → `INVALID`), and without
+a key (`skip`).
+
+**Human to do.** Generate `SIGNING_KEY`, set it in the deployment, escrow it
+beside `BLIND_SECRET`. Until then production refuses to start.

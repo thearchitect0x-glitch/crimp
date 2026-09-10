@@ -314,6 +314,38 @@ determination's `state` is unchanged by it — review is visibility, not
 outcome — and a `systemic_review` event on the record says which ruling.
 Null or absent if never. Not part of any hash.
 
+### 7.0f Optional field added in 0.2 — the issuer's signature
+
+A record MAY carry `signature`:
+
+```jsonc
+"signature": { "kid": "…16 hex…", "alg": "ed25519", "sig": "…base64, 64 bytes…" } | null
+```
+
+**What is signed.** The *sealed core*: the object with exactly these members
+of the record, absent ones as `null` —
+
+`seal_id, scope, disposition, rule, rule_hash, grammar_version, sealed_by,
+sealed_at, expires_at, as_of, rule_ref, reasons, facts, remedy`
+
+— serialised as **generic canonical JSON**: object keys sorted by code point,
+strings NFC-normalised, `undefined` members dropped, non-finite numbers
+`null`, no whitespace. This is *not* the §5 rule canonical form: `rule` is
+signed **as written**, so a verifier does not re-canonicalise it. Nothing
+that moves is signed — not `state`, not `events`, not `review_flagged_at` —
+so a signature made at seal time stays valid for the life of the record.
+
+**Keys.** Ed25519. `kid` is the first 16 hex of SHA-256 of the raw 32-byte
+public key. An issuer publishes `{ "keys": [{ "kid", "alg", "public_key" }] }`
+at `/.well-known/crimp-keys.json`; a verifier MUST check against keys it
+obtained and kept itself, never keys fetched from a URL inside the record.
+
+**Verification (§8 step 8).** If `signature` is present and the verifier
+holds a key for its `kid`: recompute the core, verify. If no key is held,
+report *unverifiable*, not invalid. If `signature` is absent, report
+*unsigned*: an unsigned record is internally consistent at best and says
+nothing about who issued it. Vectors: `signature` (new group).
+
 ### 7.0a Optional fields added in 0.2 — a registered rule, and the date it is about
 
 Both fields are **optional**. A record without them is a valid 0.2 record; a
@@ -403,6 +435,7 @@ facts:
 | `unknown` | `tainted`, `clawed`, `expired` |
 
 7. **Check the reasons** against §7.1.
+8. **Check the signature** against §7.0f, under a key the verifier holds.
 
 `clawed` and `expired` are consistent with any outcome: the first records a
 person having overruled, the second the determination having run out, and

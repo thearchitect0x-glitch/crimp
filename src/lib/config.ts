@@ -43,6 +43,15 @@ export const config = {
 
   corsOrigins: (process.env['CORS_ORIGINS'] ?? '').split(',').map((s) => s.trim()).filter(Boolean),
 
+  /**
+   * Signs every record's sealed core (SPEC §7.0f). The 32-byte Ed25519 seed,
+   * base64. Read at use rather than at load so a test can set it. Absent in
+   * development means records are unsigned and say so; absent in production
+   * refuses to start — an unsigned record is internally consistent and
+   * proves nothing about who issued it.
+   */
+  get signingKey(): string | null { return process.env['SIGNING_KEY'] || null; },
+
   dbPoolMax: Number(process.env['DB_POOL_MAX'] ?? 10),
   dbSsl: process.env['DB_SSL'] === 'true',
   statementTimeoutMs: Number(process.env['STATEMENT_TIMEOUT_MS'] ?? 10_000),
@@ -57,6 +66,7 @@ export function assertProductionSafety(cfg: typeof config = config): void {
   if (cfg.authSecret.length < 32) fail.push('AUTH_SECRET is shorter than 32 characters.');
   if (cfg.blindSecret === DEV_SECRET) fail.push('BLIND_SECRET is the development default.');
   if (cfg.blindSecret.length < 32) fail.push('BLIND_SECRET is shorter than 32 characters.');
+  if (cfg.signingKey === null) fail.push('SIGNING_KEY is not set; records would be unsigned.');
   if (cfg.blindSecret === cfg.authSecret) {
     fail.push('BLIND_SECRET must differ from AUTH_SECRET — they have different rotation semantics '
       + 'and sharing them makes an auth rotation silently orphan every subject.');

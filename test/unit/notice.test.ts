@@ -13,7 +13,7 @@ const proof = (over: Partial<Proof> = {}): Proof => ({
   sealId: 'seal_abc', scope: 'medicaid.renewal', disposition: 'bind', state: 'sealed',
   rule: { fact: 'household.income', op: 'gt', value: 2000 }, ruleHash: 'f'.repeat(64),
   grammarVersion: '1', sealedBy: 'agent', sealedAt: new Date('2026-09-01T12:00:00Z'), expiresAt: null,
-  asOf: null, reviewFlaggedAt: null,
+  asOf: null, reviewFlaggedAt: null, signature: null,
   ruleRef: { ruleset: 'medicaid', ruleId: 'renewal.income', version: 'f'.repeat(64),
     legalAuthority: '42 CFR 435.916(b)', effectiveFrom: new Date('2026-01-01T00:00:00Z'), effectiveTo: null },
   remedy: { target: 'false', exhaustive: true, evaluations: 2, sets: [[{ fact: 'household.income', factType: 'int',
@@ -21,7 +21,7 @@ const proof = (over: Partial<Proof> = {}): Proof => ({
   reasons: [{ path: 'rule', fact: 'household.income', op: 'gt', value: 2000, truth: 'true', polarity: 'direct' }],
   facts: [{ fact: 'household.income', factType: 'int', valueSha256: 'a'.repeat(64), source: 'state_registry',
     admissibility: 'authority', assertedAt: new Date('2026-08-30T00:00:00Z'), attester: 'key_1' }],
-  events: [], verify: { ruleHash: '', valueDigest: '', ruleRef: '', note: '' },
+  events: [], verify: { ruleHash: '', valueDigest: '', ruleRef: '', signature: '', note: '' },
   ...over,
 });
 

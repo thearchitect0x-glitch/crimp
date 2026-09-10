@@ -995,5 +995,198 @@
         ]
       ]
     }
+  ],
+  "signature": [
+    {
+      "name": "a signed core verifies under the published key",
+      "test_seed_base64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "key": {
+        "kid": "56475aa75463474c",
+        "alg": "ed25519",
+        "public_key": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+      },
+      "record": {
+        "seal_id": "seal_vector_1",
+        "scope": "refund",
+        "disposition": "bind",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "grammar_version": "1",
+        "sealed_by": "agent",
+        "sealed_at": "2026-09-10T12:00:00.000Z",
+        "expires_at": null,
+        "as_of": null,
+        "rule_ref": null,
+        "reasons": [
+          {
+            "path": "all[0]",
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false,
+            "truth": "true",
+            "polarity": "direct"
+          },
+          {
+            "path": "all[1]",
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3,
+            "truth": "true",
+            "polarity": "direct"
+          }
+        ],
+        "facts": [],
+        "remedy": null,
+        "state": "sealed",
+        "signature": {
+          "kid": "56475aa75463474c",
+          "alg": "ed25519",
+          "sig": "GuSqeKNTKQNSAQ6ZNWhgLVCo7KrKym4fpnvAMTBIDAPhZCIjV7cYaGqYpWkqSU7fJhmME1rcJtMWCnv7OlT4Bg=="
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "a core altered after signing does not — the disposition was changed",
+      "test_seed_base64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "key": {
+        "kid": "56475aa75463474c",
+        "alg": "ed25519",
+        "public_key": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+      },
+      "record": {
+        "seal_id": "seal_vector_1",
+        "scope": "refund",
+        "disposition": "permit",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "grammar_version": "1",
+        "sealed_by": "agent",
+        "sealed_at": "2026-09-10T12:00:00.000Z",
+        "expires_at": null,
+        "as_of": null,
+        "rule_ref": null,
+        "reasons": [
+          {
+            "path": "all[0]",
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false,
+            "truth": "true",
+            "polarity": "direct"
+          },
+          {
+            "path": "all[1]",
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3,
+            "truth": "true",
+            "polarity": "direct"
+          }
+        ],
+        "facts": [],
+        "remedy": null,
+        "state": "sealed",
+        "signature": {
+          "kid": "56475aa75463474c",
+          "alg": "ed25519",
+          "sig": "GuSqeKNTKQNSAQ6ZNWhgLVCo7KrKym4fpnvAMTBIDAPhZCIjV7cYaGqYpWkqSU7fJhmME1rcJtMWCnv7OlT4Bg=="
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "state and events are not signed; changing them leaves the signature valid",
+      "test_seed_base64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "key": {
+        "kid": "56475aa75463474c",
+        "alg": "ed25519",
+        "public_key": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+      },
+      "record": {
+        "seal_id": "seal_vector_1",
+        "scope": "refund",
+        "disposition": "bind",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "grammar_version": "1",
+        "sealed_by": "agent",
+        "sealed_at": "2026-09-10T12:00:00.000Z",
+        "expires_at": null,
+        "as_of": null,
+        "rule_ref": null,
+        "reasons": [
+          {
+            "path": "all[0]",
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false,
+            "truth": "true",
+            "polarity": "direct"
+          },
+          {
+            "path": "all[1]",
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3,
+            "truth": "true",
+            "polarity": "direct"
+          }
+        ],
+        "facts": [],
+        "remedy": null,
+        "state": "lapsed",
+        "events": [
+          {
+            "kind": "lapsed"
+          }
+        ],
+        "signature": {
+          "kid": "56475aa75463474c",
+          "alg": "ed25519",
+          "sig": "GuSqeKNTKQNSAQ6ZNWhgLVCo7KrKym4fpnvAMTBIDAPhZCIjV7cYaGqYpWkqSU7fJhmME1rcJtMWCnv7OlT4Bg=="
+        }
+      },
+      "valid": true
+    }
   ]
 }

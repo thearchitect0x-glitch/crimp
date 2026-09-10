@@ -17,7 +17,7 @@ import type { ClawRule } from '../domain/authority.js';
 import type { SourceReliability, QuadrantCounts, Cliff } from '../domain/insight.js';
 import type { MintedKey } from '../domain/auth.js';
 import type { Reason } from '../domain/explain.js';
-import type { Proof, Disclosure } from '../domain/record.js';
+import { recordCore, type Proof, type Disclosure } from '../domain/record.js';
 import { toStored, type RegisteredRule } from '../domain/registry.js';
 import type { CatalogueEntry } from '../domain/catalogue.js';
 import type { Remedy } from '../domain/remedy.js';
@@ -165,28 +165,13 @@ function reasonToWire(r: Reason): Record<string, unknown> {
 }
 
 export function proofToWire(p: Proof): Record<string, unknown> {
+  // The sealed core first — the same bytes the signature covers — then what
+  // moves: state, the review flag, the events, and how to check it all.
   return {
-    seal_id: p.sealId,
-    scope: p.scope,
-    disposition: p.disposition,
+    ...recordCore(p),
     state: p.state,
-    rule: p.rule,
-    rule_hash: p.ruleHash,
-    grammar_version: p.grammarVersion,
-    sealed_by: p.sealedBy,
-    sealed_at: p.sealedAt.toISOString(),
-    expires_at: p.expiresAt?.toISOString() ?? null,
-    as_of: p.asOf?.toISOString() ?? null,
-    rule_ref: p.ruleRef === null ? null : toStored(p.ruleRef),
-    remedy: remedyToWire(p.remedy),
     review_flagged_at: p.reviewFlaggedAt?.toISOString() ?? null,
-    reasons: p.reasons.map(reasonToWire),
-    facts: p.facts.map((f) => ({
-      fact: f.fact, fact_type: f.factType, value_sha256: f.valueSha256,
-      source: f.source, admissibility: f.admissibility,
-      asserted_at: f.assertedAt.toISOString(),
-      attester: f.attester,
-    })),
+    signature: p.signature,
     events: p.events.map((e) => ({
       kind: e.kind, actor: e.actor, evidence_sha256: e.evidenceSha256,
       evidence_class: e.evidenceClass, occurred_at: e.occurredAt.toISOString(),

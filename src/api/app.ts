@@ -182,6 +182,18 @@ export function buildApp(): FastifyInstance {
     }
   });
 
+  /**
+   * The keys records are signed under (SPEC §7.0f). No auth, no database: a
+   * verifier fetches this once and keeps it. Empty when the deployment does
+   * not sign, which production refuses to be.
+   */
+  app.get('/.well-known/crimp-keys.json', async (_req, reply) => {
+    const { signer } = await import('../domain/signer.js');
+    const sg = signer();
+    reply.header('cache-control', 'public, max-age=3600');
+    return { keys: sg === null ? [] : [sg.published()] };
+  });
+
   void app.register(registerRoutes, { prefix: '/v1' });
 
   return app;

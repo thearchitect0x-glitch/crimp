@@ -14,6 +14,7 @@ import { validateRule, canonicalRule, type Rule, type Facts } from '../src/domai
 import { evaluate } from '../src/domain/evaluate.js';
 import { reasons } from '../src/domain/explain.js';
 import { corrections } from '../src/domain/remedy.js';
+import { Signer, verifyCore } from '../src/lib/signing.js';
 import { canonicalize } from '../src/lib/ids.js';
 
 const v = JSON.parse(readFileSync('spec/vectors/vectors.json', 'utf8')) as Record<string, never>;
@@ -80,6 +81,22 @@ for (const c of v['record'] as unknown as Array<Record<string, never>>) {
   check('record', `${c['name'] as unknown as string} (rule_hash)`, rh, rec.rule_hash);
   const consistent = rec.rule_ref == null ? true : rec.rule_ref.version === rh;
   check('record', c['name'] as unknown as string, consistent, c['rule_ref_consistent']);
+}
+
+// §7.0f — the signature: re-signed from the test seed (Ed25519 is
+// deterministic) and verified over the core the vector carries.
+const CORE = ['seal_id', 'scope', 'disposition', 'rule', 'rule_hash', 'grammar_version', 'sealed_by',
+  'sealed_at', 'expires_at', 'as_of', 'rule_ref', 'reasons', 'facts', 'remedy'];
+for (const c of v['signature'] as unknown as Array<Record<string, never>>) {
+  const rec = c['record'] as unknown as Record<string, unknown>;
+  const core = Object.fromEntries(CORE.map((k) => [k, rec[k] ?? null]));
+  const sg = new Signer(c['test_seed_base64'] as unknown as string);
+  const key = c['key'] as unknown as { kid: string; public_key: string };
+  check('signature', `${c['name'] as unknown as string} (kid)`, sg.kid, key.kid);
+  check('signature', c['name'] as unknown as string,
+    verifyCore(core, rec['signature'] as never, key.public_key), c['valid']);
+  if (c['valid']) check('signature', `${c['name'] as unknown as string} (deterministic)`, sg.signCore(core).sig,
+    (rec['signature'] as { sig: string }).sig);
 }
 
 console.log(`conformance: ${pass} passed, ${fail.length} failed`);

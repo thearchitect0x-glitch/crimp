@@ -159,6 +159,53 @@ function witness(c) {
   return undefined;
 }
 
+/* ── §7.0f · Generic canonical JSON, for the signed core ─────────────── */
+
+/**
+ * NOT the §5 rule canonical form: this sorts object keys and NFC-normalises
+ * strings and does nothing else, so the rule inside the core is signed AS
+ * WRITTEN. Undefined members are dropped; non-finite numbers are null.
+ */
+export function canonicalJson(v) {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'null';
+  if (typeof v === 'boolean') return JSON.stringify(v);
+  if (typeof v === 'string') return JSON.stringify(v.normalize('NFC'));
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  if (typeof v === 'object') {
+    const entries = Object.entries(v).filter(([, x]) => x !== undefined)
+      .map(([k, x]) => [k.normalize('NFC'), x]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(',')}}`;
+  }
+  return 'null';
+}
+
+const CORE_FIELDS = ['seal_id', 'scope', 'disposition', 'rule', 'rule_hash', 'grammar_version', 'sealed_by',
+  'sealed_at', 'expires_at', 'as_of', 'rule_ref', 'reasons', 'facts', 'remedy'];
+
+/** The sealed core: the fields the signature covers, and no others. */
+export function core(det) {
+  const out = {};
+  for (const k of CORE_FIELDS) out[k] = det[k] === undefined ? null : det[k];
+  return out;
+}
+
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+/** Ed25519 through WebCrypto — Node 20+, and every current browser. */
+export async function verifySignature(det, keys) {
+  const sig = det.signature;
+  const key = (keys ?? []).find((k) => k.kid === sig.kid);
+  if (!key) return { ok: null, detail: `no published key for kid ${sig.kid}` };
+  try {
+    const pub = await crypto.subtle.importKey('raw', b64(key.public_key), { name: 'Ed25519' }, false, ['verify']);
+    const ok = await crypto.subtle.verify({ name: 'Ed25519' }, pub, b64(sig.sig), enc.encode(canonicalJson(core(det))));
+    return { ok, detail: ok ? `valid under ${sig.kid}` : `INVALID under ${sig.kid} — the core was altered or the key is wrong` };
+  } catch (e) {
+    return { ok: null, detail: `could not verify: ${e.message}` };
+  }
+}
+
 /* ── §8 · Verification procedure ─────────────────────────────────────── */
 
 const CONSISTENT = {
@@ -208,7 +255,10 @@ export async function verify(det, held = {}, opts = {}) {
     if (d === f.value_sha256) { matched++; facts[f.fact] = { type: f.fact_type, value: mine.value }; }
     else add(`commitment · ${f.fact}`, false, `your value digests to ${d}, record says ${f.value_sha256}`);
   }
-  add('commitments', checked > 0 && matched === checked,
+  // No values is UNVERIFIABLE, not invalid: a record nobody supplied values
+  // for has not failed anything. (It was reported as a failure until the
+  // CLI made the distinction matter.)
+  add('commitments', checked === 0 ? null : matched === checked,
     checked === 0
       ? 'no values supplied — supply your own record to check the rest'
       : `${matched} of ${checked} supplied values match`);
@@ -247,6 +297,16 @@ export async function verify(det, held = {}, opts = {}) {
     add('remedy · effective', results.every(Boolean),
       `${results.filter(Boolean).length} of ${results.length} correction set(s) move the rule to ${det.remedy.target}`
       + (det.remedy.exhaustive ? '' : ' (search was bounded)'));
+  }
+
+  // §7.0f — the issuer's signature. Only under a key the caller supplied:
+  // a verifier that fetched the key from the record's own URL would be
+  // asking the issuer to vouch for itself.
+  if (det.signature != null) {
+    const r = await verifySignature(det, opts.keys);
+    add('signature', r.ok, r.detail);
+  } else {
+    add('signature', null, 'unsigned — internally consistent at best; nothing says who issued it');
   }
 
   // ACCURACY is checkable with no values at all: it is a property of the

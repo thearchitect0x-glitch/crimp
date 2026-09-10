@@ -36,6 +36,8 @@ import { loadCatalogue, assertCatalogued, applyGuards, guardsOf } from './catalo
 import { corrections, favourable, type Remedy } from './remedy.js';
 import { harmOf, harmToStored } from './harm.js';
 import { logEvaluation } from './drift.js';
+import { signer } from './signer.js';
+import { loadProof, recordCore } from './record.js';
 import { classify, tierOf, harden, PRESSURE_WINDOW_DAYS, type Pressure } from './lifecycle.js';
 
 export type Disposition = 'bind' | 'permit' | 'commit';
@@ -503,6 +505,16 @@ export async function seal(
         [sealId, r.fact, r.fact_type, valueDigest(r), r.source, r.admissibility, r.asserted_at,
           r.attester],
       );
+    }
+
+    // The issuer's signature over the sealed core, made now and never again:
+    // the core does not move, so the signature stays valid for the life of
+    // the record whatever happens to its state.
+    const sg = signer();
+    if (sg !== null) {
+      const core = recordCore(await loadProof(tx, workspaceId, sealId));
+      await tx.query('UPDATE seals SET signature = $2::jsonb WHERE id = $1',
+        [sealId, JSON.stringify(sg.signCore(core))]);
     }
 
     await tx.query(

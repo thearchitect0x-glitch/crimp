@@ -50,5 +50,11 @@ for (const c of v.remedy) {
   check('remedy', `${c.name} (effective)`, steps.find((s) => s.step === 'remedy · effective')?.ok, true);
 }
 
+// §7.0f — through verify() with the vector's published key.
+for (const c of v.signature) {
+  const { steps } = await verify(c.record, {}, { keys: [c.key] });
+  check('signature', c.name, steps.find((s) => s.step === 'signature')?.ok, c.valid);
+}
+
 console.log(`independent verifier: ${pass} passed, ${fail.length} failed`);
 if (fail.length) { console.log('\n' + fail.join('\n\n')); process.exitCode = 1; }
