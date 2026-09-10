@@ -18,7 +18,7 @@ import {
   validateRule, canonicalRule, factsReferenced,
   GRAMMAR_VERSION, SUPPORTED_GRAMMAR_VERSIONS,
   TRUE, FALSE, UNKNOWN,
-  type Rule, type Facts, type Fact, type FactType,
+  type Rule, type Facts, type Fact, type FactType, type Truth,
 } from './rule.js';
 import { evaluate } from './evaluate.js';
 import { validateScope, ancestors, covers } from './scope.js';
@@ -29,7 +29,7 @@ import {
 import { meetsFloor, type Admissibility } from './admissibility.js';
 import { requireScope, type Principal } from './auth.js';
 import {
-  resolveRule, refOf, fromStored, toStored as toStoredRef, assertScopeWithin,
+  resolveRule, refOf, fromStored, toStored as toStoredRef, assertScopeWithin, exParteRuleOf,
   type RuleRef, type StoredRuleRef,
 } from './registry.js';
 import { loadCatalogue, assertCatalogued, applyGuards, guardsOf } from './catalogue.js';
@@ -170,6 +170,68 @@ function valueDigest(r: FactRow): string {
   const raw = r.fact_type === 'bool' ? r.bool_value
     : r.fact_type === 'str' ? r.str_value : r.int_value;
   return sha256Hex(canonicalize({ t: r.fact_type, v: raw }));
+}
+
+/* ── Ex parte (cap-07) ───────────────────────────────────────────────── */
+
+/**
+ * Try the programme's substantive rule from facts on file before a
+ * procedural rule may seal. Returns what was tried and how it came out, for
+ * the record, or null when the rule is not procedural. Throws when the merits
+ * are decidable — the refusal names the facts and the programmes they came
+ * from, which is the remedy: "you already have this".
+ */
+async function exParteAttempt(
+  tx: pg.PoolClient, workspaceId: string, subjectId: string,
+  catalogue: Awaited<ReturnType<typeof loadCatalogue>>, referenced: ReadonlySet<string>,
+  ruleRef: RuleRef | null, asOf: Date | null,
+): Promise<Record<string, unknown> | null> {
+  const procedural = [...referenced].some((f) => catalogue.get(f)?.class === 'non_response');
+  if (!procedural) return null;
+  if (ruleRef === null) {
+    throw new ApiError(400, 'procedural_needs_registry',
+      'A rule that rests on a non-response fact is a procedural determination, and a procedural '
+      + 'determination must be made under a committed rule so the programme\'s ex parte rule can '
+      + 'be tried first. Seal it with a rule_ref.', { nonResponse: [...referenced].filter((f) => catalogue.get(f)?.class === 'non_response') });
+  }
+  const exParteId = await exParteRuleOf(tx, workspaceId, ruleRef.ruleset);
+  if (exParteId === null) return { ruleset: ruleRef.ruleset, rule_id: null, outcome: 'not_declared' };
+
+  let substantive;
+  try {
+    substantive = await resolveRule(tx, workspaceId, ruleRef.ruleset, exParteId, asOf ?? new Date());
+  } catch (e) {
+    if (e instanceof ApiError && (e.code === 'unknown_rule' || e.code === 'no_rule_in_force')) {
+      throw new ApiError(409, 'ex_parte_rule_not_in_force',
+        `Ruleset "${ruleRef.ruleset}" names "${exParteId}" as its ex parte rule, but no version of it is in `
+        + 'force for this date. A programme that has declared how it decides on the merits must keep '
+        + 'that rule in force before it may terminate anybody procedurally.',
+        { ruleset: ruleRef.ruleset, exParteRule: exParteId, cause: e.code });
+    }
+    throw e;
+  }
+  const names = [...factsReferenced(substantive.rule)];
+  const loaded = await loadFacts(tx, workspaceId, subjectId, [...names, ...guardsOf(catalogue, names)]);
+  const { facts } = applyGuards(catalogue, loaded.facts, names);
+  let truth: Truth;
+  try { truth = evaluate(substantive.rule, facts); } catch { truth = UNKNOWN; }
+
+  const attempt = { ruleset: ruleRef.ruleset, rule_id: exParteId, version: substantive.version, outcome: truth };
+  if (truth === UNKNOWN) {
+    return { ...attempt, missing: names.filter((n) => facts[n] === undefined) };
+  }
+  const sources = [...new Set(loaded.rows.map((r) => r.source))];
+  const { rows: prog } = await tx.query<{ source: string; programme: string | null }>(
+    'SELECT source, programme FROM fact_sources WHERE workspace_id = $1 AND source = ANY($2::text[])',
+    [workspaceId, sources]);
+  const programmeOf = new Map(prog.map((r) => [r.source, r.programme]));
+  throw new ApiError(409, 'cross_program_fact_available',
+    `The merits can be decided from facts already on file: "${exParteId}" evaluates ${truth}. `
+    + 'A procedural termination is not available while the determination can be made ex parte — '
+    + 'decide it on the merits instead (42 CFR 435.916(b)(1)).',
+    { ...attempt, facts: loaded.rows.filter((r) => facts[r.fact] !== undefined).map((r) => ({
+      fact: r.fact, source: r.source, programme: programmeOf.get(r.source) ?? null,
+      asserted_at: r.asserted_at.toISOString() })) });
 }
 
 /* ── Seal ────────────────────────────────────────────────────────────── */
@@ -326,6 +388,15 @@ export async function seal(
     // as on the non-response it unlocked. A withheld fact is not here.
     const rows = loaded.rows.filter((r) => facts[r.fact] !== undefined);
 
+    // cap-07. EX PARTE FIRST. A rule that rests on a non-response fact is a
+    // procedural determination. Before one may seal, the programme's own
+    // substantive rule is tried against every fact on file — from any
+    // programme, because the fact store has no programmes. If the merits are
+    // decidable, the procedural path is closed: decide it on the merits. If
+    // they are not, the attempt is recorded on the seal: that record IS the
+    // 42 CFR 435.916(b)(1) compliance evidence.
+    const exParte = await exParteAttempt(tx, workspaceId, subjectId, catalogue, referenced, ruleRef, asOf);
+
     // Throws RuleTypeError (400) on a literal that cannot be compared with the
     // fact it names. That is a bug in the rule, not missing data, and it must
     // be refused loudly rather than absorbed as UNKNOWN.
@@ -407,7 +478,8 @@ export async function seal(
        VALUES ($1,$2,'sealed',$3,$4::jsonb)`,
       [sealId, workspaceId, sealedBy,
         JSON.stringify({ scope, disposition: input.disposition, rule_hash: ruleHash,
-          ...(ruleRef === null ? {} : { ruleset: ruleRef.ruleset, rule_id: ruleRef.ruleId }) })],
+          ...(ruleRef === null ? {} : { ruleset: ruleRef.ruleset, rule_id: ruleRef.ruleId }),
+          ...(exParte === null ? {} : { ex_parte: exParte }) })],
     );
 
     return {

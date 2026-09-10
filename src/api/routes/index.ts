@@ -5,7 +5,7 @@ import { authorized } from '../app.js';
 import {
   attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
   carveOutBody, mintKeyBody, windowQuery, errors, rulesetBody, ruleBody, closeRuleBody, catalogueBody,
-  clockBody, findingsQuery,
+  clockBody, findingsQuery, sourceBody,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
@@ -27,6 +27,8 @@ import { startClock, clocksFor, timeliness } from '../../domain/clocks.js';
 import { listFindings } from '../../domain/findings.js';
 import { noticeFor } from '../../domain/notice.js';
 import { harmLedger } from '../../domain/harm.js';
+import { declareSource, listSources } from '../../domain/sources.js';
+import type { Admissibility } from '../../domain/admissibility.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -161,6 +163,23 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { findings: rows.map(findingToWire) };
   });
 
+  /* ── Sources (cap-07) ────────────────────────────────────────────── */
+  app.post<{ Body: { source: string; admissibility: Admissibility; programme?: string | null; description?: string | null } }>(
+    '/sources', { schema: { body: sourceBody, response: errors } }, async (req, reply) => {
+      const p = await authorized(req, 'rules:write');
+      const out = await declareSource(p, {
+        source: req.body.source, admissibility: req.body.admissibility,
+        programme: req.body.programme ?? null, description: req.body.description ?? null,
+      });
+      reply.code(201);
+      return out;
+    });
+
+  app.get('/sources', { schema: { response: errors } }, async (req) => {
+    const p = await authorized(req, 'rules:read');
+    return { sources: await listSources(p) };
+  });
+
   /* ── The catalogue (cap-01) ──────────────────────────────────────── */
   app.post<{
     Body: {
@@ -184,15 +203,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /* ── The registry (cap-08) ───────────────────────────────────────── */
-  app.post<{ Body: { ruleset: string; description?: string | null } }>('/rulesets', {
+  app.post<{ Body: { ruleset: string; description?: string | null; ex_parte_rule?: string | null } }>('/rulesets', {
     schema: { body: rulesetBody, response: errors },
   }, async (req, reply) => {
     const p = await authorized(req, 'rules:write');
     const out = await declareRuleset(p, {
       ruleset: req.body.ruleset, description: req.body.description ?? null,
+      exParteRule: req.body.ex_parte_rule ?? null,
     });
     reply.code(201);
-    return out;
+    return { ruleset: out.ruleset, ex_parte_rule: out.exParteRule };
   });
 
   app.post<{

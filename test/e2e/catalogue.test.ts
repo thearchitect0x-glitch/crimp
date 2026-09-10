@@ -51,10 +51,16 @@ describe('the catalogue over HTTP', () => {
         { fact: 'renewal.returned', type: 'bool', value: false, source: 'state_registry' },
         { fact: 'notice.renewal.delivered_status', type: 'str', value: 'unknown', source: 'state_registry' },
       ] } });
+    // A procedural rule is committed policy (cap-07), so it is sealed by reference.
+    await app.inject({ method: 'POST', url: '/v1/rulesets', headers: bearer(k.operator), payload: { ruleset: 'medicaid' } });
+    const c = await app.inject({ method: 'POST', url: '/v1/rulesets/medicaid/rules', headers: bearer(k.operator),
+      payload: { rule_id: 'renewal.procedural', rule: { fact: 'renewal.returned', op: 'eq', value: false },
+        legal_authority: '42 CFR 435.916(b)', effective_from: '2026-01-01T00:00:00Z' } });
+    assert.equal(c.statusCode, 201, c.body);
     const s = await app.inject({ method: 'POST', url: '/v1/seals', headers: bearer(k.agent),
       payload: { idempotency_key: 'h1', aliases: person('h1'), scope: 'medicaid.renewal',
         disposition: 'bind', claw: { authority: 'operator', evidence_floor: 'internal' },
-        rule: { fact: 'renewal.returned', op: 'eq', value: false } } });
+        rule_ref: { ruleset: 'medicaid', rule_id: 'renewal.procedural' } } });
     assert.equal(s.statusCode, 409, s.body);
     assert.equal(s.json().error.code, 'facts_not_attested');
     assert.equal(s.json().error.detail.guarded[0].reason, 'delivery_unattested');

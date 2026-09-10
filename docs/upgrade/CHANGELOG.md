@@ -459,3 +459,62 @@ show it.
 hearing authority can attest it); and whether `affirmed` rulings should be
 recorded as a finding class of their own — they are evidence the rule
 survived review, which is worth counting.
+
+## cap-07 · Cross-programme reconciliation — ex parte first · 10 September 2026
+
+**The brief's mechanism, and what it is in this codebase.** "Before a
+procedural `no` in programme A can be recorded, evaluate whether any fact
+held for programme B satisfies A's condition." The fact store here already
+has no programmes: a subject's facts are one set, and a Medicaid rule reads
+what SNAP's system attested without anyone reconciling anything. What was
+missing was the ORDER the law states — 42 CFR 435.916(b)(1): try the merits
+from what you hold before you ask the person for anything, and therefore
+before you terminate them for not answering.
+
+**What was built.**
+- A ruleset may name its **ex parte rule** (`rulesets.ex_parte_rule`,
+  `declareRuleset({ exParteRule })`, `POST /rulesets`): the committed rule
+  that IS the programme's determination on the merits.
+- A rule that rests on a `non_response` fact (cap-01's catalogue class) is a
+  **procedural** determination. Before one may seal, the seal path resolves
+  the ruleset's ex parte rule as of the decision date, loads every fact it
+  names — from any source, any programme — applies the guards, and
+  evaluates it. **Decidable (true or false): the procedural path is closed**
+  — `cross_program_fact_available`, naming the rule, its outcome, and each
+  fact with its source and the source's programme. Decide it on the merits.
+  **Undecidable: the seal proceeds and the attempt is on its `sealed`
+  event** — rule, version, outcome `unknown`, and which facts were missing.
+  That record is the 435.916(b)(1) compliance evidence, per determination.
+- A programme that declared an ex parte rule must keep one in force
+  (`ex_parte_rule_not_in_force`); one that has not declared any is not
+  blocked, and the event says `not_declared`.
+- **A procedural determination must be committed policy**
+  (`procedural_needs_registry`): an inline rule has no ruleset whose ex parte
+  rule could be tried, so allowing it would make the protection optional by
+  omission. This tightens cap-01, whose tests sealed procedural rules inline;
+  they now seal by reference, and the change is recorded there and here.
+- **Sources gained an API** (`POST /sources`, `GET /sources`;
+  `src/domain/sources.ts`). Until now sources were rows a setup script
+  inserted. A source now carries `programme` — the answer to "which programme
+  did this fact come from" lives on the feed the institution declared, where
+  it belongs. A source's admissibility class is fixed once declared, for the
+  same reason attestations denormalise it: a live change would make the next
+  fact from a feed weigh differently from the last with no event to say so.
+
+**Tests.** 399 → 407 (8 integration): SNAP's income fact decides Medicaid's
+substantive rule and the procedural termination is refused naming
+`household.income` / `snap_case` / `snap`; undecidable proceeds with the
+attempt recorded; blocked whichever way the merits come out; inline
+procedural refused; closed ex parte rule refused; undeclared ex parte rule
+proceeds and says so; a substantive rule is untouched; sources are an
+operator act with a fixed class and a correctable programme.
+
+**Second implementation / format.** The ex parte attempt lives in the
+`sealed` event's `detail`, opaque to the format; no verifier change.
+
+**Human to confirm.** Whether a programme's ex parte rule should be REQUIRED
+rather than optional before any procedural rule may be committed under it
+(one line in `commitRule`; a policy question); and the reading of
+435.916(b)(1) that "decidable either way" closes the procedural path — a
+substantive denial from facts on file is still a decision on the merits, and
+that is the reading taken here.

@@ -155,6 +155,7 @@ export const rulesetBody = {
   properties: {
     ruleset: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
     description: { type: ['string', 'null'], maxLength: 500 },
+    ex_parte_rule: { type: ['string', 'null'], maxLength: 127 },
   },
 } as const;
 
@@ -186,6 +187,18 @@ export const catalogueBody = {
     guarded_by: { type: ['string', 'null'], maxLength: 96 },
     guard_value: { type: ['string', 'null'], maxLength: 64 },
     allowed_values: { type: ['array', 'null'], maxItems: 64, items: { type: 'string', maxLength: 64 } },
+    description: { type: ['string', 'null'], maxLength: 500 },
+  },
+} as const;
+
+export const sourceBody = {
+  type: 'object',
+  required: ['source', 'admissibility'],
+  additionalProperties: false,
+  properties: {
+    source: { type: 'string', maxLength: 63 },
+    admissibility: { type: 'string', maxLength: 16 },
+    programme: { type: ['string', 'null'], maxLength: 31 },
     description: { type: ['string', 'null'], maxLength: 500 },
   },
 } as const;

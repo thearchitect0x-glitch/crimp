@@ -39,17 +39,34 @@ async function refuses(fn: () => Promise<unknown>, code: string, why: string): P
   return caught!;
 }
 
-/** The data dictionary a renewal programme would declare. */
+/**
+ * The data dictionary a renewal programme would declare — and, since cap-07,
+ * the committed rules: a rule resting on a non-response fact is a procedural
+ * determination, and a procedural determination must be committed policy so
+ * the programme's ex parte rule can be tried first. This programme declares
+ * no ex parte rule, so the guard is what is under test here.
+ */
 async function programme(A: Actors): Promise<void> {
   await catalogueFact(A.operator, { fact: DELIVERY, factType: 'str', class: 'delivery' });
   await catalogueFact(A.operator, { fact: 'renewal.returned', factType: 'bool',
     class: 'non_response', guardedBy: DELIVERY });
   await catalogueFact(A.operator, { fact: 'household.income', factType: 'int', class: 'plain' });
+  await declareRuleset(A.operator, { ruleset: 'medicaid' });
+  await commitRule(A.operator, { ruleset: 'medicaid', ruleId: 'renewal.procedural', rule: NON_RESPONSE,
+    legalAuthority: '42 CFR 435.916(b)', effectiveFrom: new Date('2026-01-01') });
+  await commitRule(A.operator, { ruleset: 'medicaid', ruleId: 'renewal.either',
+    rule: { any: [NON_RESPONSE, { fact: 'household.income', op: 'gt', value: 999_999 }] },
+    legalAuthority: '42 CFR 435.916(b)', effectiveFrom: new Date('2026-01-01') });
 }
 
 const bind = (tag: string, rule: unknown, scope = 'medicaid.renewal') => ({
   idempotencyKey: `idem-${tag}`, aliases: person(tag), scope,
   disposition: 'bind' as const, rule, claw: CLAW,
+});
+/** A procedural determination, under the committed rule. */
+const procedural = (tag: string, ruleId = 'renewal.procedural', scope = 'medicaid.renewal') => ({
+  idempotencyKey: `idem-${tag}`, aliases: person(tag), scope,
+  disposition: 'bind' as const, ruleRef: { ruleset: 'medicaid', ruleId }, claw: CLAW,
 });
 
 async function say(A: Actors, tag: string, facts: Array<[string, 'bool' | 'int' | 'str', boolean | number | string]>): Promise<void> {
@@ -64,7 +81,7 @@ describe('a finding of non-response needs delivery first', () => {
     const A = await actors();
     await programme(A);
     await say(A, 'a1', [['renewal.returned', 'bool', false], [DELIVERY, 'str', 'delivered']]);
-    const out = await seal(A.agent, bind('a1', NON_RESPONSE), STRENGTHS);
+    const out = await seal(A.agent, procedural('a1'), STRENGTHS);
     assert.equal(out.outcome, 'sealed');
   });
 
@@ -72,7 +89,7 @@ describe('a finding of non-response needs delivery first', () => {
     const A = await actors();
     await programme(A);
     await say(A, 'b1', [['renewal.returned', 'bool', false], [DELIVERY, 'str', 'returned']]);
-    const e = await refuses(() => seal(A.agent, bind('b1', NON_RESPONSE), STRENGTHS),
+    const e = await refuses(() => seal(A.agent, procedural('b1'), STRENGTHS),
       'facts_not_attested', 'returned mail');
     const d = e.detail as { missing: string[]; guarded: Array<Record<string, unknown>> };
     assert.deepEqual(d.missing, ['renewal.returned']);
@@ -85,7 +102,7 @@ describe('a finding of non-response needs delivery first', () => {
     const A = await actors();
     await programme(A);
     await say(A, 'c1', [['renewal.returned', 'bool', false]]);
-    const e = await refuses(() => seal(A.agent, bind('c1', NON_RESPONSE), STRENGTHS),
+    const e = await refuses(() => seal(A.agent, procedural('c1'), STRENGTHS),
       'facts_not_attested', 'no delivery fact');
     const d = e.detail as { guarded: Array<{ observed: unknown; reason: string }> };
     assert.equal(d.guarded[0]?.observed, null);
@@ -96,8 +113,7 @@ describe('a finding of non-response needs delivery first', () => {
     const A = await actors();
     await programme(A);
     const synonym = { fact: 'renewal_packet_recv', op: 'eq', value: false };
-    await declareRuleset(A.operator, { ruleset: 'medicaid' });
-    const e = await refuses(() => commitRule(A.operator, { ruleset: 'medicaid', ruleId: 'renewal.procedural',
+    const e = await refuses(() => commitRule(A.operator, { ruleset: 'medicaid', ruleId: 'renewal.synonym',
       rule: synonym, legalAuthority: '42 CFR 435.916(b)', effectiveFrom: new Date('2026-01-01') }),
     'uncatalogued_fact', 'committing a synonym');
     assert.deepEqual((e.detail as { uncatalogued: string[] }).uncatalogued, ['renewal_packet_recv']);
@@ -105,10 +121,10 @@ describe('a finding of non-response needs delivery first', () => {
       'uncatalogued_fact', 'sealing a synonym inline');
     await refuses(() => say(A, 'd1', [['renewal_packet_recv', 'bool', false]]),
       'uncatalogued_fact', 'attesting a synonym');
-    // The legitimate rule commits, because its fact is catalogued — and guarded.
+    // The legitimate rule is committed already, because its fact is catalogued — and guarded.
     const ok = await commitRule(A.operator, { ruleset: 'medicaid', ruleId: 'renewal.procedural',
       rule: NON_RESPONSE, legalAuthority: '42 CFR 435.916(b)', effectiveFrom: new Date('2026-01-01') });
-    assert.equal(ok.outcome, 'committed');
+    assert.equal(ok.outcome, 'already_committed');
   });
 });
 
@@ -119,7 +135,7 @@ describe('the guard', () => {
     const A = await actors();
     await programme(A);
     await say(A, 'g1', [['renewal.returned', 'bool', false], [DELIVERY, 'str', 'delivered']]);
-    const out = await seal(A.agent, bind('g1', NON_RESPONSE), STRENGTHS);
+    const out = await seal(A.agent, procedural('g1'), STRENGTHS);
     assert.equal(out.outcome, 'sealed');
 
     // NCOA comes back: the notice never reached them.
@@ -141,9 +157,8 @@ describe('the guard', () => {
     const A = await actors();
     await programme(A);
     // Income alone carries this rule; the non-response branch is not needed.
-    const either = { any: [NON_RESPONSE, { fact: 'household.income', op: 'gt', value: 999_999 }] };
     await say(A, 'w1', [['renewal.returned', 'bool', false], ['household.income', 'int', 2_000_000]]);
-    const out = await seal(A.agent, bind('w1', either), STRENGTHS);
+    const out = await seal(A.agent, procedural('w1', 'renewal.either'), STRENGTHS);
     assert.equal(out.outcome, 'sealed');
     // And the record commits only to what the evaluator read.
     const rec = await proof(A.operator, out.sealId!);

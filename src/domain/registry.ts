@@ -127,18 +127,42 @@ const fromRow = (r: RuleRow): RegisteredRule => ({
 
 export async function declareRuleset(p: Principal, args: {
   ruleset: string; description?: string | null;
-}): Promise<{ ruleset: string }> {
+  /**
+   * cap-07. The rule that IS this programme's ex parte determination — the
+   * one 42 CFR 435.916(b)(1) says must be tried from facts on file before a
+   * person is asked for anything. While it is decidable, no procedural rule
+   * under this ruleset may seal. Null means the programme has not said.
+   */
+  exParteRule?: string | null;
+}): Promise<{ ruleset: string; exParteRule: string | null }> {
   requireScope(p, 'rules:write');
   requireCommitAuthority(p);
   if (typeof args.ruleset !== 'string' || !RULESET.test(args.ruleset)) {
     throw new ApiError(400, 'invalid_request',
       'A ruleset name is one lowercase segment: letters, digits, underscores, at most 31 characters.');
   }
-  await getPool().query(
-    `INSERT INTO rulesets (workspace_id, ruleset, description) VALUES ($1,$2,$3)
-     ON CONFLICT (workspace_id, ruleset) DO NOTHING`,
-    [p.workspaceId, args.ruleset, args.description ?? null]);
-  return { ruleset: args.ruleset };
+  const exParteRule = args.exParteRule ?? null;
+  if (exParteRule !== null && !RULE_ID.test(exParteRule)) {
+    throw new ApiError(400, 'invalid_request', `ex_parte_rule ${JSON.stringify(exParteRule)} is not a usable rule id.`);
+  }
+  // Re-declaring updates what a programme says about itself; it never drops
+  // rules. The ex parte rule may be named before it is committed — it must
+  // be in force by the time a procedural rule is sealed, and that is checked there.
+  const { rows } = await getPool().query<{ ex_parte_rule: string | null }>(
+    `INSERT INTO rulesets (workspace_id, ruleset, description, ex_parte_rule) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (workspace_id, ruleset) DO UPDATE SET
+       description = coalesce(EXCLUDED.description, rulesets.description),
+       ex_parte_rule = EXCLUDED.ex_parte_rule
+     RETURNING ex_parte_rule`,
+    [p.workspaceId, args.ruleset, args.description ?? null, exParteRule]);
+  return { ruleset: args.ruleset, exParteRule: rows[0]?.ex_parte_rule ?? null };
+}
+
+/** The ex parte rule a ruleset names, if any. */
+export async function exParteRuleOf(db: Db, workspaceId: string, ruleset: string): Promise<string | null> {
+  const { rows } = await db.query<{ ex_parte_rule: string | null }>(
+    'SELECT ex_parte_rule FROM rulesets WHERE workspace_id = $1 AND ruleset = $2', [workspaceId, ruleset]);
+  return rows[0]?.ex_parte_rule ?? null;
 }
 
 /**
