@@ -73,6 +73,7 @@ src/
 | `seal_events` | Append-only history. Clawing records, never deletes |
 | `pressure` | Refused attempts, per seal, per declared session |
 | `cohort_types`, `subject_cohorts` | Blinded cohort membership. **Write-only** — see below |
+| `subject_events`, `alias_carve_outs` | Merges, refused merges, and the carve-outs that correct them |
 | `api_keys`, `key_events` | Credentials and every mint and revoke |
 
 ## Three values, not two
@@ -149,6 +150,140 @@ cannot be routed around at all. See ASSURANCE_CASE.md §4.
 and nothing exceeds the top of a total order. That is the no-self-reversal rule
 reaching its end, and it is correct: the highest authority governs the system
 rather than deciding cases, because its determinations could never be reversed.
+
+## The join key does not leave the process
+
+No endpoint returns a subject id. Not attestation, not cohort placement, not
+the proof export.
+
+Returning it made attestation an **identity-linkage oracle**: attest one alias,
+attest another, compare the responses, and an agent granted nothing but
+`attestations:write` learns whether two identifiers belong to the same person —
+for the price of two writes. Every other part of the subject design exists to
+prevent precisely that, and the proof export already withheld it with a test
+asserting so. Those two positions were incompatible; this was the open one.
+
+Nothing outside the process needs it. `eraseSubject` is domain-internal, and
+every caller names a subject by presenting aliases, which is the only way it
+should ever be done.
+
+## The worker is not optional
+
+```
+src/worker/main.ts    the loop. MUST be long-running
+src/worker/sweep.ts   one pass, across every workspace with due work
+scripts/sweep.ts      one pass, then exit — for cron or a smoke test
+```
+
+Everything this product claims that nothing else does depends on this process.
+A determination lapses when the rule behind it stops holding — no appeal, no
+authority, nobody having won an argument. That is the only error signal that
+does not require the affected person to have the resources to fight, and about
+nine in ten Medicaid denials are never appealed, so it is also the only one
+that sees them.
+
+It is also a condition of enhanced federal funding: 42 CFR 433.112(b)(15) and
+433.116 require evidence that outcomes are met **on an ongoing basis**, and no
+reading of *ongoing* is satisfied by a function nobody schedules.
+
+**A serverless function cannot do this.** Expiry is time-driven — nothing is
+attested when a determination simply runs out, so there is no request to hang
+the work off. Multiple replicas are safe: every state change is a
+compare-and-set against the state the sweep observed, so a race loses cleanly.
+
+### How the sweep picks what to look at
+
+It used to be `ORDER BY sealed_at LIMIT 100`. A determination that does not
+change state stays at the front of that ordering forever, so the sweep
+re-examined the same oldest hundred on every pass and **never reached the
+hundred-and-first**. Measured before the fix: 105 determinations, facts changed
+under the newest, five complete passes, still `sealed`. A sweep that never runs
+is visibly missing; that one ran, returned quickly, reported changes, and
+silently stopped correcting after the hundredth person.
+
+Two columns, and neither is redundant:
+
+| | |
+|---|---|
+| `last_evaluated_at` | Advances on every row **examined**, not every row changed. That is what moves the cursor, and `max(now() - last_evaluated_at)` is a measurable worst-case correction latency rather than an article of faith |
+| `evaluation_due` | Set when the ground under a subject moves, so a determination that actually needs re-checking jumps the queue instead of waiting behind millions of unchanged ones |
+
+Change-driven work alone cannot see expiry — nothing is attested when a
+determination runs out. Time-driven work alone cannot scale — a state with
+seventy million enrollees cannot re-examine everything on a useful cycle. The
+flag carries correction; the cursor carries completeness.
+
+**`markDue()` in `seal.ts` is called by everything that moves ground** —
+attestation and erasure today, and any future path that changes what a
+subject's facts are. It is one function on purpose: four separate defects in
+this codebase have had the shape *principle stated, enforced on one axis,
+silently unenforced on the neighbouring one*, and a rule living in a function is
+enforced where a rule living in a comment is remembered until it isn't.
+
+### And a stale fact is UNKNOWN
+
+`loadFacts` no longer reads an attestation past its `expires_at`. The customer
+declared when it stops being current, and ignoring that meant determinations
+rested on facts their own owner had marked stale. The consequence follows from
+three-valued logic without any special case: the fact is absent, so the rule is
+**unanswered** rather than violated; a determination resting on it becomes
+`tainted` rather than being silently re-decided; and a fresh seal is refused
+with `facts_not_attested`.
+
+That is 42 CFR 435.916 in one clause — if the data on hand is stale you may not
+determine from it, you must go and ask.
+
+## Who is this? — resolution, and the union it must not perform
+
+One rule, and it is the one the subject graph is shaped around:
+
+> **A write resolves identity from merge-capable aliases alone. A read looks at
+> everything.**
+
+A weak alias — a device, an IP, a household — must be able to *carry* a
+determination, or a refusal is escaped by presenting a different phone. It must
+never be able to *create* one, or presenting your own card alongside a shared
+tablet unions you with whoever else uses it. Those are different questions and
+they get different code paths: `resolveForWrite` and `resolveForRead` in
+`src/domain/subject.ts`.
+
+Aliases still attach freely on a write, and `ON CONFLICT DO NOTHING` is what
+keeps that safe: an alias already bound to somebody stays bound to them. The
+shared tablet does not move, so its owner is not dragged along.
+
+| | Decides identity | Attaches | May cause a union |
+|---|---|---|---|
+| `strong` — card fingerprint, government id | yes | yes | yes |
+| `medium` — email, phone | only if the workspace lowers `merge_threshold` | yes | only then |
+| `weak` — device, IP, household | never | yes, if free | **never, at any setting** |
+
+When a write finds several subjects it refuses with `merge_required` and names
+the endpoint. It does not guess, and it does not union implicitly.
+
+## Merge, and the carve-out that corrects it
+
+`POST /v1/subjects/merge` is the most dangerous operation in the system: a union
+is monotone, so a wrong one is permanent. Four bounds, none of them a policy
+document:
+
+1. **Every** subject drawn in must be reached by a merge-capable alias — not
+   just "the presentation contains one somewhere".
+2. At most `MAX_SUBJECTS_PER_MERGE` subjects, and at most
+   `MAX_ALIASES_PER_SUBJECT` in the union.
+3. `principal` authority *and* evidence dominating `internal`. An agent's own
+   word — `self`, `signed` — can never union two people.
+4. A standing carve-out blocks the merge that would walk around it.
+
+The body takes aliases and never subject ids: a caller that could name the
+subjects could union two it never demonstrated any connection to.
+
+**A refused merge is recorded, on its own connection.** The refusal is written
+outside the transaction that then rolls back, because otherwise "we record
+refusals" is a comment rather than a fact. A workspace being probed for
+poisonable subjects is visible precisely in the attempts that failed.
+
+`POST /v1/subjects/carve-out` is the only correction, and it is deliberately
+weaker than an undo — see ASSURANCE_CASE.md §4 for exactly how weak.
 
 ## Three fields the contract requires, and why
 

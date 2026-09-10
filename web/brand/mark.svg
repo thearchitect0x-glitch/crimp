@@ -1,0 +1,25 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright 2026 Deimos AI LLC -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48"
+     fill="none" role="img" aria-label="Crimp">
+  <title>Crimp</title>
+  <!--
+    A crimped ferrule, seen side-on.
+    Two conductors enter the sleeve, a die compresses it, and one joint leaves.
+    The strands are not recoverable — which is the product: the rule and the
+    facts go in, the determination is derived, and the seal is made before the
+    outcome is known.
+    The PINCH carries the mark. Everything else can be dropped at small sizes
+    and it still reads as a crimp; drop the pinch and it is an arrow.
+  -->
+  <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.4">
+    <path d="M7 11 H16 C20.5 11 21 19 24 19 C27 19 27.5 11 32 11 H41"/>
+    <path d="M7 37 H16 C20.5 37 21 29 24 29 C27 29 27.5 37 32 37 H41"/>
+    <path d="M7 11 V37"/><path d="M41 11 V37"/>
+  </g>
+  <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
+    <path d="M12 17 Q20 24 24 24" stroke-width="2.6"/>
+    <path d="M12 31 Q20 24 24 24" stroke-width="2.6"/>
+    <path d="M24 24 H36" stroke-width="3.2"/>
+  </g>
+</svg>

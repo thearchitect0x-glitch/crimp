@@ -21,8 +21,10 @@
 import { withTx } from '../db/pool.js';
 import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
+import { resolveForWrite } from './subject.js';
 import { FACT_TYPES, type FactType } from './rule.js';
 import { requireScope, type Principal } from './auth.js';
+import { markDue } from './seal.js';
 
 const FACT_NAME = /^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,3}$/;
 const MAX_STRING = 256;
@@ -73,28 +75,8 @@ export async function attest(p: Principal, args: {
   }
 
   return withTx(async (tx) => {
-    const { rows: existing } = await tx.query<{ subject_id: string }>(
-      `SELECT DISTINCT subject_id FROM subject_aliases
-        WHERE workspace_id = $1 AND (alias_type, blinded) IN (
-          SELECT * FROM UNNEST($2::text[], $3::text[]))`,
-      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded)]);
-    if (existing.length > 1) {
-      throw new ApiError(409, 'merge_required',
-        'These aliases identify several subjects; resolve the merge before attesting.');
-    }
-
-    let subjectId = existing[0]?.subject_id;
-    if (subjectId === undefined) {
-      subjectId = `sub_${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`;
-      await tx.query('INSERT INTO subjects (id, workspace_id) VALUES ($1,$2)',
-        [subjectId, workspaceId]);
-    }
-    await tx.query(
-      `INSERT INTO subject_aliases (workspace_id, alias_type, blinded, subject_id, merge_strength)
-       SELECT $1, t, b, $4, s FROM UNNEST($2::text[], $3::text[], $5::text[]) AS u(t,b,s)
-       ON CONFLICT (workspace_id, alias_type, blinded) DO NOTHING`,
-      [workspaceId, aliases.map((a) => a.type), aliases.map((a) => a.blinded), subjectId,
-        aliases.map((a) => a.strength)]);
+    const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
+      { doing: 'attesting a fact' });
 
     // A declared cohort may not be attested as a fact. The guarantee cohorts
     // rest on is that they cannot reach the grammar, and a fact can — so the
@@ -139,6 +121,13 @@ export async function attest(p: Principal, args: {
           f.type === 'str' ? f.value : null,
           f.source, admissibility, f.assertedAt ?? new Date(), f.expiresAt ?? null]);
     }
+    // What makes correction prompt rather than eventual: without it, a
+    // determination whose facts just changed waits its turn behind every other
+    // open determination in the workspace. Keyed by subject rather than by
+    // which facts each rule reads — a subject has few determinations, and
+    // re-evaluating one whose inputs did not move is idempotent and cheap.
+    await markDue(tx, workspaceId, subjectId);
+
     return { subjectId, count: args.facts.length };
   });
 }
@@ -158,6 +147,11 @@ export async function eraseSubject(workspaceId: string, subjectId: string): Prom
     const { rowCount } = await tx.query(
       'DELETE FROM attestations WHERE workspace_id = $1 AND subject_id = $2',
       [workspaceId, subjectId]);
+    // Erasure moves the ground more completely than any attestation — it
+    // removes it. Every determination resting on these facts is now
+    // unverifiable and must become `tainted` promptly rather than whenever the
+    // cursor comes round, because an erasure is a legal event with a clock on it.
+    await markDue(tx, workspaceId, subjectId);
     // Cohort membership is personal data about the same subject, and it is not
     // reachable through any read path — which makes it exactly the kind of row
     // an erasure quietly leaves behind. It goes with the attestations.
