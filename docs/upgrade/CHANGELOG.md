@@ -675,3 +675,28 @@ top of this projection — not guessed here.
 
 **Tests.** 4 unit (fixture byte-equality and determinism; every 0057-F
 element located; Task presence rules; reversal shape).
+
+## Phase 2c · Extensions document and the person's copy · 10 September 2026
+
+**`docs/spec/extensions.md`** — every record field, catalogue class, fact
+family (notice-delivery convention, adjudication family), finding class,
+event-detail extension and error code the upgrade added, in one place for a
+second implementer; the defensive-publication note; and the timestamp
+procedure (SHA-256 → `ots stamp` → `.ots` proof → `ots verify`), which is the
+one already used for the company's own disclosure documents. Prepared only.
+Nothing in the repository publishes it, and the note says publication waits
+on the provisional.
+
+**The person's copy** (`POST /subjects/person-copy`,
+`src/domain/personcopy.ts`): everything the system holds about one person
+and only that person — facts *with values*, every determination as a full
+signed record, clocks, the issuer's published keys, and the verifier source
+inline — so the file verifies with nothing from the issuer but the file. A
+disclosure, and recorded as one on every determination it contains
+(operator authority, `seals:disclose`). The test writes the copy's own
+verifier to disk, imports it, and verifies each of the copy's records with
+the copy's own values and keys: signature and re-evaluation both pass.
+Other people's data is asserted absent by string search on the whole
+export.
+
+**Tests.** 430 → 432.

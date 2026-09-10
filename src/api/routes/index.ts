@@ -29,6 +29,7 @@ import { noticeFor } from '../../domain/notice.js';
 import { harmLedger } from '../../domain/harm.js';
 import { declareSource, listSources } from '../../domain/sources.js';
 import { decide } from '../../domain/decisions.js';
+import { personCopy } from '../../domain/personcopy.js';
 import type { Admissibility } from '../../domain/admissibility.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
@@ -269,6 +270,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const p = await authorized(req, 'rules:read');
     const versions = await ruleHistory(p, req.params.ruleset, req.params.rule_id);
     return { versions: versions.map(registeredRuleToWire) };
+  });
+
+  /* ── The person's copy (Phase 2) ─────────────────────────────────── */
+  // A POST, because it discloses values and is recorded as a disclosure on
+  // every determination it contains. Aliases are a body, not a URL.
+  app.post<{ Body: { aliases: unknown } }>('/subjects/person-copy', {
+    schema: { body: { type: 'object', required: ['aliases'], additionalProperties: false,
+      properties: { aliases: clockBody.properties.aliases } }, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'seals:disclose');
+    const copy = await personCopy(p, { aliases: req.body.aliases }, await loadStrengths(p.workspaceId));
+    return { ...copy, determinations: copy.determinations.map(proofToWire) };
   });
 
   /* ── A caseworker's decision (cap-10) ────────────────────────────── */
