@@ -54,3 +54,16 @@ describe('clocks over HTTP', () => {
     assert.equal(denied.statusCode, 403, 'findings are for the institution, not its agents');
   });
 });
+
+describe('the harm ledger over HTTP', () => {
+  test('is an insight read: days, never dollars, and empty for a workspace with no reversals', async () => {
+    const ws = await freshWorkspace();
+    const op = (await mintKey({ workspaceId: ws, authority: 'operator', scopes: [...SCOPES], label: 'o', by: null })).key;
+    const narrow = (await mintKey({ workspaceId: ws, authority: 'agent', scopes: [...AGENT_SCOPES], label: 'a', by: null })).key;
+    const r = await app.inject({ method: 'GET', url: '/v1/insight/harm?days=30', headers: bearer(op) });
+    assert.equal(r.statusCode, 200, r.body);
+    assert.deepEqual(r.json(), { ledger: [] });
+    const denied = await app.inject({ method: 'GET', url: '/v1/insight/harm', headers: bearer(narrow) });
+    assert.equal(denied.statusCode, 403);
+  });
+});

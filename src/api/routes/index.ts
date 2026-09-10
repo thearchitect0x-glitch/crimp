@@ -26,6 +26,7 @@ import type { FactType } from '../../domain/rule.js';
 import { startClock, clocksFor, timeliness } from '../../domain/clocks.js';
 import { listFindings } from '../../domain/findings.js';
 import { noticeFor } from '../../domain/notice.js';
+import { harmLedger } from '../../domain/harm.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -138,6 +139,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   }, async (req) => {
     const p = await authorized(req, 'insight:read');
     return { clocks: (await timeliness(p, windowDays(req.query.days))).map(timelinessToWire) };
+  });
+
+  // cap-05. Days, never dollars: the record supports the first and not the second.
+  app.get<{ Querystring: { days?: string } }>('/insight/harm', {
+    schema: { querystring: windowQuery, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'insight:read');
+    const rows = await harmLedger(p, windowDays(req.query.days, 365));
+    return { ledger: rows.map((r) => ({
+      programme: r.programme, rule: r.rule, month: r.month, reversals: r.reversals,
+      days_without_coverage: r.daysWithoutCoverage, days_owed: r.daysOwed,
+    })) };
   });
 
   app.get<{ Querystring: { class?: string; days?: string } }>('/findings', {

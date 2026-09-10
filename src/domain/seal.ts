@@ -34,6 +34,7 @@ import {
 } from './registry.js';
 import { loadCatalogue, assertCatalogued, applyGuards, guardsOf } from './catalogue.js';
 import { corrections, favourable, type Remedy } from './remedy.js';
+import { harmOf, harmToStored } from './harm.js';
 import { classify, tierOf, harden, PRESSURE_WINDOW_DAYS, type Pressure } from './lifecycle.js';
 
 export type Disposition = 'bind' | 'permit' | 'commit';
@@ -800,9 +801,11 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
   const { rows } = await pool.query<{
     id: string; subject_id: string; rule: Rule; state: string;
     grammar_version: string; expired: boolean;
+    disposition: Disposition; scope: string; sealed_at: Date;
   }>(
     `SELECT id, subject_id, rule, state, grammar_version,
-            (expires_at IS NOT NULL AND expires_at <= now()) AS expired
+            (expires_at IS NOT NULL AND expires_at <= now()) AS expired,
+            disposition, scope, sealed_at
        FROM seals
       WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')
         AND (evaluation_due
@@ -847,21 +850,29 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
       // The cursor advances whether or not anything changed. A pass that
       // examines a determination and leaves it alone has still examined it,
       // and recording that is what stops the sweep looping on its own head.
-      const { rowCount } = await tx.query(
+      const { rows: upd } = await tx.query<{ settled_at: Date | null }>(
         `UPDATE seals
             SET state = $2,
                 settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END,
                 last_evaluated_at = now(),
                 evaluation_due = false
-          WHERE id = $1 AND state = $3`,
+          WHERE id = $1 AND state = $3
+          RETURNING settled_at`,
         [s.id, next, s.state]);
-      if (rowCount === 0) return;  // somebody clawed it first; their record wins
+      if (upd.length === 0) return;  // somebody clawed it first; their record wins
       if (next === s.state) return;
+      // cap-05. A refusal that lapsed stood for a measurable time; the
+      // reversal carries its cost. Only a void `bind`: not an expiry, not a
+      // taint, not a permit — see harm.ts for why each is excluded.
+      const harm = next === 'lapsed' && s.disposition === 'bind'
+        ? harmToStored(harmOf({ scope: s.scope, sealedAt: s.sealed_at, reversedAt: upd[0]!.settled_at ?? new Date() }))
+        : null;
       await tx.query(
         `INSERT INTO seal_events (seal_id, workspace_id, kind, detail)
          VALUES ($1,$2,$3,$4::jsonb)`,
         [s.id, workspaceId, next, JSON.stringify({ from: s.state,
-          ...(guarded.length > 0 ? { guarded } : {}) })]);
+          ...(guarded.length > 0 ? { guarded } : {}),
+          ...(harm === null ? {} : { harm }) })]);
       changes.push({ sealId: s.id, from: s.state, to: next });
     });
   }

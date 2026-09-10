@@ -361,3 +361,51 @@ record and is not itself part of it.
 `notice.config.ts`; whether the deployment's programmes use different
 statements for outcomes than the fixed words in `STATEMENT`; and the
 reading-grade target itself.
+
+## cap-05 · Restoration and harm · 10 September 2026
+
+**What is computed, and on what.** When a `bind` lapses — its premises
+withdrew their own support — the reversal event carries `harm{}`: the days
+the refusal stood (`days_without_coverage`, floor of whole days from
+`sealed_at` to the lapse, timed by the database), and the days the
+programme's rule restores (`days_owed`: the same, capped by the programme's
+window). `harmOf()` is pure; fixed dates in, fixed numbers out, unit-tested
+on SNAP (400 → 365), Medicaid (400 → 400), inside-window, floors, negatives,
+and an unconfigured programme.
+
+**Days, never dollars.** Crimp holds no benefit amounts and does not compute
+them. A ledger of days is what the record supports; a dollar figure is the
+programme's to attach from its own systems. `restoration.config.ts`: SNAP 12
+months (7 CFR 273.17(a)), Medicaid to the action date (42 CFR 431.246 — no
+window; 435.915 retroactive eligibility is a different provision and is not
+modelled), prior authorization to the action date (42 CFR 438.424(a)). Each
+`TODO(legal-confirm)`.
+
+**Only a void refusal.** Not an expiry (ran out on its own terms), not a
+taint (ground lost, not disproved), not a claw (a person overruled it and
+owns that judgement), not a lapsed `permit` or `commit` (a grant withdrawn is
+a loss, but the restoration rules cited do not speak to it). Each exclusion
+is a test. The brief's "void" is this codebase's `lapsed`.
+
+**Stated honestly.** The record cannot tell a correction of an error from a
+change in the world — both look like a fact moving — so harm is *how long
+the refusal stood*, not a finding of fault. Whether it was wrongful is for
+an adjudication (capability 6) or a person.
+
+**The ledger is a query.** `GET /insight/harm?days=` totals reversals,
+days without coverage and days owed by programme (first scope segment), rule
+(registered id, else hash prefix) and month, over `lapsed` events carrying
+`harm` — nothing is accumulated anywhere else, so the ledger cannot drift
+from the events it is made of.
+
+**Tests.** 379 → 393 (6 unit, 7 integration, 1 e2e). The integration tests
+age a seal with the existing `ageSeal` helper and let the real sweep lapse
+it, so the arithmetic is exercised on the path that will run in production.
+
+**Second implementation / format.** `harm` lives in an event's `detail`,
+which the format already carries opaquely; no verifier change. Documented
+under events in `docs/spec/extensions.md` (Phase 2).
+
+**Human to confirm.** The three windows and citations; whether the
+deployment wants a claw (human overrule) to carry harm as well — it is a
+one-line change and a policy question, not a technical one.
