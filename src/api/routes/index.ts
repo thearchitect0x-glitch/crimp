@@ -45,7 +45,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       aliases: req.body.aliases,
       facts: req.body.facts.map(factFromWire),
     }, await loadStrengths(p.workspaceId));
-    return { subject_id: out.subjectId, count: out.count };
+    // NO SUBJECT ID. It is the join key, and returning it made this endpoint an
+    // identity-linkage oracle: attest one alias, attest another, compare the
+    // two responses, and an agent holding nothing but `attestations:write`
+    // learns whether two identifiers belong to the same human being — which is
+    // information the institution never chose to give it, for the price of two
+    // writes.
+    //
+    // The proof export already withheld it, with a test asserting so and the
+    // comment "a proof is about a determination, not a person". Those two
+    // positions were incompatible and this was the open one. Nothing outside
+    // this process needs the identifier: erasure is domain-internal, and every
+    // caller identifies a subject by presenting aliases.
+    return { count: out.count };
   });
 
   /* ── Seal ────────────────────────────────────────────────────────── */
@@ -132,13 +144,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{
     Params: { id: string };
     Body: { evidence_sha256: string; evidence_class: string };
-  }>('/seals/:id/claw', { schema: { body: clawBody, response: errors } }, async (req) => {
+  }>('/seals/:id/claw', { schema: { body: clawBody, response: errors } }, async (req, reply) => {
     const p = await authorized(req, 'seals:claw');
-    return claw(p, {
+    // A `pending` result is 202: the signature was accepted and the
+    // determination is untouched until a second credential agrees.
+    const out = await claw(p, {
       sealId: req.params.id,
       evidenceSha256: req.body.evidence_sha256,
       evidenceClass: req.body.evidence_class as never,
     });
+    reply.code(out.state === 'pending' ? 202 : 200);
+    return out.state === 'pending'
+      ? { state: out.state, signatures_needed: out.signaturesNeeded }
+      : { state: out.state };
   });
 
   /* ── Subjects: the merge, and its only correction ────────────────── */
@@ -194,9 +212,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       band: req.body.band,
     }, await loadStrengths(p.workspaceId));
     reply.code(201);
-    // The subject id and nothing else. Echoing the band back would make this
-    // endpoint a read path for the value it exists to blind.
-    return { subject_id: out.subjectId };
+    // Neither the band nor the subject id. Echoing the band would make this a
+    // read path for the value it exists to blind; echoing the subject id would
+    // make it the same linkage oracle as attestation, reachable by anyone who
+    // can place a cohort.
+    return { placed: true };
   });
 
   /* ── The measurements ────────────────────────────────────────────── */

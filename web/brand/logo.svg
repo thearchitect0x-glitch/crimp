@@ -1,0 +1,19 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright 2026 Deimos AI LLC -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 206 48" width="206" height="48"
+     fill="none" role="img" aria-label="Crimp">
+  <title>Crimp</title>
+  <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.4">
+    <path d="M7 11 H16 C20.5 11 21 19 24 19 C27 19 27.5 11 32 11 H41"/>
+    <path d="M7 37 H16 C20.5 37 21 29 24 29 C27 29 27.5 37 32 37 H41"/>
+    <path d="M7 11 V37"/><path d="M41 11 V37"/>
+  </g>
+  <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
+    <path d="M12 17 Q20 24 24 24" stroke-width="2.6"/>
+    <path d="M12 31 Q20 24 24 24" stroke-width="2.6"/>
+    <path d="M24 24 H36" stroke-width="3.2"/>
+  </g>
+  <text x="58" y="33" fill="currentColor"
+        font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+        font-size="27" font-weight="600" letter-spacing="-0.9">crimp</text>
+</svg>

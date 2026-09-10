@@ -212,6 +212,179 @@ a proof is about a determination, not a person.
 The artifact carries its own verification instructions, because a proof that
 does not say how to check it will not be checked, and documentation explaining
 it may not still be hosted in 2032.
+## The worker is not optional
+
+```
+src/worker/main.ts    the loop. MUST be long-running
+src/worker/sweep.ts   one pass, across every workspace with due work
+scripts/sweep.ts      one pass, then exit — for cron or a smoke test
+```
+
+Everything this product claims that nothing else does depends on this process.
+A determination lapses when the rule behind it stops holding — no appeal, no
+authority, nobody having won an argument. That is the only error signal that
+does not require the affected person to have the resources to fight, and about
+nine in ten Medicaid denials are never appealed, so it is also the only one
+that sees them.
+
+It is also a condition of enhanced federal funding: 42 CFR 433.112(b)(15) and
+433.116 require evidence that outcomes are met **on an ongoing basis**, and no
+reading of *ongoing* is satisfied by a function nobody schedules.
+
+**A serverless function cannot do this.** Expiry is time-driven — nothing is
+attested when a determination simply runs out, so there is no request to hang
+the work off. Multiple replicas are safe: every state change is a
+compare-and-set against the state the sweep observed, so a race loses cleanly.
+
+### How the sweep picks what to look at
+
+It used to be `ORDER BY sealed_at LIMIT 100`. A determination that does not
+change state stays at the front of that ordering forever, so the sweep
+re-examined the same oldest hundred on every pass and **never reached the
+hundred-and-first**. Measured before the fix: 105 determinations, facts changed
+under the newest, five complete passes, still `sealed`. A sweep that never runs
+is visibly missing; that one ran, returned quickly, reported changes, and
+silently stopped correcting after the hundredth person.
+
+Two columns, and neither is redundant:
+
+| | |
+|---|---|
+| `last_evaluated_at` | Advances on every row **examined**, not every row changed. That is what moves the cursor, and `max(now() - last_evaluated_at)` is a measurable worst-case correction latency rather than an article of faith |
+| `evaluation_due` | Set when the ground under a subject moves, so a determination that actually needs re-checking jumps the queue instead of waiting behind millions of unchanged ones |
+
+Change-driven work alone cannot see expiry — nothing is attested when a
+determination runs out. Time-driven work alone cannot scale — a state with
+seventy million enrollees cannot re-examine everything on a useful cycle. The
+flag carries correction; the cursor carries completeness.
+
+**`markDue()` in `seal.ts` is called by everything that moves ground** —
+attestation and erasure today, and any future path that changes what a
+subject's facts are. It is one function on purpose: four separate defects in
+this codebase have had the shape *principle stated, enforced on one axis,
+silently unenforced on the neighbouring one*, and a rule living in a function is
+enforced where a rule living in a comment is remembered until it isn't.
+
+### And a stale fact is UNKNOWN
+
+`loadFacts` no longer reads an attestation past its `expires_at`. The customer
+declared when it stops being current, and ignoring that meant determinations
+rested on facts their own owner had marked stale. The consequence follows from
+three-valued logic without any special case: the fact is absent, so the rule is
+**unanswered** rather than violated; a determination resting on it becomes
+`tainted` rather than being silently re-decided; and a fresh seal is refused
+with `facts_not_attested`.
+
+That is 42 CFR 435.916 in one clause — if the data on hand is stale you may not
+determine from it, you must go and ask.
+## The join key does not leave the process
+
+No endpoint returns a subject id. Not attestation, not cohort placement, not
+the proof export.
+
+Returning it made attestation an **identity-linkage oracle**: attest one alias,
+attest another, compare the responses, and an agent granted nothing but
+`attestations:write` learns whether two identifiers belong to the same person —
+for the price of two writes. Every other part of the subject design exists to
+prevent precisely that, and the proof export already withheld it with a test
+asserting so. Those two positions were incompatible; this was the open one.
+
+Nothing outside the process needs it. `eraseSubject` is domain-internal, and
+every caller names a subject by presenting aliases, which is the only way it
+should ever be done.
+## Four gates, not three
+
+A claw rule is checked on **scope**, **authority**, **evidence** and **time**.
+The first three were enforced from the beginning. The fourth was not, and the
+gap is the same shape as every other defect found in this codebase: a principle
+stated clearly, enforced on one axis, silently unenforced on the neighbouring
+one.
+
+`validateClawRule` has always bounded *who* may reverse — an agent may require
+at most one level above itself, because *"an agent that can put determinations
+beyond an operator's reach is a denial-of-service weapon pointed at its own
+workspace."* Cooling-off had one global ceiling for every authority, and a
+determination's duration had none at all. So an agent holding only
+`seals:write` could author a refusal that **never expires** and that nobody,
+including a custodian, could lift **for three months**.
+
+| Sealed by | Max cooling-off | Max duration |
+|---|---|---|
+| `agent` | 1 hour | 30 days |
+| `operator` | 7 days | 1 year |
+| `principal` | 30 days | 5 years |
+| `custodian` | 90 days | unbounded — and unreachable, see below |
+
+Cooling-off is the one defence immune to a perfectly persuasive argument, and
+its entire cost falls on the person still refused. So the authority that can
+impose the longest wait is the one accountable for it.
+
+**The closer.** An absent expiry used to mean forever. Requiring one would have
+been the obvious fix and the worse one — a bound the caller can forget is not a
+bound, and this bound protects a third party who is not in the conversation. So
+it is **capped rather than demanded**, and the chosen value is returned in
+`expires_at` so nothing is decided silently. `commit` is exempt: it records what
+an agent told a customer, and expiring a commitment erases it rather than ending
+it.
+
+**Hardening deliberately does not touch time.** Pressure raises the required
+authority and evidence floor and leaves cooling-off alone. Pressure is
+incremented by whoever presents a subject's aliases and is refused, so a third
+party can raise it on somebody else's determination — and authority and evidence
+can still be met by finding a higher authority or better evidence, while time
+cannot be routed around at all. See ASSURANCE_CASE.md §4.
+
+**A custodian cannot seal.** The claw authority must strictly exceed the sealer
+and nothing exceeds the top of a total order. That is the no-self-reversal rule
+reaching its end, and it is correct: the highest authority governs the system
+rather than deciding cases, because its determinations could never be reversed.
+## Four axes on a reversal, and the line hardening may not cross
+
+A claw rule declares **who** may reverse, on **what evidence**, after **how
+long**, **how many** of them, and **from where**.
+
+| Axis | Meaning |
+|---|---|
+| `authority` | Must strictly exceed the sealer. A sealer chooses its own jailer and can never be it |
+| `evidenceFloor` | An admissibility class the evidence must dominate |
+| `coolingOffSeconds` | The one defence immune to a perfectly persuasive argument |
+| `quorum` | 1 or 2. Two signatures from **different** credentials, each clearing every other bar independently |
+| `jurisdiction` | ISO 3166. Where the reversing credential must be bound |
+
+**Quorum** is four-eyes for an act that is consequential and hard to undo.
+Standard practice in every regulated industry, and it was inexpressible here.
+The standing half expires after a week: a dual-control decision that takes
+longer is not one decision made by two people, it is two unrelated decisions —
+and it bounds the attacker holding one credential now who expects another
+later. A quorum that never completes leaves the determination **standing**,
+which is the safe direction.
+
+**Jurisdiction** turns *"every reversal affecting a person here was performed
+under authority bound here"* from a promise in a contract into a refusal in
+code. It works because authority is already a property of the credential and
+unforgeable by the caller. A sealer may demand **only the place its own
+credential is bound to**, and a bound key may only mint keys bound to the same
+place — otherwise an operator mints itself a credential elsewhere and satisfies
+a rule written to exclude it, or names a place no key holds and produces a
+determination nobody can ever lift.
+
+### The line
+
+> **Pressure may raise only the bars a legitimate party can clear by acting.**
+
+Pressure is incremented by whoever presents a subject's aliases and is refused,
+so **a third party who knows an identifier can raise it on somebody else's
+determination.** That gives the rule for which axes hardening may touch:
+
+- **Authority** — clearable. Find a higher authority.
+- **Evidence floor** — clearable. Produce better evidence.
+- **Cooling-off** — *not* clearable. Time cannot be routed around.
+- **Quorum** — *not* clearable. A person seeking relief cannot produce a second signer.
+- **Jurisdiction** — carried through unchanged. Moving it would loosen the rule; dropping it certainly would.
+
+So `harden()` spreads `...base` and overrides exactly two fields. If a new axis
+is added to `ClawRule`, decide which side of that line it falls on **before**
+adding it.
 
 ## Three fields the contract requires, and why
 

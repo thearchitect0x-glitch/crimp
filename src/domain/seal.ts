@@ -23,7 +23,8 @@ import {
 import { evaluate } from './evaluate.js';
 import { validateScope, ancestors, covers } from './scope.js';
 import {
-  validateClawRule, mayClaw, isAuthority, type Authority, type ClawRule,
+  validateClawRule, mayClaw, isAuthority, TIME_BOUNDS, QUORUM_WINDOW_SECONDS,
+  type Authority, type ClawRule,
 } from './authority.js';
 import { meetsFloor, type Admissibility } from './admissibility.js';
 import { requireScope, type Principal } from './auth.js';
@@ -76,6 +77,16 @@ export interface SealResult {
    * separate, recorded act — see `disclosure()`.
    */
   reasons: Reason[];
+  /**
+   * When this determination stops standing.
+   *
+   * Returned because Crimp may have chosen it. An absent expiry from anything
+   * below `custodian` is capped at that authority's ceiling rather than
+   * refused — the door closes itself instead of demanding the caller remember
+   * to close it — and the caller is told what it got rather than left to
+   * assume forever.
+   */
+  expiresAt: Date | null;
 }
 
 /* ── Subject resolution ──────────────────────────────────────────────── */
@@ -101,9 +112,21 @@ async function loadFacts(
 ): Promise<{ facts: Facts; rows: FactRow[] }> {
   if (names.length === 0) return { facts: {}, rows: [] };
   const { rows } = await db.query<FactRow>(
+    // An expired attestation is not read. The customer declared when it stops
+    // being current, and ignoring that declaration meant determinations rested
+    // on facts their own owner had marked stale.
+    //
+    // The consequence is exactly right and is the reason this is a filter
+    // rather than a warning: an absent fact is UNKNOWN, never false. A rule
+    // reading a lapsed attestation is therefore unanswered rather than
+    // violated, a determination resting on one becomes `tainted` rather than
+    // silently re-decided, and a fresh seal is refused with `facts_not_attested`.
+    // That is 42 CFR 435.916 in one clause — if the data on hand is stale you
+    // may not determine from it, you must go and ask.
     `SELECT fact, fact_type, bool_value, int_value, str_value, source, admissibility, asserted_at
        FROM attestations
-      WHERE workspace_id = $1 AND subject_id = $2 AND fact = ANY($3::text[])`,
+      WHERE workspace_id = $1 AND subject_id = $2 AND fact = ANY($3::text[])
+        AND (expires_at IS NULL OR expires_at > now())`,
     [workspaceId, subjectId, names],
   );
   const facts: Record<string, Fact> = {};
@@ -154,7 +177,25 @@ export async function seal(
         { expiresAt: input.expiresAt.toISOString() });
     }
   }
-  const clawRule = validateClawRule(sealedBy, input.claw);
+
+  // THE CLOSER. A door nobody has to remember to shut.
+  //
+  // Absent expiry means forever, so an agent holding `seals:write` could author
+  // a permanent refusal. Requiring an expiry would have been the obvious fix
+  // and the worse one: a bound the caller can forget is not a bound, and this
+  // bound exists to protect a third party — the person refused — who is not in
+  // the conversation. So it is capped rather than demanded, and the chosen
+  // value is returned so nothing is decided silently.
+  //
+  // `commit` is exempt: it records what an agent told a customer, and expiring
+  // a commitment would erase it rather than end it.
+  const maxDuration = TIME_BOUNDS[sealedBy].maxDurationSeconds;
+  let expiresAt = input.expiresAt ?? null;
+  if (maxDuration !== null && input.disposition !== 'commit') {
+    const ceiling = new Date(Date.now() + maxDuration * 1000);
+    if (expiresAt === null || expiresAt > ceiling) expiresAt = ceiling;
+  }
+  const clawRule = validateClawRule(sealedBy, input.claw, p.jurisdiction);
   const referenced = validateRule(input.rule);
   const rule = input.rule as Rule;
 
@@ -176,8 +217,9 @@ export async function seal(
     // Replay before doing any work. A retry must be cheap and must not
     // re-resolve subjects or re-evaluate anything.
     const { rows: prior } = await tx.query<{
-      id: string; disposition: Disposition; rule_hash: string; reasons: Reason[];
-    }>(`SELECT id, disposition, rule_hash, reasons FROM seals
+      id: string; disposition: Disposition; rule_hash: string;
+      reasons: Reason[]; expires_at: Date | null;
+    }>(`SELECT id, disposition, rule_hash, reasons, expires_at FROM seals
          WHERE workspace_id = $1 AND idempotency_key = $2`,
       [workspaceId, input.idempotencyKey]);
     if (prior[0]) {
@@ -194,8 +236,9 @@ export async function seal(
         // The reasons the ORIGINAL was decided on, not a fresh derivation
         // against today's facts. A replay must return the determination that
         // was made, or a retry after an attestation changed would report a
-        // different decision under the same identifier.
+        // different decision under the same identifier. Same for the expiry.
         reasons: prior[0].reasons,
+        expiresAt: prior[0].expires_at,
       };
     }
 
@@ -220,7 +263,7 @@ export async function seal(
       // Not an error. The agent applied its rule and the rule did not hold, so
       // no determination exists. Recorded nowhere as a seal, returned plainly.
       return {
-        sealId: null, outcome: 'not_applicable' as const,
+        sealId: null, outcome: 'not_applicable' as const, expiresAt: null,
         disposition: input.disposition, ruleHash,
         reason: 'The rule did not hold against the attested facts. No determination was created.',
         // Which clauses failed, so the caller knows why their own rule did not
@@ -238,12 +281,16 @@ export async function seal(
     await tx.query(
       `INSERT INTO seals (id, workspace_id, subject_id, scope, disposition, rule, rule_hash,
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
-                          claw_cooling_off_s, max_uses, idempotency_key, expires_at, reasons)
-       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)`,
+                          claw_cooling_off_s, max_uses, idempotency_key, expires_at,
+                          reasons, claw_quorum, claw_jurisdiction,
+                          last_evaluated_at, evaluation_due)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,
+               $17,$18,now(),false)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
-        input.idempotencyKey, input.expiresAt ?? null, JSON.stringify(why)],
+        input.idempotencyKey, expiresAt, JSON.stringify(why),
+        clawRule.quorum ?? 1, clawRule.jurisdiction ?? null],
     );
 
     for (const r of rows) {
@@ -263,6 +310,7 @@ export async function seal(
 
     return {
       sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash,
+      expiresAt,
       reason: 'The rule held. The determination is sealed.', reasons: why,
     };
   });
@@ -466,7 +514,7 @@ export async function claw(p: Principal, args: {
   sealId: string;
   evidenceSha256: string;
   evidenceClass: Admissibility;
-}): Promise<{ state: 'clawed' }> {
+}): Promise<{ state: 'clawed' | 'pending'; signaturesNeeded?: number }> {
   requireScope(p, 'seals:claw');
   const workspaceId = p.workspaceId;
   const actor = p.authority;
@@ -478,8 +526,10 @@ export async function claw(p: Principal, args: {
     const { rows } = await tx.query<{
       id: string; state: string; disposition: Disposition; sealed_at: Date;
       claw_authority: Authority; claw_evidence_floor: Admissibility; claw_cooling_off_s: number;
+      claw_quorum: number; claw_jurisdiction: string | null;
     }>(
-      `SELECT id, state, disposition, sealed_at, claw_authority, claw_evidence_floor, claw_cooling_off_s
+      `SELECT id, state, disposition, sealed_at, claw_authority, claw_evidence_floor,
+              claw_cooling_off_s, claw_quorum, claw_jurisdiction
          FROM seals WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
       [args.sealId, workspaceId]);
     const s = rows[0];
@@ -496,6 +546,8 @@ export async function claw(p: Principal, args: {
       authority: s.claw_authority,
       evidenceFloor: s.claw_evidence_floor,
       coolingOffSeconds: s.claw_cooling_off_s,
+      quorum: s.claw_quorum === 2 ? 2 : 1,
+      jurisdiction: s.claw_jurisdiction,
     };
     const tier = tierOf(await pressureOf(tx, s.id));
     const { rule: required, hardened } = harden(s.disposition, base, tier);
@@ -513,6 +565,17 @@ export async function claw(p: Principal, args: {
         { required: required.evidenceFloor, offered: args.evidenceClass, hardened });
     }
 
+    // Where the reversing human is. Checked alongside authority and evidence
+    // rather than after them, because it is the same kind of question: a
+    // property of the credential that the caller cannot state about itself.
+    if (required.jurisdiction != null && p.jurisdiction !== required.jurisdiction) {
+      throw new ApiError(403, 'wrong_jurisdiction',
+        `Reversing this determination requires a credential bound to `
+        + `"${required.jurisdiction}"; this one is `
+        + `${p.jurisdiction === null ? 'unbound' : `bound to "${p.jurisdiction}"`}.`,
+        { required: required.jurisdiction, held: p.jurisdiction });
+    }
+
     const elapsed = (Date.now() - s.sealed_at.getTime()) / 1000;
     if (elapsed < required.coolingOffSeconds) {
       // The one defence immune to a perfectly persuasive argument: you cannot
@@ -523,13 +586,46 @@ export async function claw(p: Principal, args: {
         { remainingSeconds: Math.ceil(required.coolingOffSeconds - elapsed) });
     }
 
+    // ── Quorum ────────────────────────────────────────────────────────
+    //
+    // Every bar above has now been cleared by THIS credential. A quorum adds a
+    // requirement, it never relaxes one, so the second signer clears all of
+    // them independently rather than inheriting the first signer's standing.
+    //
+    // Two signatures from the same key is one signature typed twice, so the
+    // standing half must come from a different key. It also expires: a
+    // dual-control decision that takes longer than a week is not one decision
+    // made by two people, it is two unrelated decisions — and it bounds the
+    // attacker holding one credential now who expects another later.
+    if ((required.quorum ?? 1) === 2) {
+      const { rows: standing } = await tx.query<{ key_id: string }>(
+        `SELECT detail->>'key_id' AS key_id FROM seal_events
+          WHERE seal_id = $1 AND kind = 'claw_pending'
+            AND occurred_at > now() - ($2 || ' seconds')::interval
+          ORDER BY occurred_at DESC`,
+        [s.id, String(QUORUM_WINDOW_SECONDS)]);
+
+      const other = standing.find((r) => r.key_id !== null && r.key_id !== p.keyId);
+      if (!other) {
+        await tx.query(
+          `INSERT INTO seal_events
+             (seal_id, workspace_id, kind, actor, evidence_sha256, evidence_class, detail)
+           VALUES ($1,$2,'claw_pending',$3,$4,$5,$6::jsonb)`,
+          [s.id, workspaceId, actor, args.evidenceSha256, args.evidenceClass,
+            JSON.stringify({ key_id: p.keyId, hardened, pressure_tier: tier })]);
+        // The determination is untouched. A quorum that never completes leaves
+        // it standing, which is the safe direction.
+        return { state: 'pending' as const, signaturesNeeded: 1 };
+      }
+    }
+
     await tx.query(
       `UPDATE seals SET state = 'clawed', settled_at = now() WHERE id = $1`, [s.id]);
     await tx.query(
       `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, evidence_sha256, evidence_class, detail)
        VALUES ($1,$2,'clawed',$3,$4,$5,$6::jsonb)`,
       [s.id, workspaceId, actor, args.evidenceSha256, args.evidenceClass,
-        JSON.stringify({ hardened, pressure_tier: tier, required })]);
+        JSON.stringify({ hardened, pressure_tier: tier, required, key_id: p.keyId })]);
 
     return { state: 'clawed' as const };
   });
@@ -537,7 +633,45 @@ export async function claw(p: Principal, args: {
 
 /* ── Re-evaluation ───────────────────────────────────────────────────── */
 
+/**
+ * The ground under this subject moved. Anything standing on it is due.
+ *
+ * ONE FUNCTION, CALLED FROM EVERY PLACE THAT MOVES GROUND — deliberately, and
+ * the reason is a pattern this codebase keeps repeating. Four defects so far
+ * have had the identical shape: a principle stated clearly, enforced on one
+ * axis, silently unenforced on the neighbouring one. `mergeCapable()` was
+ * written and never called. Cooling-off bounded who may reverse and never when.
+ * `expires_at` was declared and never read. And attestation marked
+ * determinations due while erasure — which removes the ground entirely — did
+ * not, which is how the taint test caught this on the way in.
+ *
+ * A rule that lives in one function is enforced. A rule that lives in a comment
+ * is remembered until it isn't. Anything that changes what a subject's facts
+ * are calls this.
+ */
+export async function markDue(
+  tx: pg.PoolClient, workspaceId: string, subjectId: string,
+): Promise<void> {
+  await tx.query(
+    `UPDATE seals SET evaluation_due = true
+      WHERE workspace_id = $1 AND subject_id = $2 AND state IN ('sealed', 'tainted')`,
+    [workspaceId, subjectId]);
+}
+
 export interface Reevaluation { sealId: string; from: string; to: string }
+
+export interface SweepResult {
+  /** Determinations whose state changed. */
+  changes: Reevaluation[];
+  /** How many were examined this pass. */
+  examined: number;
+  /**
+   * How many remain due after this pass — dirty, never examined, or expired.
+   * The worker loops again immediately while this is non-zero rather than
+   * sleeping through a backlog.
+   */
+  remaining: number;
+}
 
 /**
  * Re-run sealed rules against current attestations.
@@ -545,9 +679,22 @@ export interface Reevaluation { sealId: string; from: string; to: string }
  * This is the unbiased correction channel. A lapse is the institution
  * discovering it was wrong about somebody who never said a word — the only
  * error signal that does not require the affected person to have the resources
- * to fight.
+ * to fight. Roughly nine in ten Medicaid denials are never appealed, so it is
+ * also the only signal that sees them at all.
+ *
+ * ORDERING IS THE WHOLE CORRECTNESS ARGUMENT, and it used to be wrong. This
+ * selected `ORDER BY sealed_at LIMIT 100`, and a determination that does not
+ * change state stays at the front of that ordering permanently — so the sweep
+ * re-examined the same oldest hundred forever and never reached the
+ * hundred-and-first. Measured: 105 determinations, facts changed under the
+ * newest, five complete sweeps, still `sealed`.
+ *
+ * Now: due work first (an attestation landed for that subject, or it has run
+ * out), then least recently examined. `last_evaluated_at` advances for every
+ * row EXAMINED rather than every row changed, which is what makes the cursor
+ * move and every determination eventually reachable.
  */
-export async function reevaluate(workspaceId: string, limit = 100): Promise<Reevaluation[]> {
+export async function reevaluate(workspaceId: string, limit = 100): Promise<SweepResult> {
   const pool = (await import('../db/pool.js')).getPool();
   const { rows } = await pool.query<{
     id: string; subject_id: string; rule: Rule; state: string;
@@ -557,7 +704,11 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Reev
             (expires_at IS NOT NULL AND expires_at <= now()) AS expired
        FROM seals
       WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')
-      ORDER BY sealed_at LIMIT $2`,
+        AND (evaluation_due
+             OR last_evaluated_at IS NULL
+             OR (expires_at IS NOT NULL AND expires_at <= now()))
+      ORDER BY evaluation_due DESC, last_evaluated_at NULLS FIRST
+      LIMIT $2`,
     [workspaceId, limit]);
 
   const changes: Reevaluation[] = [];
@@ -583,15 +734,21 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Reev
         next = 'tainted';
       }
     }
-    if (next === s.state) continue;
 
     await withTx(async (tx) => {
+      // The cursor advances whether or not anything changed. A pass that
+      // examines a determination and leaves it alone has still examined it,
+      // and recording that is what stops the sweep looping on its own head.
       const { rowCount } = await tx.query(
-        `UPDATE seals SET state = $2,
-                settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END
+        `UPDATE seals
+            SET state = $2,
+                settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END,
+                last_evaluated_at = now(),
+                evaluation_due = false
           WHERE id = $1 AND state = $3`,
         [s.id, next, s.state]);
       if (rowCount === 0) return;  // somebody clawed it first; their record wins
+      if (next === s.state) return;
       await tx.query(
         `INSERT INTO seal_events (seal_id, workspace_id, kind, detail)
          VALUES ($1,$2,$3,$4::jsonb)`,
@@ -599,7 +756,51 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Reev
       changes.push({ sealId: s.id, from: s.state, to: next });
     });
   }
-  return changes;
+
+  const { rows: left } = await pool.query<{ n: string }>(
+    `SELECT count(*) AS n FROM seals
+      WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')
+        AND (evaluation_due
+             OR last_evaluated_at IS NULL
+             OR (expires_at IS NOT NULL AND expires_at <= now()))`,
+    [workspaceId]);
+
+  return { changes, examined: rows.length, remaining: Number(left[0]!.n) };
+}
+
+/**
+ * The worst-case age of the evidence, per workspace.
+ *
+ * `Metrics must be measurable and provide evidence that a state meets its
+ * outcomes on an ongoing basis` — 42 CFR 433.112(b)(15). "Ongoing" is not a
+ * property a system can assert; it is a number, and this is the number. If the
+ * oldest unexamined determination was last checked eleven days ago, then the
+ * correction channel is eleven days stale and no amount of documentation makes
+ * it otherwise.
+ */
+export async function sweepLag(db: Db, workspaceId: string): Promise<{
+  open: number; neverEvaluated: number; dueNow: number; oldestEvaluatedAt: Date | null;
+}> {
+  const { rows } = await db.query<{
+    open: string; never_evaluated: string; due_now: string; oldest: Date | null;
+  }>(
+    `SELECT count(*)                                              AS open,
+            count(*) FILTER (WHERE last_evaluated_at IS NULL)     AS never_evaluated,
+            count(*) FILTER (WHERE evaluation_due
+                                OR last_evaluated_at IS NULL
+                                OR (expires_at IS NOT NULL AND expires_at <= now()))
+                                                                  AS due_now,
+            min(last_evaluated_at)                                AS oldest
+       FROM seals
+      WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')`,
+    [workspaceId]);
+  const r = rows[0]!;
+  return {
+    open: Number(r.open),
+    neverEvaluated: Number(r.never_evaluated),
+    dueNow: Number(r.due_now),
+    oldestEvaluatedAt: r.oldest,
+  };
 }
 
 export { TRUE, FALSE, UNKNOWN };
