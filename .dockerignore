@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+node_modules
+dist
+coverage
+.git
+.github
+test
+docs
+web
+scripts
+*.md
+.env
+.env.*

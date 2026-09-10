@@ -169,6 +169,49 @@ historical value is not stored anywhere, by design, so a notice produced long
 after the determination may cite a value that has since changed. The digest in
 the proof is what pins what the determination actually rested on.
 
+**The correction channel is only as current as the sweep.** A determination
+lapses when the worker reaches it, not the instant a fact changes. An
+attestation or an erasure marks it due so it jumps the queue, but the latency
+is real and it is bounded by worker cadence and backlog rather than by
+anything stronger. `sweepLag()` reports it; do not assume it is zero.
+
+**A single worker is a single point of failure for correction.** Multiple
+replicas are safe — every transition is a compare-and-set — but nothing yet
+alerts if the worker stops. A silently dead worker looks exactly like a
+workspace where nothing has changed.
+
+**One identity-linkage signal is inherent and remains.** Presenting two aliases
+that belong to different subjects is refused with `merge_required`, and the
+refusal necessarily tells the caller they are different people. That cannot be
+removed: a gate that will not say what would lift a refusal is a closed door
+rather than a refusal. It is much weaker than a returned identifier — it
+requires the aliases to already conflict, it is a failure rather than a
+success, and it names an action the caller usually cannot take alone. The
+deliberate decision was **not** to vary the error by authority: that would buy
+roughly one bit and cost conditional logic in an error path, which is the
+appearance of hardening rather than hardening.
+
+**Timing is not defended.** Creating a new subject does measurably more work
+than finding an existing one, so response time is a weak linkage side channel.
+Unmitigated, and stated rather than hidden.
+
+**A third party can raise pressure on somebody else's determination.** Pressure
+is incremented by whoever presents a subject's aliases and is refused, so
+someone who knows an identifier can probe on that person's behalf and push
+their determination into a hardened tier — raising the authority and evidence
+needed to lift it. This is why hardening deliberately does **not** extend
+cooling-off: authority and evidence can still be met by finding a higher
+authority or better evidence, but time cannot be routed around at all, so
+hardening it would deepen this attack rather than defend against anything. The
+underlying issue is real and undefended.
+
+**The top of the authority ladder cannot seal.** A claw authority must strictly
+exceed the sealer and nothing exceeds `custodian`, so a custodian can create no
+determinations. This is the no-self-reversal rule reaching its logical end and
+is treated as correct — the highest authority governs the system rather than
+deciding cases, because its determinations could never be reversed. It does
+mean `TIME_BOUNDS.custodian` is unreachable through `seal()`.
+
 **Scopes are a tree, not a DAG.** A seal on `money.out` does not catch a refund
 today. Widening later is safe; the gap is real now.
 

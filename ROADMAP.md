@@ -58,7 +58,14 @@ below.
   reproducibility claim from a sentence into something an examiner can run.
 - **MCP tools and a published OpenAPI document**, so an agent can discover the
   surface rather than be told about it.
-- **Deployment.** There is none. When it exists, `BLIND_SECRET` must be in
+- **A metrics export in Operational Report Workbook shape.** CMS takes
+  numerator and denominator per metric and does its own interpretation, which
+  is why a volume floor belongs only on inferential statistics and never on a
+  census. Seeded with EE5 (fully automated determinations), EE9 (terminations
+  for notice non-response) and EE13 (ex parte redeterminations).
+- **Deployment.** The image, the process topology and the probes exist and are
+  verified locally; nothing is running yet. What remains is an account, a
+  database and secrets in escrow. When it exists, `BLIND_SECRET` must be in
   escrow before the first determination is sealed: a blinded alias cannot be
   re-derived, so losing that secret does not degrade the system, it orphans
   every determination in it permanently.
@@ -66,6 +73,10 @@ below.
 - **Re-rehearse continuity** once a production database exists. The 6 September
   rehearsal covered a system with no deployment; a rehearsal that covers less
   than the current system has stopped being a rehearsal.
+
+- **Quorum on a merge.** A merge is permanent and unreviewable, which makes it
+  a stronger candidate for dual control than a claw. `claw.quorum` exists; the
+  merge path has no equivalent.
 
 ## Later — under consideration, not committed
 

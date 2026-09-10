@@ -137,7 +137,50 @@ export function buildApp(): FastifyInstance {
     });
   });
 
+  /**
+   * LIVENESS. Is this process alive?
+   *
+   * It deliberately does NOT touch the database, and that is not laziness. A
+   * liveness probe that checks a dependency turns a database outage into a
+   * restart loop across every replica at once — the orchestrator kills healthy
+   * processes for a fault they cannot fix by dying, and the stampede of
+   * reconnects makes the outage worse. Liveness answers "should I be
+   * restarted"; a dependency being down is never the answer to that.
+   */
   app.get('/healthz', async () => ({ ok: true }));
+
+  /**
+   * READINESS. Should this instance receive traffic?
+   *
+   * This one must check the database, and it did not exist. `/healthz` returned
+   * `{ ok: true }` unconditionally, so a container whose database was
+   * unreachable reported itself healthy, was sent traffic, and returned 500 to
+   * every request — the load balancer having been told, truthfully but
+   * uselessly, that the process was running.
+   *
+   * It also reports pending migrations. During a rolling deploy an old
+   * container coexists with a new schema, and a worker started with
+   * MIGRATE_ON_BOOT=false can come up against a database nobody migrated.
+   * Neither is visible to a probe that only asks whether the process is alive.
+   */
+  app.get('/readyz', async (_req, reply) => {
+    const { getPool } = await import('../db/pool.js');
+    const { pendingMigrations } = await import('../db/migrate.js');
+    try {
+      await getPool().query('SELECT 1');
+      const pending = await pendingMigrations();
+      if (pending.length > 0) {
+        reply.code(503);
+        return { ready: false, database: 'up', pending_migrations: pending };
+      }
+      return { ready: true, database: 'up', pending_migrations: [] };
+    } catch {
+      // No detail. A readiness probe is reachable from wherever the load
+      // balancer is, and a connection string in its body is a gift.
+      reply.code(503);
+      return { ready: false, database: 'down' };
+    }
+  });
 
   void app.register(registerRoutes, { prefix: '/v1' });
 

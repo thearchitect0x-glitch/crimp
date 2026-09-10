@@ -3,7 +3,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getPool, closePool } from './pool.js';
+import { getPool, closePool, type Db } from './pool.js';
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), 'migrations');
 
@@ -56,6 +56,21 @@ export async function migrate(log: (m: string) => void = console.log): Promise<s
     client.release();
   }
   return applied;
+}
+
+/**
+ * Which migrations exist on disk but are not applied to this database.
+ *
+ * Readiness depends on it. During a rolling deploy an old container coexists
+ * with a new schema, and a worker started with `MIGRATE_ON_BOOT=false` may come
+ * up against a database nobody has migrated. Both look identical to a health
+ * check that only asks whether the process is alive.
+ */
+export async function pendingMigrations(db: Db = getPool()): Promise<string[]> {
+  const files = (await readdir(migrationsDir)).filter((f) => f.endsWith('.sql')).sort();
+  const { rows } = await db.query<{ name: string }>('SELECT name FROM schema_migrations');
+  const done = new Set(rows.map((r) => r.name));
+  return files.filter((f) => !done.has(f));
 }
 
 /** Drops and recreates the public schema. Test/dev only. */
