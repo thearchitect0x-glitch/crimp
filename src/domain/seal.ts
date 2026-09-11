@@ -942,17 +942,30 @@ export interface SweepResult {
  * that are not due, so expiry is recorded at a bounded rate however busy
  * the feeds are; a batch with room in it is unchanged.
  */
-export async function reevaluate(workspaceId: string, limit = 100): Promise<SweepResult> {
-  const pool = (await import('../db/pool.js')).getPool();
-  // The third trigger: a fact that ran out under a standing determination.
-  await pool.query(
+/**
+ * The third trigger: a fact that ran out under a standing determination.
+ * Runs once per pass across every workspace BEFORE the pass decides which
+ * workspaces have due work — the benchmark that found the hole was re-run
+ * with this inside the per-workspace batch and found it again, because a
+ * workspace with nothing else due never reached the batch. Exact and
+ * idempotent: the examination moves the cursor past the expiry.
+ */
+export async function markFactExpiryDue(db: Db, workspaceId: string | null = null): Promise<number> {
+  const { rowCount } = await db.query(
     `UPDATE seals s SET evaluation_due = true
        FROM attestations a
-      WHERE s.workspace_id = $1 AND a.workspace_id = s.workspace_id AND a.subject_id = s.subject_id
+      WHERE ($1::text IS NULL OR s.workspace_id = $1)
+        AND a.workspace_id = s.workspace_id AND a.subject_id = s.subject_id
         AND s.state IN ('sealed', 'tainted') AND NOT s.evaluation_due
         AND a.expires_at IS NOT NULL AND a.expires_at <= now()
         AND a.expires_at > COALESCE(s.last_evaluated_at, s.sealed_at)`,
     [workspaceId]);
+  return rowCount ?? 0;
+}
+
+export async function reevaluate(workspaceId: string, limit = 100): Promise<SweepResult> {
+  const pool = (await import('../db/pool.js')).getPool();
+  await markFactExpiryDue(pool, workspaceId);
 
   type Row = {
     id: string; subject_id: string; rule: Rule; state: string;
