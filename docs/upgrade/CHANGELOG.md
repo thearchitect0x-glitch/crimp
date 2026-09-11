@@ -831,3 +831,34 @@ the notice or the site.
 
 **Tests.** Seven added: 445 → 452 on the upgrade branch; 453 → 460 with the
 SNAP configuration.
+
+## The third trigger · 10 September 2026
+
+**Found by a scheduling benchmark** run against the real worker with 20 000
+determinations (791 attest-and-seal per second, sixteen concurrent, one
+laptop). Two things the two triggers of cap-09's re-execution could not see.
+
+1. **Fact expiry is a change nothing writes.** 200 refusals standing on an
+   attestation that ran out stayed `sealed` through five passes; forcing
+   them due tainted all 200. Neither the change-driven nor the cursor-driven
+   trigger fires without a write, and the cursor only ever selected rows
+   that were due, never examined, or past their own expiry. Now every pass
+   first marks due any determination whose subject has an attestation that
+   expired since the determination was last examined (`reevaluate`, and
+   index `020_fact_expiry.sql`). Exact and idempotent: the examination moves
+   the cursor past the expiry. Test: "re-examined without any write, and
+   only once".
+2. **Expiry recording starves under overload.** With 1 500 changes per pass
+   against a 1 000 batch, 500 determinations past their own expiry stayed
+   `sealed` for ten passes because due rows sort first; they were recorded
+   only when the feeds went quiet. A tenth of every full batch is now
+   reserved for rows that are not due. Lookups already stopped honouring an
+   expired refusal at the instant of expiry, so this was a record and metric
+   lag, not a binding one. Test: "recorded even while due work fills every
+   batch".
+
+Also measured: churn below capacity corrects in the same pass; above it,
+the backlog grows by the excess per pass and corrected rows wait in
+least-recently-examined order (p99 three passes at 1.5× capacity).
+
+**Tests.** 452 → 454.

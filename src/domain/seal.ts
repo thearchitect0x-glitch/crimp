@@ -926,16 +926,42 @@ export interface SweepResult {
  * out), then least recently examined. `last_evaluated_at` advances for every
  * row EXAMINED rather than every row changed, which is what makes the cursor
  * move and every determination eventually reachable.
+ *
+ * TWO MORE THINGS THE SCHEDULING BENCHMARK OF 10 SEPTEMBER 2026 FOUND.
+ * First, fact expiry is a change that nothing writes. An attestation that
+ * ran out under a standing determination left it `sealed` on evidence its
+ * own owner had declared stale — 200 of 200, through five passes — because
+ * neither trigger fires without a write. So every pass first marks due any
+ * determination whose subject has an attestation that expired since the
+ * determination was last examined: exact, and idempotent, because the
+ * examination moves the cursor past the expiry. Second, under sustained
+ * churn above the batch, due rows sort first and rows past their own expiry
+ * never reach the front: 500 expired determinations stayed `sealed` through
+ * ten overloaded passes and were recorded only when the feeds went quiet.
+ * When due work fills an entire batch, a tenth of it is now given to rows
+ * that are not due, so expiry is recorded at a bounded rate however busy
+ * the feeds are; a batch with room in it is unchanged.
  */
 export async function reevaluate(workspaceId: string, limit = 100): Promise<SweepResult> {
   const pool = (await import('../db/pool.js')).getPool();
-  const { rows } = await pool.query<{
+  // The third trigger: a fact that ran out under a standing determination.
+  await pool.query(
+    `UPDATE seals s SET evaluation_due = true
+       FROM attestations a
+      WHERE s.workspace_id = $1 AND a.workspace_id = s.workspace_id AND a.subject_id = s.subject_id
+        AND s.state IN ('sealed', 'tainted') AND NOT s.evaluation_due
+        AND a.expires_at IS NOT NULL AND a.expires_at <= now()
+        AND a.expires_at > COALESCE(s.last_evaluated_at, s.sealed_at)`,
+    [workspaceId]);
+
+  type Row = {
     id: string; subject_id: string; rule: Rule; state: string;
-    grammar_version: string; expired: boolean;
+    grammar_version: string; expired: boolean; evaluation_due: boolean;
     disposition: Disposition; scope: string; sealed_at: Date;
-  }>(
+  };
+  const { rows } = await pool.query<Row>(
     `SELECT id, subject_id, rule, state, grammar_version,
-            (expires_at IS NOT NULL AND expires_at <= now()) AS expired,
+            (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
             disposition, scope, sealed_at
        FROM seals
       WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')
@@ -945,6 +971,25 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
       ORDER BY evaluation_due DESC, last_evaluated_at NULLS FIRST
       LIMIT $2`,
     [workspaceId, limit]);
+  // The reserved share. Only when due work fills the ENTIRE batch — so a
+  // batch with room in it is still due-first and nothing waits that need
+  // not — a tenth of it is given to rows that are not due: never examined,
+  // or past their own expiry, least recently examined first. The due rows
+  // they displace are the last in order and are next pass's first.
+  const reserve = Math.floor(limit / 10);
+  if (reserve > 0 && rows.length === limit && rows.every((r) => r.evaluation_due)) {
+    const { rows: extra } = await pool.query<Row>(
+      `SELECT id, subject_id, rule, state, grammar_version,
+              (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
+              disposition, scope, sealed_at
+         FROM seals
+        WHERE workspace_id = $1 AND state IN ('sealed', 'tainted') AND NOT evaluation_due
+          AND (last_evaluated_at IS NULL OR (expires_at IS NOT NULL AND expires_at <= now()))
+        ORDER BY last_evaluated_at NULLS FIRST
+        LIMIT $2`,
+      [workspaceId, reserve]);
+    if (extra.length > 0) rows.splice(rows.length - extra.length, extra.length, ...extra);
+  }
 
   const catalogue = await loadCatalogue(pool, workspaceId);
   const changes: Reevaluation[] = [];
