@@ -214,21 +214,31 @@ export async function verifySignature(det, keys) {
  */
 export async function verifySignaturePq(det, keys) {
   const sig = det.signature_pq;
-  // The honest reason first: a browser cannot check this yet, whatever keys it holds.
-  let nodeCrypto;
-  try { nodeCrypto = await import('node:crypto'); } catch {
-    return { ok: null, detail: 'this runtime cannot verify ml-dsa-65 (no node:crypto); the Ed25519 signature is the one checked here' };
-  }
   const key = (keys ?? []).find((k) => k.kid === sig.kid);
-  if (!key) return { ok: null, detail: `no published key for kid ${sig.kid}` };
-  if (key.alg !== 'ml-dsa-65') return { ok: false, detail: `key ${sig.kid} is ${key.alg}, not ml-dsa-65` };
-  try {
-    const pub = nodeCrypto.createPublicKey({ key: Buffer.from(key.public_key, 'base64'), format: 'der', type: 'spki' });
-    const ok = nodeCrypto.verify(null, Buffer.from(canonicalJson(core(det)), 'utf8'), pub, Buffer.from(sig.sig, 'base64'));
-    return { ok, detail: ok ? `valid under ${sig.kid} (ml-dsa-65)` : `INVALID under ${sig.kid} (ml-dsa-65) — the core was altered or the key is wrong` };
-  } catch (e) {
-    return { ok: null, detail: `could not verify: ${e.message}` };
+  const bytes = new TextEncoder().encode(canonicalJson(core(det)));
+  const verdict = (ok) => ({ ok, detail: ok ? `valid under ${sig.kid} (ml-dsa-65)` : `INVALID under ${sig.kid} (ml-dsa-65) — the core was altered or the key is wrong` });
+  // Where node:crypto exists (Node 24+), check it there.
+  let nodeCrypto = null;
+  try { nodeCrypto = await import('node:crypto'); } catch { nodeCrypto = null; }
+  if (nodeCrypto !== null) {
+    if (!key) return { ok: null, detail: `no published key for kid ${sig.kid}` };
+    if (key.alg !== 'ml-dsa-65') return { ok: false, detail: `key ${sig.kid} is ${key.alg}, not ml-dsa-65` };
+    try {
+      const pub = nodeCrypto.createPublicKey({ key: Buffer.from(key.public_key, 'base64'), format: 'der', type: 'spki' });
+      return verdict(nodeCrypto.verify(null, Buffer.from(bytes), pub, Buffer.from(sig.sig, 'base64')));
+    } catch (e) {
+      return { ok: null, detail: `could not verify: ${e.message}` };
+    }
   }
+  // A browser. WebCrypto is expected to gain ML-DSA under this name; try it,
+  // and say plainly when it is not there yet. The Ed25519 result stands.
+  if (key && key.alg === 'ml-dsa-65') {
+    try {
+      const pub = await crypto.subtle.importKey('spki', b64(key.public_key), { name: 'ML-DSA-65' }, false, ['verify']);
+      return verdict(await crypto.subtle.verify({ name: 'ML-DSA-65' }, pub, b64(sig.sig), bytes));
+    } catch { /* not supported here yet */ }
+  }
+  return { ok: null, detail: `present (ml-dsa-65, kid ${sig.kid}); this browser cannot check it yet — run verify-cli.mjs on Node 24 or later. The Ed25519 signature above is what this page checked` };
 }
 
 /* ── Transparency: the record's date, without the issuer's key ─────────── */
