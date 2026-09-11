@@ -39,6 +39,10 @@ describe('the transparency anchor', () => {
     const { rows: d } = await getPool().query<{ n: string }>(`SELECT count(*) AS n FROM seals WHERE id = ANY($1::text[]) AND core_sha256 IS NOT NULL`, [[...a, ...b]]);
     assert.equal(Number(d[0]!.n), 4, 'a digest on every core, signed or not');
 
+    // This test closes TODAY. A previous run in the same database on the same
+    // day may have anchored it; an anchored day cannot be recomputed. Put the
+    // day back before starting, as well as after.
+    await getPool().query(`UPDATE transparency_global_roots SET anchor = NULL WHERE day = timezone('UTC', now())::date`);
     // The worker's own pass closes only days strictly before today: nothing yet.
     const pass = await sweepOnce();
     assert.equal(await inclusionOf(getPool(), A.ws, a[0]!), null, 'today has not closed');
@@ -89,5 +93,23 @@ describe('the transparency anchor', () => {
     const { rows: leaves } = await getPool().query<{ core_sha256: string }>(
       `SELECT core_sha256 FROM seals WHERE workspace_id = $1 AND id = ANY($2::text[]) ORDER BY sealed_at, id`, [A.ws, a]);
     assert.equal(inc.workspace.root, merkleRoot(leaves.map((l) => l.core_sha256)));
+
+    // A workspace whose day closes AFTER the global root was anchored reaches
+    // its workspace root and no further — and the proof says exactly that.
+    const C = await actors();
+    const late = await refusal(C, 'c1');
+    await closeDays(getPool(), { closeBefore: tomorrow() });
+    const lateInc = (await inclusionOf(getPool(), C.ws, late))!;
+    assert.equal(lateInc.global, null);
+    assert.match(lateInc.note!, /anchored before this workspace's day closed/);
+    const lateRec = await proof(C.operator, late);
+    const lr = await verify({ ...proofToWire(lateRec), inclusion: lateInc }, {}, { roots: await publishedRoots(getPool()) });
+    const ls = lr.steps.find((s: { step: string }) => s.step === 'inclusion');
+    assert.equal(ls?.ok, null);
+    assert.match(ls?.detail, /anchored before/);
+
+    // This test closes TODAY and anchors it, which a second run in the same
+    // database on the same day would otherwise inherit. Put the day back.
+    await getPool().query('UPDATE transparency_global_roots SET anchor = NULL WHERE day = $1::date', [inc.day]);
   });
 });

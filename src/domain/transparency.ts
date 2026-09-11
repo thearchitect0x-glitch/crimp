@@ -33,6 +33,8 @@ export interface Inclusion {
   leaf: string;
   workspace: { index: number; leaf_count: number; root: string; path: PathStep[] };
   global: { index: number; workspaces: number; root: string; path: PathStep[]; anchor: unknown | null } | null;
+  /** Why `global` is null when it is: the day has not closed globally, or it closed and was anchored before this workspace's day was. */
+  note: string | null;
 }
 
 /** The day's leaves for one workspace, in the fixed order the tree is built over. */
@@ -111,15 +113,25 @@ export async function inclusionOf(db: Db, workspaceId: string, sealId: string): 
   const { rows: gr } = await db.query<{ root: string; workspaces: number; anchor: unknown | null }>(
     'SELECT root, workspaces, anchor FROM transparency_global_roots WHERE day = $1::date', [s.day]);
   let global: Inclusion['global'] = null;
+  let note: string | null = 'no global root for this day yet';
   if (gr[0] !== undefined) {
     const { rows: ws } = await db.query<{ workspace_id: string; root: string }>(
       'SELECT workspace_id, root FROM transparency_roots WHERE day = $1::date ORDER BY workspace_id', [s.day]);
     const gi = ws.findIndex((w) => w.workspace_id === workspaceId);
     if (gi >= 0 && ws.length === gr[0].workspaces) {
       global = { index: gi, workspaces: ws.length, root: gr[0].root, path: merklePath(ws.map((w) => w.root), gi), anchor: gr[0].anchor };
+      note = null;
+    } else {
+      // The global root for this day was made — and anchored, or it would
+      // have been recomputed — before this workspace's day closed. The
+      // record reaches its workspace root and no further; say so rather
+      // than "not yet".
+      note = gr[0].anchor !== null
+        ? `the global root for ${s.day} was anchored before this workspace's day closed; the proof reaches the workspace root only`
+        : 'the global root for this day is being recomputed';
     }
   }
-  return { algorithm: TRANSPARENCY_ALGORITHM, day: s.day, leaf: s.core_sha256, workspace, global };
+  return { algorithm: TRANSPARENCY_ALGORITHM, day: s.day, leaf: s.core_sha256, workspace, global, note };
 }
 
 export interface PublishedRoot { day: string; root: string; workspaces: number; computed_at: string; anchor: unknown | null }

@@ -398,7 +398,7 @@ export async function verifyInclusion(det, roots) {
   if (leaf !== inc.leaf) return { ok: false, detail: 'the record\'s core does not hash to the leaf the proof claims' };
   const wsRoot = await merkleRootFromPath(leaf, inc.workspace.path);
   if (wsRoot !== inc.workspace.root) return { ok: false, detail: 'the path does not reach the workspace root it claims' };
-  if (inc.global == null) return { ok: null, detail: `reaches the workspace root for ${inc.day}; no global root yet` };
+  if (inc.global == null) return { ok: null, detail: `reaches the workspace root for ${inc.day}; ${inc.note ?? 'no global root yet'}` };
   const gRoot = await merkleRootFromPath(inc.workspace.root, inc.global.path);
   if (gRoot !== inc.global.root) return { ok: false, detail: 'the path does not reach the global root it claims' };
   const published = (roots ?? []).find((r) => r.day === inc.day);
