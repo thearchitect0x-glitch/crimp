@@ -76,12 +76,12 @@ describe('one overturn', () => {
     const A = await actors();
     const ids = await population(A);
     await ruling(A, 'p1');
-    assert.deepEqual(await workspacesWithPendingReversals(getPool()), [A.ws]);
-
-    const out = await propagateAdjudications(A.ws);
-    assert.equal(out.reviews.length, 1);
-    assert.equal(out.flagged, 4);
-    assert.deepEqual(new Set(out.reviews[0]!.affected), new Set([ids['p1'], ids['p2'], ids['p3'], ids['p4']]));
+    // Propagated at the write: nothing is pending for the pass by the time it runs.
+    assert.deepEqual(await workspacesWithPendingReversals(getPool()), []);
+    const { rows: reviews } = await getPool().query<{ affected_count: number }>(
+      'SELECT affected_count FROM systemic_reviews WHERE workspace_id = $1', [A.ws]);
+    assert.equal(reviews.length, 1);
+    assert.equal(reviews[0]!.affected_count, 4);
 
     for (const k of ['p1', 'p2', 'p3', 'p4']) {
       assert.equal(await countEvents(ids[k]!, 'systemic_review'), 1, k);
@@ -109,9 +109,9 @@ describe('one overturn', () => {
     const A = await actors();
     const ids = await population(A);
     await ruling(A, 'p1', { [ADJUDICATION.pattern]: 'household.income' });
-    const out = await propagateAdjudications(A.ws);
     // p3 was refused on assets alone; its reasons never name income.
-    assert.deepEqual(new Set(out.reviews[0]!.affected), new Set([ids['p1'], ids['p2'], ids['p4']]));
+    const findings = await listFindings(A.operator, { class: 'systemic_review' });
+    assert.deepEqual(new Set(findings[0]?.detail['affected'] as string[]), new Set([ids['p1'], ids['p2'], ids['p4']]));
     assert.equal(await countEvents(ids['p3']!, 'systemic_review'), 0);
   });
 
@@ -125,8 +125,10 @@ describe('one overturn', () => {
     assert.deepEqual(await propagateAdjudications(A.ws), { reviews: [], flagged: 0 });
     assert.equal(await countEvents(ids['p3']!, 'systemic_review'), 0);
     assert.equal((await listFindings(A.operator, { class: 'systemic_review' })).length, 0);
-    await ruling(A, 'p3');                                     // a person, through the hearing authority
-    assert.equal((await propagateAdjudications(A.ws)).flagged, 4);
+    await ruling(A, 'p3');                                     // a person, through the hearing authority: propagated at the write
+    const found = await listFindings(A.operator, { class: 'systemic_review' });
+    assert.equal(found[0]?.detail['count'], 4);
+    assert.deepEqual(await propagateAdjudications(A.ws), { reviews: [], flagged: 0 }, 'nothing left for the pass');
   });
 
   test('a reversal that names no rule is about one person, and is recorded as dealt with', async () => {
@@ -144,8 +146,8 @@ describe('one overturn', () => {
     const A = await actors();
     const ids = await population(A);
     await ruling(A, 'p1');
-    const pass = await sweepOnce();
-    assert.ok(pass.systemic.flagged >= 4);
+    await sweepOnce();   // the ruling reached every case at the write; the pass finds it done
+    assert.equal((await listFindings(A.operator, { class: 'systemic_review' }))[0]?.detail['count'], 4);
 
     const seen = await lookup(A.agent, { aliases: person('p2'), scope: 'medicaid.renewal' }, STRENGTHS);
     assert.equal(seen.determinations[0]?.underReview, true);

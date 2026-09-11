@@ -48,7 +48,7 @@ export interface PersonCopy {
   determinations: Proof[];
   clocks: Array<{ clock: string; scope: string; status: string; started_at: string; due_at: string;
     met_at: string | null; missed_at: string | null; resolved_at: string | null }>;
-  keys: Array<{ kid: string; alg: string; public_key: string }>;
+  keys: Array<{ kid: string; alg: string; public_key: string; status: 'current' | 'previous' }>;
   verify: {
     how: string;
     /** The independent verifier, inline, so the copy checks itself with nothing else. */
@@ -147,7 +147,7 @@ export async function personCopy(
         started_at: c.started_at.toISOString(), due_at: c.due_at.toISOString(),
         met_at: c.met_at?.toISOString() ?? null, missed_at: c.missed_at?.toISOString() ?? null,
         resolved_at: c.resolved_at?.toISOString() ?? null })),
-      keys: sg === null ? [] : [sg.published()],
+      keys: sg === null ? [] : sg.publishedKeys(),
       verify: {
         how: 'Save verifier_source as verifier.mjs. For each determination, save it as record.json, '
           + 'held_values as values.json and keys as keys.json, then: node verify-cli.mjs record.json '

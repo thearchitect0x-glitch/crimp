@@ -217,7 +217,7 @@ describe('the error rate among people who never complained', () => {
     // Ten who fought (three refused attempts each): six wrong, two corrected by a feed, four by the person.
     for (let i = 0; i < 10; i++) {
       await sealFor(A, `f${i}`);
-      for (let k = 0; k < 3; k++) await lookup(A.agent, { aliases: who(`f${i}`), scope: 'refund', session: 'f'.repeat(32) }, STRENGTHS);
+      for (let k = 0; k < 3; k++) await lookup(A.agent, { aliases: who(`f${i}`), scope: 'refund', session: String(i).padStart(32, 'f') }, STRENGTHS);
     }
     for (let i = 0; i < 2; i++) await lapse(A, `f${i}`, 'carrier_api');
     for (let i = 2; i < 6; i++) await lapse(A, `f${i}`, 'agent_report');
@@ -237,6 +237,20 @@ describe('the error rate among people who never complained', () => {
 
     const strict = await quietErrorEstimate(getPool(), A.ws, 90);
     assert.equal(strict.calibratedRate, null, 'below the minimum the share is anecdote, and the estimate says so');
+  });
+
+  test('a session that touched many people is nobody\'s contestation', async () => {
+    const A = await actors();
+    const { BREADTH } = await import('../../src/domain/breadth.js');
+    const wide = 'e'.repeat(32);
+    for (let i = 0; i < BREADTH.distinctDeterminations; i++) {
+      await sealFor(A, `w${i}`);
+      for (let k = 0; k < 3; k++) await lookup(A.agent, { aliases: who(`w${i}`), scope: 'refund', session: wide }, STRENGTHS);
+    }
+    const q = await quadrant(getPool(), A.ws, 90);
+    assert.equal(q.contestedAndCorrect, 0, 'an enumerator, or a queue worker, is not ten people fighting');
+    assert.equal(q.attempts.some.examined, 0);
+    assert.equal(q.attempts.zero.examined, BREADTH.distinctDeterminations);
   });
 
   test('a lapse recorded before the event said what moved is counted, and counted as unattributed', async () => {

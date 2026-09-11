@@ -172,6 +172,7 @@ export function proofToWire(p: Proof): Record<string, unknown> {
     state: p.state,
     review_flagged_at: p.reviewFlaggedAt?.toISOString() ?? null,
     signature: p.signature,
+    signature_pq: p.signaturePq,
     events: p.events.map((e) => ({
       kind: e.kind, actor: e.actor, evidence_sha256: e.evidenceSha256,
       evidence_class: e.evidenceClass, occurred_at: e.occurredAt.toISOString(),

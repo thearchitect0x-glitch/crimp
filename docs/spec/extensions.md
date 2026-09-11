@@ -180,3 +180,19 @@ needs, and it is the same evidence the invention disclosure already has.
 committing this file to a public repository, posting it, or filing it —
 is a company decision, to be taken after the provisional application is
 on file, and not before.
+
+## `signature_pq` — the second signature
+
+Optional on every record. When the issuer holds an ML-DSA-65 (FIPS 204) key,
+the sealed core is signed twice: `signature` (Ed25519, SPEC §7.0f) and
+`signature_pq` (`{ kid, alg: "ml-dsa-65", sig }`, the 3309-byte signature in
+base64) over exactly the same canonical bytes. The published key set at
+`/.well-known/crimp-keys.json` lists the ML-DSA-65 key with `alg:
+"ml-dsa-65"` and `public_key` as the SubjectPublicKeyInfo DER in base64.
+Every published key also carries `status: "current" | "previous"`: after a
+rotation the previous public keys stay published, so a record signed
+before it keeps verifying. A verifier checks the second signature where
+its runtime can (node:crypto today; browsers' WebCrypto cannot yet) and
+reports it as not checked where it cannot. Absent means not issued, never
+invalid. Why: a record about a person may need to verify in 2040, and
+re-signing history is what a record must never need.

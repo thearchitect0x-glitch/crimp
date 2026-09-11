@@ -12,6 +12,7 @@ import { reevaluate, markFactExpiryDue, type Reevaluation } from '../domain/seal
 import { advanceClocks, resolveMissed } from '../domain/clocks.js';
 import { propagateAdjudications, workspacesWithPendingReversals } from '../domain/systemic.js';
 import { probingBreadth } from '../domain/breadth.js';
+import { PRESSURE_WINDOW_DAYS } from '../domain/lifecycle.js';
 import { recordDrift, DRIFT } from '../domain/drift.js';
 
 export interface PassResult {
@@ -113,6 +114,13 @@ export async function sweepOnce(opts: {
   // so the table stays the size of the question it answers.
   await pool.query(`DELETE FROM evaluation_log WHERE occurred_at < now() - ($1 || ' days')::interval`,
     [String(DRIFT.baselineDays + 7)]);
+  // Pressure and session activity are read only within the window; rows
+  // older than twice it are read by nothing. Found by the ten-year review:
+  // the second unbounded table, after the evaluation log.
+  await pool.query(`DELETE FROM pressure WHERE last_at < now() - ($1 || ' days')::interval`,
+    [String(2 * PRESSURE_WINDOW_DAYS)]);
+  await pool.query(`DELETE FROM session_activity WHERE day < current_date - ($1 || ' days')::interval`,
+    [String(2 * PRESSURE_WINDOW_DAYS)]);
 
   // Drift: only workspaces that evaluated anything in the current window,
   // and not more than once an hour each.

@@ -25,6 +25,7 @@ import { resolveForWrite } from './subject.js';
 import { FACT_TYPES, type FactType } from './rule.js';
 import { requireScope, type Principal } from './auth.js';
 import { markDue, reexecuteSubject } from './seal.js';
+import { ADJUDICATION, propagateAdjudications } from './systemic.js';
 import { loadCatalogue, assertCatalogued, assertAttestable } from './catalogue.js';
 
 const FACT_NAME = /^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,3}$/;
@@ -75,7 +76,7 @@ export async function attest(p: Principal, args: {
     }
   }
 
-  return withTx(async (tx) => {
+  const written = await withTx(async (tx) => {
     const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
       { doing: 'attesting a fact' });
 
@@ -143,6 +144,13 @@ export async function attest(p: Principal, args: {
 
     return { subjectId, count: args.facts.length };
   });
+  // A ruling reaches every case under the rule at the write, not at the next
+  // pass. Its own transactions, after this one committed; the pass remains
+  // the backstop, and who may say it is decided there (systemic.ts), not here.
+  if (args.facts.some((f) => f.fact === ADJUDICATION.ruling && f.value === 'reversed')) {
+    await propagateAdjudications(workspaceId);
+  }
+  return written;
 }
 
 /**

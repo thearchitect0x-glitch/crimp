@@ -7,6 +7,7 @@
  * points at attested facts; this module evaluates the rule and derives the
  * disposition. There is no parameter through which a conclusion can arrive.
  */
+import { BREADTH, WIDE_SESSIONS_SQL } from './breadth.js';
 import type pg from 'pg';
 import { withTx, getPool, type Db } from '../db/pool.js';
 import { newId, sha256Hex, canonicalize } from '../lib/ids.js';
@@ -519,8 +520,9 @@ export async function seal(
     const sg = signer();
     if (sg !== null) {
       const core = recordCore(await loadProof(tx, workspaceId, sealId));
-      await tx.query('UPDATE seals SET signature = $2::jsonb WHERE id = $1',
-        [sealId, JSON.stringify(sg.signCore(core))]);
+      const pq = sg.signCorePq(core);
+      await tx.query('UPDATE seals SET signature = $2::jsonb, signature_pq = $3::jsonb WHERE id = $1',
+        [sealId, JSON.stringify(sg.signCore(core)), pq === null ? null : JSON.stringify(pq)]);
     }
 
     await tx.query(
@@ -627,13 +629,18 @@ export async function lookup(p: Principal, args: {
     // `resolveForRead` also raises `merge_required` and names the endpoint that
     // resolves it, which is what stopped this being a dead end.
     const subjectId = await resolveForRead(tx, workspaceId, aliases);
-    if (subjectId === null) return { determinations: [] };
+    const declared = typeof args.session === 'string' && /^[0-9a-f]{32}$/.test(args.session);
+    if (subjectId === null) {
+      if (declared) await noteSession(tx, workspaceId, args.session!, { lookups: 1, unknown: 1, refusals: 0 });
+      return { determinations: [] };
+    }
 
-    const { rows: found } = await tx.query<{
-      id: string; scope: string; disposition: Disposition; state: 'sealed' | 'tainted';
+    const { rows: found } = await tx.query<ExamRow & {
       max_uses: number | null; uses: number; review_flagged_at: Date | null;
     }>(
-      `SELECT id, scope, disposition, state, max_uses, uses, review_flagged_at
+      `SELECT id, subject_id, rule, state, grammar_version,
+              (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
+              disposition, scope, sealed_at, max_uses, uses, review_flagged_at
          FROM seals
         WHERE workspace_id = $1 AND subject_id = $2 AND scope = ANY($3::text[])
           AND state IN ('sealed', 'tainted')
@@ -644,37 +651,79 @@ export async function lookup(p: Principal, args: {
       [workspaceId, subjectId, ancestors(scope)],
     );
 
+    // Correction at the read. The write corrects what it can reach and the
+    // sweep corrects in time; this is the third clock. Nothing reported here
+    // stands on facts the institution no longer holds: every determination
+    // about to be reported is re-run against the facts held now, and one
+    // whose rule no longer holds is recorded lapsed — here, by the read that
+    // would otherwise have refused the person on it. A read writes only when
+    // something changed.
+    const catalogue = found.length > 0 ? await loadCatalogue(tx, workspaceId) : null;
     const out: Determination[] = [];
+    let refusals = 0;
     for (const s of found) {
       if (!covers(s.scope, scope)) continue;
+      if (catalogue !== null) {
+        const ex = await examine(tx, workspaceId, s, catalogue);
+        if (ex.next !== s.state) {
+          const moved = await transition(tx, workspaceId, s, ex);
+          if (moved !== null) {
+            if (moved.to === 'lapsed' || moved.to === 'expired') continue;   // no longer stands
+            s.state = moved.to as 'sealed' | 'tainted';
+          }
+        }
+      }
       if (s.disposition === 'bind') {
+        refusals++;
         // A tainted bind still stands. Tainted means the ground is gone, not
         // that the claim was disproved, and lifting on an unknown is the guess
         // a gate must never make.
         await bumpPressure(tx, s.id, args.session);
         out.push({
-          sealId: s.id, scope: s.scope, disposition: 'bind', state: s.state,
+          sealId: s.id, scope: s.scope, disposition: 'bind', state: s.state as 'sealed' | 'tainted',
           code: s.state === 'tainted' ? CODES.refusalTainted : CODES.refusalStanding,
           underReview: s.review_flagged_at !== null,
         });
       } else if (s.disposition === 'permit') {
         const remaining = s.max_uses === null ? null : s.max_uses - s.uses;
         out.push({
-          sealId: s.id, scope: s.scope, disposition: 'permit', state: s.state,
+          sealId: s.id, scope: s.scope, disposition: 'permit', state: s.state as 'sealed' | 'tainted',
           code: remaining !== null && remaining <= 0 ? CODES.permitExhausted : CODES.permitAvailable,
           remaining,
           underReview: s.review_flagged_at !== null,
         });
       } else {
         out.push({
-          sealId: s.id, scope: s.scope, disposition: 'commit', state: s.state,
+          sealId: s.id, scope: s.scope, disposition: 'commit', state: s.state as 'sealed' | 'tainted',
           code: CODES.commitMade,
           underReview: s.review_flagged_at !== null,
         });
       }
     }
+    if (declared) await noteSession(tx, workspaceId, args.session!, { lookups: 1, unknown: 0, refusals });
     return { determinations: out };
   });
+}
+
+/**
+ * What a declared session did today: how often it asked, how often about
+ * somebody the system does not know, how often it was refused. Breadth
+ * (breadth.ts) reads this to tell a queue from an enumeration: a caseworker's
+ * session asks about people who exist; a search for whoever is not bound
+ * asks, mostly, about people who do not.
+ */
+async function noteSession(
+  tx: pg.PoolClient, workspaceId: string, session: string,
+  n: { lookups: number; unknown: number; refusals: number },
+): Promise<void> {
+  await tx.query(
+    `INSERT INTO session_activity (workspace_id, session, day, lookups, unknown_subjects, refusals)
+     VALUES ($1, $2, current_date, $3, $4, $5)
+     ON CONFLICT (workspace_id, session, day) DO UPDATE SET
+       lookups = session_activity.lookups + EXCLUDED.lookups,
+       unknown_subjects = session_activity.unknown_subjects + EXCLUDED.unknown_subjects,
+       refusals = session_activity.refusals + EXCLUDED.refusals`,
+    [workspaceId, session, n.lookups, n.unknown, n.refusals]);
 }
 
 /**
@@ -738,11 +787,16 @@ async function bumpPressure(tx: pg.PoolClient, sealId: string, session?: string)
 
 export async function pressureOf(db: Db, sealId: string): Promise<Pressure> {
   const { rows } = await db.query<{ attempts: string; sessions: string }>(
-    `SELECT COALESCE(sum(attempts), 0) AS attempts,
+    // A session that touched many people in the window — a queue worker's,
+    // or an enumerator's — is not the party seeking relief coming back, and
+    // must never raise the bar against the person it touched.
+    `WITH wide AS (${WIDE_SESSIONS_SQL.replace('$WS', '(SELECT workspace_id FROM seals WHERE id = $1)').replace('$DAYS', '$2').replace('$N', '$3')})
+     SELECT COALESCE(sum(attempts), 0) AS attempts,
             count(*) FILTER (WHERE declared) AS sessions
        FROM pressure
-      WHERE seal_id = $1 AND last_at > now() - ($2 || ' days')::interval`,
-    [sealId, String(PRESSURE_WINDOW_DAYS)]);
+      WHERE seal_id = $1 AND last_at > now() - ($2 || ' days')::interval
+        AND session NOT IN (SELECT session FROM wide)`,
+    [sealId, String(PRESSURE_WINDOW_DAYS), BREADTH.distinctDeterminations]);
   const r = rows[0];
   return { attempts: Number(r?.attempts ?? 0), sessions: Number(r?.sessions ?? 0) };
 }
