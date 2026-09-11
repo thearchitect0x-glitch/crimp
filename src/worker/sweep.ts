@@ -8,7 +8,7 @@
  * the loop has nothing in it worth testing.
  */
 import { getPool } from '../db/pool.js';
-import { reevaluate, type Reevaluation } from '../domain/seal.js';
+import { reevaluate, markFactExpiryDue, type Reevaluation } from '../domain/seal.js';
 import { advanceClocks, resolveMissed } from '../domain/clocks.js';
 import { propagateAdjudications, workspacesWithPendingReversals } from '../domain/systemic.js';
 import { recordDrift, DRIFT } from '../domain/drift.js';
@@ -63,6 +63,11 @@ export async function sweepOnce(opts: {
     systemic.reviews += r.reviews.length;
     systemic.flagged += r.flagged;
   }
+
+  // The third trigger, before anything decides who has due work: a fact
+  // that ran out under a standing determination makes it due, in every
+  // workspace, with no write having happened.
+  await markFactExpiryDue(pool);
 
   // Only workspaces that actually have due work. A deployment with ten
   // thousand idle tenants should not pay for them on every pass.

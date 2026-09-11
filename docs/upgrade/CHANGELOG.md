@@ -846,8 +846,11 @@ laptop). Two things the two triggers of cap-09's re-execution could not see.
    first marks due any determination whose subject has an attestation that
    expired since the determination was last examined (`reevaluate`, and
    index `020_fact_expiry.sql`). Exact and idempotent: the examination moves
-   the cursor past the expiry. Test: "re-examined without any write, and
-   only once".
+   the cursor past the expiry. The first version ran inside the
+   per-workspace batch, and the benchmark found the hole again: a workspace
+   with nothing else due never opens a batch. It runs at the start of the
+   pass, across every workspace. Test: "re-examined without any write, and
+   only once", through `sweepOnce`.
 2. **Expiry recording starves under overload.** With 1 500 changes per pass
    against a 1 000 batch, 500 determinations past their own expiry stayed
    `sealed` for ten passes because due rows sort first; they were recorded

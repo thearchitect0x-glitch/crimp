@@ -118,9 +118,11 @@ describe('fact expiry is a change nothing writes', () => {
     const id = await bind(A, 'fade');
     assert.equal(await stateOf(id), 'sealed');
     await new Promise((r) => setTimeout(r, 600));
-    // Nothing was written for this subject. Before the third trigger this
-    // determination stayed sealed on evidence its owner had declared stale.
-    const r = await reevaluate(A.ws);
+    // Nothing was written for this subject, so nothing in this workspace is
+    // due and the pass would not even open a batch here. Before the third
+    // trigger this determination stayed sealed on evidence its owner had
+    // declared stale. Through the worker's own pass, not a batch by hand.
+    const r = await sweepOnce();
     assert.ok(r.changes.some((c) => c.sealId === id && c.to === 'tainted'), 'the expiry alone reached it');
     assert.equal(await stateOf(id), 'tainted');
     const again = await reevaluate(A.ws);
