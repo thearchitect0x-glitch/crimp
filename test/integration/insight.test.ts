@@ -238,4 +238,28 @@ describe('the error rate among people who never complained', () => {
     const strict = await quietErrorEstimate(getPool(), A.ws, 90);
     assert.equal(strict.calibratedRate, null, 'below the minimum the share is anecdote, and the estimate says so');
   });
+
+  test('a lapse recorded before the event said what moved is counted, and counted as unattributed', async () => {
+    const A = await actors();
+    const s = await sealFor(A, 'old');
+    // A lapsed event of the older shape: no `changed`, as every record lapsed before today carries.
+    await getPool().query(
+      `UPDATE seals SET state = 'lapsed', settled_at = now() WHERE id = $1`, [s.sealId]);
+    await getPool().query(
+      `INSERT INTO seal_events (seal_id, workspace_id, kind, detail) VALUES ($1, $2, 'lapsed', '{"from":"sealed"}'::jsonb)`,
+      [s.sealId, A.ws]);
+    const e = await quietErrorEstimate(getPool(), A.ws, 90, { minFoughtLapses: 1 });
+    assert.deepEqual(e.zeroAttempt, { n: 1, lapsed: 1, lapsedViaFeed: 0, lapsedViaSelf: 0, unattributed: 1 });
+    assert.equal(e.calibratedRate, null, 'no attributed lapse among the fought, no share, no estimate');
+  });
+
+  test('a correction the person signed is their own word, not a feed', async () => {
+    const A = await actors();
+    await getPool().query(
+      `INSERT INTO fact_sources (workspace_id, source, admissibility) VALUES ($1, 'person_signed', 'signed')`, [A.ws]);
+    await sealFor(A, 'sg');
+    await lapse(A, 'sg', 'person_signed');
+    const e = await quietErrorEstimate(getPool(), A.ws, 90, { minFoughtLapses: 1 });
+    assert.deepEqual(e.zeroAttempt, { n: 1, lapsed: 1, lapsedViaFeed: 0, lapsedViaSelf: 1, unattributed: 0 });
+  });
 });

@@ -188,6 +188,13 @@ export async function quadrant(
 
 /* ── 2a · The error rate among people who never complained ───────────── */
 
+/**
+ * The classes that are the person's own word. `signed` proves non-repudiation,
+ * not truth (admissibility.ts), so a signed self-assertion is still the person
+ * correcting their own record, not a feed discovering it.
+ */
+const SELF_CLASSES: ReadonlySet<string> = new Set(['self', 'signed']);
+
 /** Fewer lapses among the people who fought than this, and the feed share is anecdote. */
 export const ESTIMATE_MIN_FOUGHT_LAPSES = 20;
 
@@ -246,7 +253,7 @@ export async function quietErrorEstimate(
     const changed = Array.isArray(r.detail?.['changed']) ? (r.detail!['changed'] as Array<{ now: { admissibility: string } | null }>) : [];
     const classes = changed.map((x) => x.now?.admissibility ?? null).filter((x): x is string => x !== null);
     if (classes.length === 0) c.unattributed++;
-    else if (classes.some((k) => k !== 'self')) c.lapsedViaFeed++;
+    else if (classes.some((k) => !SELF_CLASSES.has(k))) c.lapsedViaFeed++;
     else c.lapsedViaSelf++;
   }
   const attributedFought = fought.lapsedViaFeed + fought.lapsedViaSelf;
