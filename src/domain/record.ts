@@ -30,7 +30,7 @@ import type { Disposition } from './seal.js';
 import type { Facts, Fact, FactType, Rule } from './rule.js';
 import { fromStored, type RuleRef, type StoredRuleRef } from './registry.js';
 import type { Remedy } from './remedy.js';
-import type { Signature } from '../lib/signing.js';
+import type { Signature, SignaturePq } from '../lib/signing.js';
 import { toStored } from './registry.js';
 
 /** Reading the values that decided a determination is an operator act. */
@@ -77,6 +77,8 @@ export interface Proof {
   reviewFlaggedAt: Date | null;
   /** The issuer's Ed25519 signature over `recordCore` (SPEC §7.0f). Null if unsigned. */
   signature: Signature | null;
+  /** The issuer's ML-DSA-65 signature over the same core, when issued. Null if not. */
+  signaturePq: SignaturePq | null;
   reasons: Reason[];
   facts: SealedFact[];
   events: SealEvent[];
@@ -86,6 +88,7 @@ export interface Proof {
     valueDigest: string;
     ruleRef: string;
     signature: string;
+    signaturePq: string;
     note: string;
   };
 }
@@ -95,14 +98,14 @@ interface SealRow {
   rule_hash: string; grammar_version: string; sealed_by: string; sealed_at: Date;
   expires_at: Date | null; reasons: Reason[]; subject_id: string;
   as_of: Date | null; rule_ref: StoredRuleRef | null; remedy: Remedy | null;
-  review_flagged_at: Date | null; signature: Signature | null;
+  review_flagged_at: Date | null; signature: Signature | null; signature_pq: SignaturePq | null;
 }
 
 async function loadSeal(db: Db, workspaceId: string, sealId: string): Promise<SealRow> {
   const { rows } = await db.query<SealRow>(
     `SELECT id, scope, disposition, state, rule, rule_hash, grammar_version, sealed_by,
             sealed_at, expires_at, reasons, subject_id, as_of, rule_ref, remedy, review_flagged_at,
-            signature
+            signature, signature_pq
        FROM seals WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, sealId]);
   const seal = rows[0];
@@ -192,6 +195,7 @@ export async function loadProof(db: Db, workspaceId: string, sealId: string): Pr
     remedy: seal.remedy,
     reviewFlaggedAt: seal.review_flagged_at,
     signature: seal.signature,
+    signaturePq: seal.signature_pq,
     reasons: seal.reasons,
     facts: facts.map((f) => ({
       fact: f.fact, factType: f.fact_type, valueSha256: f.value_sha256,
@@ -215,6 +219,9 @@ export async function loadProof(db: Db, workspaceId: string, sealId: string): Pr
         + 'core — seal_id, scope, disposition, rule, rule_hash, grammar_version, sealed_by, sealed_at, '
         + 'expires_at, as_of, rule_ref, reasons, facts, remedy — under the key published at '
         + '/.well-known/crimp-keys.json for its kid.',
+      signaturePq: 'if present, ML-DSA-65 (FIPS 204) over the same canonical bytes, under the ml-dsa-65 key '
+        + 'published for its kid (public_key is SubjectPublicKeyInfo DER, base64). The signature that '
+        + 'survives a quantum computer. Absent means not issued, never invalid.',
       note: 'Recompute each value digest from your own record of the value, compare, then '
         + 're-run `rule` under grammar_version. Crimp never held the values, so it cannot '
         + 'have altered them.',

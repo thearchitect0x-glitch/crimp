@@ -9,6 +9,10 @@ let cached: { key: string; signer: Signer } | null = null;
 export function signer(): Signer | null {
   const key = config.signingKey;
   if (key === null) return null;
-  if (cached === null || cached.key !== key) cached = { key, signer: new Signer(key) };
+  const pq = config.signingKeyPq; const prev = config.signingPreviousPublicKeys;
+  const fingerprint = `${key}|${pq ?? ''}|${prev.join(',')}`;
+  if (cached === null || cached.key !== fingerprint) {
+    cached = { key: fingerprint, signer: new Signer(key, { pqPrivateKeyDer: pq, previousPublicKeys: prev }) };
+  }
   return cached.signer;
 }

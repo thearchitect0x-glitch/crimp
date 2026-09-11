@@ -22,7 +22,7 @@ const proof = (over: Partial<Proof> = {}): Proof => ({
     { fact: 'clinical.red_flag', op: 'eq', value: false }] },
   ruleHash: 'b'.repeat(64), grammarVersion: '1', sealedBy: 'agent',
   sealedAt: new Date('2026-09-01T12:00:00Z'), expiresAt: new Date('2026-12-01T00:00:00Z'), asOf: null,
-  reviewFlaggedAt: null, signature: { kid: '56475aa75463474c', alg: 'ed25519', sig: 'AA==' },
+  reviewFlaggedAt: null, signaturePq: null, signature: { kid: '56475aa75463474c', alg: 'ed25519', sig: 'AA==' },
   ruleRef: { ruleset: 'prior_auth', ruleId: 'imaging.mri_lumbar', version: 'b'.repeat(64),
     legalAuthority: '42 CFR 438.210(d)(1)', effectiveFrom: new Date('2026-01-01T00:00:00Z'), effectiveTo: null },
   remedy: { target: 'false', exhaustive: true, evaluations: 4, sets: [
@@ -39,7 +39,7 @@ const proof = (over: Partial<Proof> = {}): Proof => ({
     { fact: 'clinical.red_flag', factType: 'bool', valueSha256: 'd'.repeat(64), source: 'ehr_feed',
       admissibility: 'internal', assertedAt: new Date('2026-08-30T00:00:00Z'), attester: 'key_1' },
   ],
-  events: [], verify: { ruleHash: '', valueDigest: '', ruleRef: '', signature: '', note: '' },
+  events: [], verify: { ruleHash: '', valueDigest: '', ruleRef: '', signature: '', signaturePq: '', note: '' },
   ...over,
 });
 const catalogue = new Map([

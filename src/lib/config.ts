@@ -53,6 +53,12 @@ export const config = {
    * proves nothing about who issued it.
    */
   get signingKey(): string | null { return process.env['SIGNING_KEY'] || null; },
+  /** Optional ML-DSA-65 private key (PKCS#8 DER, base64): every core is signed twice. */
+  get signingKeyPq(): string | null { return process.env['SIGNING_KEY_PQ'] || null; },
+  /** Raw Ed25519 public keys this deployment signed with before, comma-separated base64. Published so old records keep verifying. */
+  get signingPreviousPublicKeys(): string[] {
+    return (process.env['SIGNING_PREVIOUS_PUBLIC_KEYS'] ?? '').split(',').map((k) => k.trim()).filter((k) => k.length > 0);
+  },
 
   /**
    * Where a person can check a record: the format's home, serving the

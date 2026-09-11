@@ -18,6 +18,7 @@
  *   - These are hints, not verdicts. Every one of them is a reason to look, and
  *     none of them is a finding.
  */
+import { BREADTH, WIDE_SESSIONS_SQL } from './breadth.js';
 import type { Db } from '../db/pool.js';
 import { thresholds, type Rule } from './rule.js';
 import { PRESSURE_WINDOW_DAYS, tierOf } from './lifecycle.js';
@@ -146,17 +147,20 @@ export async function quadrant(
   const { rows } = await db.query<{
     id: string; state: string; attempts: string | null; sessions: string | null;
   }>(
-    `SELECT s.id, s.state,
+    `WITH wide AS (${WIDE_SESSIONS_SQL.replace('$WS', '$1').replace('$DAYS', '$3').replace('$N', '$4')})
+     SELECT s.id, s.state,
             COALESCE(sum(p.attempts), 0)                  AS attempts,
             count(p.*) FILTER (WHERE p.declared)          AS sessions
        FROM seals s
        LEFT JOIN pressure p
          ON p.seal_id = s.id
         AND p.last_at > now() - ($3 || ' days')::interval
+        -- A session that touched many people is nobody's contestation.
+        AND p.session NOT IN (SELECT session FROM wide)
       WHERE s.workspace_id = $1
         AND s.sealed_at   > now() - ($2 || ' days')::interval
       GROUP BY s.id, s.state`,
-    [workspaceId, String(days), String(PRESSURE_WINDOW_DAYS)]);
+    [workspaceId, String(days), String(PRESSURE_WINDOW_DAYS), BREADTH.distinctDeterminations]);
 
   const out: QuadrantCounts = {
     window: { days },
@@ -234,15 +238,17 @@ export async function quietErrorEstimate(
 ): Promise<QuietErrorEstimate> {
   const minimum = opts.minFoughtLapses ?? ESTIMATE_MIN_FOUGHT_LAPSES;
   const { rows } = await db.query<{ state: string; attempts: string | null; detail: Record<string, unknown> | null }>(
-    `SELECT s.state,
+    `WITH wide AS (${WIDE_SESSIONS_SQL.replace('$WS', '$1').replace('$DAYS', '$3').replace('$N', '$4')})
+     SELECT s.state,
             (SELECT sum(p.attempts) FROM pressure p WHERE p.seal_id = s.id
-               AND p.last_at > now() - ($3 || ' days')::interval) AS attempts,
+               AND p.last_at > now() - ($3 || ' days')::interval
+               AND p.session NOT IN (SELECT session FROM wide)) AS attempts,
             (SELECT e.detail FROM seal_events e WHERE e.seal_id = s.id AND e.kind = 'lapsed'
               ORDER BY e.occurred_at DESC LIMIT 1) AS detail
        FROM seals s
       WHERE s.workspace_id = $1 AND s.disposition = 'bind'
         AND s.sealed_at > now() - ($2 || ' days')::interval`,
-    [workspaceId, String(days), String(PRESSURE_WINDOW_DAYS)]);
+    [workspaceId, String(days), String(PRESSURE_WINDOW_DAYS), BREADTH.distinctDeterminations]);
   const cell = () => ({ n: 0, lapsed: 0, lapsedViaFeed: 0, lapsedViaSelf: 0, unattributed: 0 });
   const zero = cell(); const fought = cell();
   for (const r of rows) {

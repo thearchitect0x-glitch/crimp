@@ -3,7 +3,7 @@
 /** §7.0f · A sealed record is signed at seal time, over its core, and the proof carries it. */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { closePool } from '../../src/db/pool.js';
+import { closePool, getPool } from '../../src/db/pool.js';
 import { migrate } from '../../src/db/migrate.js';
 import { attest } from '../../src/domain/attest.js';
 import { seal, reevaluate } from '../../src/domain/seal.js';
@@ -60,6 +60,36 @@ describe('the signature', () => {
       assert.equal(signer(), null);
     } finally {
       process.env['SIGNING_KEY'] = saved;
+    }
+  });
+});
+
+describe('a deployment holding a post-quantum key', () => {
+  test('signs every core twice, publishes both keys and the previous one, and the record verifies under each', async () => {
+    const { generatePqKeyPair, verifyCore, verifyCorePq } = await import('../../src/lib/signing.js');
+    const { signer } = await import('../../src/domain/signer.js');
+    const { loadProof, recordCore } = await import('../../src/domain/record.js');
+    const pq = generatePqKeyPair();
+    const previous = Buffer.alloc(32, 9).toString('base64');
+    const saved = { pq: process.env['SIGNING_KEY_PQ'], prev: process.env['SIGNING_PREVIOUS_PUBLIC_KEYS'] };
+    process.env['SIGNING_KEY_PQ'] = pq.privateKeyDerBase64;
+    process.env['SIGNING_PREVIOUS_PUBLIC_KEYS'] = previous;
+    try {
+      const A = await actors();
+      await attest(A.agent, { aliases: person('pq'), facts: [
+        { fact: 'carrier.delivered', type: 'bool', value: false, source: 'carrier_api' } ] }, STRENGTHS);
+      const s = await seal(A.agent, { idempotencyKey: 'idem-pq', aliases: person('pq'), scope: 'refund',
+        disposition: 'bind', rule: { fact: 'carrier.delivered', op: 'eq', value: false }, claw: CLAW }, STRENGTHS);
+      const pr = await loadProof(getPool(), A.ws, s.sealId!);
+      assert.equal(pr.signaturePq?.alg, 'ml-dsa-65');
+      const keys = signer()!.publishedKeys();
+      assert.deepEqual(keys.map((k) => [k.alg, k.status]), [['ed25519', 'current'], ['ml-dsa-65', 'current'], ['ed25519', 'previous']]);
+      const core = recordCore(pr);
+      assert.equal(verifyCore(core, pr.signature!, keys[0]!.public_key), true);
+      assert.equal(verifyCorePq(core, pr.signaturePq!, keys[1]!.public_key), true);
+    } finally {
+      if (saved.pq === undefined) delete process.env['SIGNING_KEY_PQ']; else process.env['SIGNING_KEY_PQ'] = saved.pq;
+      if (saved.prev === undefined) delete process.env['SIGNING_PREVIOUS_PUBLIC_KEYS']; else process.env['SIGNING_PREVIOUS_PUBLIC_KEYS'] = saved.prev;
     }
   });
 });

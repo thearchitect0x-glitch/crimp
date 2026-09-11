@@ -954,3 +954,52 @@ SNAP-shaped rule (profile in the package's experiments); the path is
 round-trip bound, so the per-fact commitment inserts became one statement.
 
 **Tests.** 454 → 458.
+
+## The read clock, sessions with a profile, and keys over decades · 10 September 2026
+
+Round three, from three questions: can the number move, can the threshold
+be more accurate, and does the system hold in ten years.
+
+**Correction at the read.** The write reaches the subject's own
+determinations and the pass reaches everything in time; a lookup could
+still refuse a person on facts no longer held, for up to a pass. `lookup`
+now re-executes every determination it is about to report as standing,
+records a lapse itself when the rule no longer holds, and does not report
+or count a refusal for it. A read writes only when something changed.
+Three clocks: the write, the read, and time.
+
+**A ruling propagates at the write.** `attest` runs `propagateAdjudications`
+after its transaction commits when the batch carries a reversed ruling;
+who may say it is still decided in systemic.ts. Four systemic tests now
+assert the effect rather than the pass.
+
+**Sessions with a profile.** `session_activity` (migration 022) records per
+declared session per day how often it asked, how often about a subject the
+system does not know, and how often it was refused. A breadth finding now
+carries `lookups`, `unknown_subjects`, `unknown_rate` and a `profile`:
+`enumeration` when at least half its lookups were about people who do not
+exist, `queue` otherwise. And a wide session — ten or more distinct
+determinations in the window — is excluded from pressure wherever
+pressure is read: the quadrant, the estimate, and `pressureOf`, which feeds
+hardening. A session that touched many people is nobody's contestation,
+and can never raise the bar against the people it touched.
+
+**Two unbounded tables pruned.** `pressure` and `session_activity` rows
+older than twice the window are read by nothing and are removed by the
+pass.
+
+**Keys over decades.** `SIGNING_PREVIOUS_PUBLIC_KEYS` publishes the raw
+Ed25519 public keys a deployment signed with before, marked `previous`, so
+a record signed before a rotation keeps verifying against the key set.
+`SIGNING_KEY_PQ` (an ML-DSA-65 key, FIPS 204; `npm run keygen:pq` mints
+one) makes every sealed core carry a second signature, `signature_pq`,
+over the same canonical bytes, under a lattice scheme that a quantum
+computer cannot forge. The verifier checks it through node:crypto where
+that exists and reports it as not checked in a browser; absent is never a
+finding. Migration 023; `docs/spec/extensions.md` describes the field.
+
+**Measured.** Fuzz 23 properties × 25 000 runs; conformance 60 vectors and
+37 through the independent verifier, unchanged; ML-DSA-65 signatures are
+3 309 bytes and verify in under a millisecond.
+
+**Tests.** 458 → 468.

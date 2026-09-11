@@ -3,7 +3,7 @@
 /** §7.0f · Ed25519 over the canonical core: deterministic, key-bound, tamper-evident. */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { Signer, verifyCore, kidOf } from '../../src/lib/signing.js';
+import { Signer, verifyCore, verifyCorePq, kidOf, generatePqKeyPair } from '../../src/lib/signing.js';
 
 const SEED = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 const OTHER = Buffer.alloc(32, 7).toString('base64');
@@ -40,5 +40,43 @@ describe('record signing', () => {
     assert.match(sg.kid, /^[0-9a-f]{16}$/);
     assert.equal(sg.publicKeyRaw.length, 32);
     assert.throws(() => new Signer('dG9vc2hvcnQ='), /32-byte/);
+  });
+});
+
+describe('the post-quantum second signature', () => {
+  test('verifies under the published ml-dsa-65 key, fails on any change, and is absent when there is no key', () => {
+    const pq = generatePqKeyPair();
+    const sg = new Signer(SEED, { pqPrivateKeyDer: pq.privateKeyDerBase64 });
+    assert.equal(sg.hasPq, true);
+    const a = sg.signCorePq(core)!;
+    assert.equal(a.alg, 'ml-dsa-65');
+    assert.equal(a.kid, pq.kid);
+    assert.equal(Buffer.from(a.sig, 'base64').length, 3309);
+    assert.equal(verifyCorePq(core, a, pq.publicKeyDerBase64), true);
+    assert.equal(verifyCorePq({ ...core, scope: 'refund.x' }, a, pq.publicKeyDerBase64), false);
+    assert.equal(verifyCorePq(core, a, generatePqKeyPair().publicKeyDerBase64), false);
+    assert.equal(new Signer(SEED).signCorePq(core), null);
+    assert.equal(new Signer(SEED).hasPq, false);
+  });
+
+  test('refuses a key of the wrong kind', () => {
+    // An Ed25519 PKCS#8 handed in as the post-quantum key.
+    const wrong = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(SEED, 'base64')]).toString('base64');
+    assert.throws(() => new Signer(SEED, { pqPrivateKeyDer: wrong }), /ml-dsa-65/);
+  });
+
+  test('previous keys are published beside the current ones, and never sign', () => {
+    const older = new Signer(OTHER);
+    const pq = generatePqKeyPair();
+    const sg = new Signer(SEED, { pqPrivateKeyDer: pq.privateKeyDerBase64, previousPublicKeys: [older.published().public_key] });
+    const keys = sg.publishedKeys();
+    assert.deepEqual(keys.map((k) => [k.alg, k.status]), [['ed25519', 'current'], ['ml-dsa-65', 'current'], ['ed25519', 'previous']]);
+    assert.equal(keys[2]!.kid, older.kid);
+    // A record signed under the older key still verifies against the published set.
+    const sig = older.signCore(core);
+    const key = keys.find((k) => k.kid === sig.kid)!;
+    assert.equal(verifyCore(core, sig, key.public_key), true);
+    assert.equal(sg.signCore(core).kid, sg.kid, 'the current key signs; the previous one only verifies');
+    assert.throws(() => new Signer(SEED, { previousPublicKeys: ['AAAA'] }), /32-byte/);
   });
 });

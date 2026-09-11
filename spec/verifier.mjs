@@ -206,6 +206,30 @@ export async function verifySignature(det, keys) {
   }
 }
 
+/**
+ * The post-quantum second signature (ML-DSA-65, FIPS 204), when the issuer
+ * made one. WebCrypto in browsers cannot verify it yet, so it is checked
+ * through node:crypto where that exists and reported as not checked where
+ * it does not; the Ed25519 result above stands either way.
+ */
+export async function verifySignaturePq(det, keys) {
+  const sig = det.signature_pq;
+  const key = (keys ?? []).find((k) => k.kid === sig.kid);
+  if (!key) return { ok: null, detail: `no published key for kid ${sig.kid}` };
+  if (key.alg !== 'ml-dsa-65') return { ok: false, detail: `key ${sig.kid} is ${key.alg}, not ml-dsa-65` };
+  let nodeCrypto;
+  try { nodeCrypto = await import('node:crypto'); } catch {
+    return { ok: null, detail: 'this runtime cannot verify ml-dsa-65 (no node:crypto); the Ed25519 signature is the one checked here' };
+  }
+  try {
+    const pub = nodeCrypto.createPublicKey({ key: Buffer.from(key.public_key, 'base64'), format: 'der', type: 'spki' });
+    const ok = nodeCrypto.verify(null, Buffer.from(canonicalJson(core(det)), 'utf8'), pub, Buffer.from(sig.sig, 'base64'));
+    return { ok, detail: ok ? `valid under ${sig.kid} (ml-dsa-65)` : `INVALID under ${sig.kid} (ml-dsa-65) — the core was altered or the key is wrong` };
+  } catch (e) {
+    return { ok: null, detail: `could not verify: ${e.message}` };
+  }
+}
+
 /* ── §8 · Verification procedure ─────────────────────────────────────── */
 
 const CONSISTENT = {
@@ -307,6 +331,11 @@ export async function verify(det, held = {}, opts = {}) {
     add('signature', r.ok, r.detail);
   } else {
     add('signature', null, 'unsigned — internally consistent at best; nothing says who issued it');
+  }
+  // The second signature, when issued. Absent is not a finding.
+  if (det.signature_pq != null) {
+    const r = await verifySignaturePq(det, opts.keys);
+    add('signature · post-quantum', r.ok, r.detail);
   }
 
   // ACCURACY is checkable with no values at all: it is a property of the

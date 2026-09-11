@@ -194,7 +194,7 @@ export function buildApp(): FastifyInstance {
     const { signer } = await import('../domain/signer.js');
     const sg = signer();
     reply.header('cache-control', 'public, max-age=3600');
-    return { keys: sg === null ? [] : [sg.published()] };
+    return { keys: sg === null ? [] : sg.publishedKeys() };
   });
 
   void app.register(registerRoutes, { prefix: '/v1' });
