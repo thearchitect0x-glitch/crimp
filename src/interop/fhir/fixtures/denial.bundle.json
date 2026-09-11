@@ -102,7 +102,7 @@
           {
             "number": 1,
             "type": "display",
-            "text": "What would change this: Weeks of conservative therapy tried not is less than 6 or Red-flag symptom present not is false"
+            "text": "What would change this: Weeks of conservative therapy tried is at least 6 or Red-flag symptom present is true"
           },
           {
             "number": 2,

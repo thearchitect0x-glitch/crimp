@@ -734,6 +734,49 @@ console, fixed with brace matching, and the page verified again by hand.
 
 **Tests.** 432 → 445 (4 site unit, 4 verifier-page unit, 2 e2e, 3 notice).
 
+## The SNAP configuration · 10 September 2026
+
+**What it is.** `src/programmes/snap.ts`: seven sources with their
+programme, twenty-four catalogued facts with the descriptions the notice
+prints, one ruleset, ten rule versions — every threshold a literal with its
+citation, every number an FY 2026 federal figure marked
+`TODO(legal-confirm)`. `scripts/seed-snap.ts` applies it; the integration
+test walks a grant, a gross-income denial and its remedy, a procedural
+denial behind the Notice-of-Missed-Interview guard, expedited service met
+on its seven-day clock, the work requirement across the H.R. 1 change (two
+versions of one rule, resolved by `as_of`), and the notice. Written up in
+`docs/programmes/snap.md`.
+
+**Four findings, two of them blockers.**
+1. **Arithmetic is outside the gate** (B3). Net income, expedited
+   criterion (iii) and age are computations the grammar cannot carry; they
+   arrive as derived facts, and the record commits to their digests but
+   not their derivation. The income *tests* are exact by enumerating
+   household size (40 of 64 nodes). Recommended: name the deriving engine
+   on the attestation before widening the grammar.
+2. **Enumeration stops at twelve members**, stated in config.
+3. **The remedy names facts a person cannot change** (B4): "household of
+   five" is a valid remedy and not advice. Proposed: a `mutability`
+   attribute on the catalogue, ordering the notice, record unchanged.
+4. **Ex parte is Medicaid's.** SNAP requires the interview (7 CFR
+   273.2(e)(2)); this ruleset declares no ex parte rule, records
+   `not_declared` on every procedural seal, and relies on cap-01's
+   delivery guard for the NOMI.
+
+**Two things the configuration broke, fixed here.** The citation grammar
+refused compound citations (`7 CFR 273.9(a)(1); 7 CFR 273.10(e)(1)(i)(A)`)
+on two counts: no semicolon lists, and paragraph designators in lowercase
+only — CFR alternates case by level. Now a list, each part optionally
+annotated ("as amended by Pub. L. 119-21 §10102"), both cases. And the
+notice printed the remedy one line per *cell* — four lines of a dozen
+clauses for "gross income at most $3,483". `remedyLines` collapses cells on
+one fact into their union interval, summarises an enumeration by its
+complement ("is not one of 1, 2, 3, 4"), and flips a negated boolean ("is
+true", not "is not false"). Rendering only; the record is exact and
+unchanged; the FHIR fixture regenerated deliberately.
+
+**Tests.** 445 → 453.
+
 ## Security sweep · 10 September 2026
 
 Asked to sweep for holes while the pull requests wait. Read as an attacker

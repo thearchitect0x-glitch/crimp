@@ -111,8 +111,16 @@ describe('committing policy', () => {
         e instanceof ApiError && e.code === 'invalid_citation', JSON.stringify(bad));
     }
     for (const ok of ['42 CFR 435.916(b)(1)', '7 CFR 273.2', '42 U.S.C. § 1396a(a)(8)',
-      '42 USC 1396a', 'Cal. Welf. & Inst. Code § 14005.37', 'NY Soc. Serv. Law § 366']) {
+      '42 USC 1396a', 'Cal. Welf. & Inst. Code § 14005.37', 'NY Soc. Serv. Law § 366',
+      // Real rules cite two provisions, and annotate a section with the law that amended it.
+      '7 CFR 273.9(a)(1); 7 CFR 273.10(e)(1)(i)(A)', '7 CFR 273.24 as amended by Pub. L. 119-21 §10102',
+      '7 CFR 273.24 (pre-Pub. L. 119-21)']) {
       assert.equal(validateCitation(ok), ok);
+    }
+    assert.equal(validateCitation(' 7 CFR 273.2 ;7 CFR 273.14 '), '7 CFR 273.2; 7 CFR 273.14', 'normalised');
+    for (const bad of ['7 CFR 273.2;', '; 7 CFR 273.2', '42', '7 CFR', 'x'.repeat(201)]) {
+      assert.throws(() => validateCitation(bad), (e: unknown) =>
+        e instanceof ApiError && e.code === 'invalid_citation', JSON.stringify(bad));
     }
   });
 
