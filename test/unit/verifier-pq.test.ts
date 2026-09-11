@@ -7,7 +7,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Signer, generatePqKeyPair } from '../../src/lib/signing.js';
+import { Signer, generatePqKeyPair, pqSupported } from '../../src/lib/signing.js';
+const NO_PQ = pqSupported() ? false : 'ML-DSA-65 needs Node 25 or OpenSSL 3.5';
 // The verifier is plain JavaScript by design (it must run with nothing but a browser);
 // resolved at run time so the type checker does not demand a declaration for it.
 const VERIFIER = '../../spec/verifier.mjs';
@@ -19,7 +20,7 @@ const vectors = JSON.parse(readFileSync(new URL('../../spec/vectors/vectors.json
 const signed = (vectors.signature as Array<{ record: Record<string, unknown>; valid: boolean }>).find((c) => c.valid)!.record;
 
 describe('verifier · post-quantum signature', () => {
-  test('a record signed twice reports both steps, and the second breaks on tampering', async () => {
+  test('a record signed twice reports both steps, and the second breaks on tampering', { skip: NO_PQ }, async () => {
     const pq = generatePqKeyPair();
     const sg = new Signer(SEED, { pqPrivateKeyDer: pq.privateKeyDerBase64 });
     const { signature: _drop, ...bare } = signed;

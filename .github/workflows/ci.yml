@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@v5
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '24', cache: npm }
       - run: npm ci
       - name: Typecheck (src, test, scripts)
         run: npm run typecheck

@@ -959,4 +959,11 @@ finding. Migration 023; `docs/spec/extensions.md` describes the field.
 37 through the independent verifier, unchanged; ML-DSA-65 signatures are
 3 309 bytes and verify in under a millisecond.
 
+**Node 24.** CI ran Node 22, which has no ML-DSA, and the post-quantum
+tests failed there while passing on Node 25 locally. CI and the image now
+run Node 24 (the current LTS, which carries ML-DSA-65); the signer refuses
+a post-quantum key on any runtime that cannot use it, production refuses
+to start in that state, and the tests skip with the reason where the
+runtime lacks it.
+
 **Tests.** 458 → 468.
