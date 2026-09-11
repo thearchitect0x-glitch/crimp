@@ -24,7 +24,9 @@ import { blindAliases, type MergeStrength } from '../lib/blind.js';
 import { resolveForWrite } from './subject.js';
 import { FACT_TYPES, type FactType } from './rule.js';
 import { requireScope, type Principal } from './auth.js';
-import { markDue } from './seal.js';
+import { markDue, reexecuteSubject } from './seal.js';
+import { ADJUDICATION, propagateAdjudications } from './systemic.js';
+import { loadCatalogue, assertCatalogued, assertAttestable } from './catalogue.js';
 
 const FACT_NAME = /^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,3}$/;
 const MAX_STRING = 256;
@@ -74,9 +76,15 @@ export async function attest(p: Principal, args: {
     }
   }
 
-  return withTx(async (tx) => {
+  const written = await withTx(async (tx) => {
     const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
       { doing: 'attesting a fact' });
+
+    // A closed catalogue admits only what it names, at the declared type and
+    // within the declared values. An open one admits anything, as before.
+    const catalogue = await loadCatalogue(tx, workspaceId);
+    assertCatalogued(catalogue, args.facts.map((f) => f.fact), 'an attestation');
+    for (const f of args.facts) assertAttestable(catalogue, f.fact, f.type, f.value);
 
     // A declared cohort may not be attested as a fact. The guarantee cohorts
     // rest on is that they cannot reach the grammar, and a fact can — so the
@@ -107,19 +115,22 @@ export async function attest(p: Principal, args: {
       await tx.query(
         `INSERT INTO attestations
            (workspace_id, subject_id, fact, fact_type, bool_value, int_value, str_value,
-            source, admissibility, asserted_at, expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            source, admissibility, asserted_at, expires_at, attester)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          ON CONFLICT (workspace_id, subject_id, fact) DO UPDATE SET
            fact_type = EXCLUDED.fact_type, bool_value = EXCLUDED.bool_value,
            int_value = EXCLUDED.int_value, str_value = EXCLUDED.str_value,
            source = EXCLUDED.source, admissibility = EXCLUDED.admissibility,
            asserted_at = EXCLUDED.asserted_at, expires_at = EXCLUDED.expires_at,
-           received_at = now()`,
+           received_at = now(), attester = EXCLUDED.attester`,
         [workspaceId, subjectId, f.fact, f.type,
           f.type === 'bool' ? f.value : null,
           f.type === 'int' || f.type === 'time' ? f.value : null,
           f.type === 'str' ? f.value : null,
-          f.source, admissibility, f.assertedAt ?? new Date(), f.expiresAt ?? null]);
+          f.source, admissibility, f.assertedAt ?? new Date(), f.expiresAt ?? null,
+          // The credential that asserted it. Not a person's name — the key the
+          // institution issued, which is what it can be held to.
+          p.keyId]);
     }
     // What makes correction prompt rather than eventual: without it, a
     // determination whose facts just changed waits its turn behind every other
@@ -127,9 +138,19 @@ export async function attest(p: Principal, args: {
     // which facts each rule reads — a subject has few determinations, and
     // re-evaluating one whose inputs did not move is idempotent and cheap.
     await markDue(tx, workspaceId, subjectId);
+    // And, for the handful this write can reach, correct them now: the fact
+    // and its consequence commit together. The sweep takes whatever is left.
+    await reexecuteSubject(tx, workspaceId, subjectId);
 
     return { subjectId, count: args.facts.length };
   });
+  // A ruling reaches every case under the rule at the write, not at the next
+  // pass. Its own transactions, after this one committed; the pass remains
+  // the backstop, and who may say it is decided there (systemic.ts), not here.
+  if (args.facts.some((f) => f.fact === ADJUDICATION.ruling && f.value === 'reversed')) {
+    await propagateAdjudications(workspaceId);
+  }
+  return written;
 }
 
 /**
@@ -152,11 +173,16 @@ export async function eraseSubject(workspaceId: string, subjectId: string): Prom
     // unverifiable and must become `tainted` promptly rather than whenever the
     // cursor comes round, because an erasure is a legal event with a clock on it.
     await markDue(tx, workspaceId, subjectId);
+    await reexecuteSubject(tx, workspaceId, subjectId);
     // Cohort membership is personal data about the same subject, and it is not
     // reachable through any read path — which makes it exactly the kind of row
     // an erasure quietly leaves behind. It goes with the attestations.
     await tx.query(
       'DELETE FROM subject_cohorts WHERE workspace_id = $1 AND subject_id = $2',
+      [workspaceId, subjectId]);
+    // A clock is about a person's application. The finding it produced is
+    // about the agency, carries no subject, and stays.
+    await tx.query('DELETE FROM clocks WHERE workspace_id = $1 AND subject_id = $2',
       [workspaceId, subjectId]);
     return rowCount ?? 0;
   });

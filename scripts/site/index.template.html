@@ -1,0 +1,68 @@
+<section class="hero">
+  <p class="eyebrow">{{SPEC_TITLE}} · {{VERSION}}</p>
+  <h1>A decision about a person that anyone can check.</h1>
+  <p class="lede">A determination record carries the rule that decided it, the digests of the facts it rested on,
+     the clauses that carried the outcome, what would change it, and the issuer's signature. Hold the record
+     and your own copy of the facts, and you can re-run it and get the same answer — years later, without
+     asking anyone.</p>
+  <p class="actions">
+    <a class="button" href="/verify.html">Verify a record</a>
+    <a class="button quiet" href="/spec/">Read the specification</a>
+  </p>
+</section>
+
+<section class="three">
+  <div>
+    <h2>Verify</h2>
+    <p>Paste a record. The page recomputes every hash, re-runs the rule against values you supply, checks
+       the reasons and the remedy, and verifies the signature under a key you hold. Nothing leaves your browser.</p>
+    <p><a href="/verify.html">Open the verifier →</a></p>
+  </div>
+  <div>
+    <h2>Run it yourself</h2>
+    <p>The same verifier as a command-line tool with no dependencies and no network. Three files — the record,
+       your values, the issuer's published keys — and an exit code.</p>
+    <pre><code>node verify-cli.mjs record.json \
+  --values values.json --keys keys.json</code></pre>
+    <p><a href="/spec/verify-cli.mjs">verify-cli.mjs</a> · <a href="/spec/verifier.mjs">verifier.mjs</a></p>
+  </div>
+  <div>
+    <h2>Implement it</h2>
+    <p>The specification is written so that a stranger can implement it from the text. {{VECTORS}} conformance
+       vectors in {{GROUPS}} groups, derived from the specification and not from any implementation, say whether
+       they did.</p>
+    <p><a href="/spec/">Specification</a> · <a href="/spec/vectors.json">vectors.json</a> · <a href="/spec/extensions.html">Extensions</a></p>
+  </div>
+</section>
+
+<section class="prose">
+  <h2>What a record contains</h2>
+  <p>Not the values. A record commits to each fact by a digest of its value, so the institution's own data
+     never has to leave the institution for the decision to be checked, and a record cannot be used to
+     enumerate a population — there is no subject identifier in it, by design.</p>
+<pre><code>{
+  "rule":        { "all": [ { "fact": "prior_refunds_90d", "op": "lt", "value": 3 }, … ] },
+  "rule_hash":   "sha256 of the rule's canonical form",
+  "rule_ref":    { "rule_id": "refund.eligibility", "legal_authority": "12 CFR 1026.13(e)", … },
+  "facts":       [ { "fact": "prior_refunds_90d", "value_sha256": "…", "source": "core_ledger", … } ],
+  "reasons":     [ { "path": "all[1]", "fact": "prior_refunds_90d", "op": "lt", "value": 3, "truth": "true" } ],
+  "remedy":      { "target": "false", "sets": [ [ { "fact": "prior_refunds_90d", "constraints": [ … ] } ] ] },
+  "signature":   { "kid": "…", "alg": "ed25519", "sig": "…" }
+}</code></pre>
+  <p>Evaluation is three-valued. A fact that was never attested is <em>unknown</em>, never <em>false</em>, and a
+     determination cannot be sealed on an unknown. A rule that would be true whatever the facts said is refused
+     before it can be sealed. There is no field in which an outcome can be asserted; the outcome is derived.</p>
+
+  <h2>What the format does not do</h2>
+  <ul>
+    <li>It does not carry values, names or identifiers of the person. A verifier brings their own copy of the values.</li>
+    <li>It does not carry prose. A reason is a clause of the rule, located by its path; a remedy is a cell a fact must land in.</li>
+    <li>It does not say who issued a record unless the record is signed and you hold the issuer's key. An unsigned record is internally consistent at best.</li>
+    <li>It does not depend on the issuer still existing. Every step of verification runs from the record and your own files.</li>
+  </ul>
+
+  <h2>Two implementations</h2>
+  <p>A reference implementation and an independent verifier written from the text alone, with no shared code,
+     pass the same published vectors. When they disagree, at least one is wrong, and which is a question to
+     answer rather than a number to adjust. The verifier on this site is the independent one.</p>
+</section>

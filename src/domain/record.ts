@@ -28,6 +28,10 @@ import { requireScope, type Principal } from './auth.js';
 import { disclose, type DisclosedReason, type Reason } from './explain.js';
 import type { Disposition } from './seal.js';
 import type { Facts, Fact, FactType, Rule } from './rule.js';
+import { fromStored, type RuleRef, type StoredRuleRef } from './registry.js';
+import type { Remedy } from './remedy.js';
+import type { Signature, SignaturePq } from '../lib/signing.js';
+import { toStored } from './registry.js';
 
 /** Reading the values that decided a determination is an operator act. */
 export const DISCLOSURE_AUTHORITY = 'operator';
@@ -40,6 +44,8 @@ export interface SealedFact {
   source: string;
   admissibility: string;
   assertedAt: Date;
+  /** The credential that asserted it, as the issuer identifies it. Null before cap-01. */
+  attester: string | null;
 }
 
 export interface SealEvent {
@@ -61,6 +67,18 @@ export interface Proof {
   sealedBy: string;
   sealedAt: Date;
   expiresAt: Date | null;
+  /** The date the decision is about (SPEC §7.0a). Null means as of `sealedAt`. */
+  asOf: Date | null;
+  /** The registered rule this was sealed under, if any. A citation, not a pointer. */
+  ruleRef: RuleRef | null;
+  /** What would move this the person's way (SPEC §7.0d). Null before cap-02 and on a commit. */
+  remedy: Remedy | null;
+  /** When a ruling elsewhere put this under review (SPEC §7.0e). Null if never. */
+  reviewFlaggedAt: Date | null;
+  /** The issuer's Ed25519 signature over `recordCore` (SPEC §7.0f). Null if unsigned. */
+  signature: Signature | null;
+  /** The issuer's ML-DSA-65 signature over the same core, when issued. Null if not. */
+  signaturePq: SignaturePq | null;
   reasons: Reason[];
   facts: SealedFact[];
   events: SealEvent[];
@@ -68,6 +86,9 @@ export interface Proof {
   verify: {
     ruleHash: string;
     valueDigest: string;
+    ruleRef: string;
+    signature: string;
+    signaturePq: string;
     note: string;
   };
 }
@@ -76,12 +97,15 @@ interface SealRow {
   id: string; scope: string; disposition: Disposition; state: string; rule: Rule;
   rule_hash: string; grammar_version: string; sealed_by: string; sealed_at: Date;
   expires_at: Date | null; reasons: Reason[]; subject_id: string;
+  as_of: Date | null; rule_ref: StoredRuleRef | null; remedy: Remedy | null;
+  review_flagged_at: Date | null; signature: Signature | null; signature_pq: SignaturePq | null;
 }
 
 async function loadSeal(db: Db, workspaceId: string, sealId: string): Promise<SealRow> {
   const { rows } = await db.query<SealRow>(
     `SELECT id, scope, disposition, state, rule, rule_hash, grammar_version, sealed_by,
-            sealed_at, expires_at, reasons, subject_id
+            sealed_at, expires_at, reasons, subject_id, as_of, rule_ref, remedy, review_flagged_at,
+            signature, signature_pq
        FROM seals WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, sealId]);
   const seal = rows[0];
@@ -102,14 +126,50 @@ async function loadSeal(db: Db, workspaceId: string, sealId: string): Promise<Se
  */
 export async function proof(p: Principal, sealId: string): Promise<Proof> {
   requireScope(p, 'seals:read');
-  const db = getPool();
-  const seal = await loadSeal(db, p.workspaceId, sealId);
+  return loadProof(getPool(), p.workspaceId, sealId);
+}
+
+/**
+ * The signed core (SPEC §7.0f): what was decided, under which rule, on
+ * which digests, with which reasons and remedy. Wire-shaped, because the
+ * record format IS the wire shape and a verifier reconstructs exactly this
+ * from the record. Nothing that moves — no state, no events, no flag.
+ */
+export function recordCore(p: Proof): Record<string, unknown> {
+  return {
+    seal_id: p.sealId,
+    scope: p.scope,
+    disposition: p.disposition,
+    rule: p.rule,
+    rule_hash: p.ruleHash,
+    grammar_version: p.grammarVersion,
+    sealed_by: p.sealedBy,
+    sealed_at: p.sealedAt.toISOString(),
+    expires_at: p.expiresAt?.toISOString() ?? null,
+    as_of: p.asOf?.toISOString() ?? null,
+    rule_ref: p.ruleRef === null ? null : toStored(p.ruleRef),
+    reasons: p.reasons.map((r) => ({ path: r.path, fact: r.fact, op: r.op, value: r.value, truth: r.truth,
+      polarity: r.polarity })),
+    facts: p.facts.map((f) => ({ fact: f.fact, fact_type: f.factType, value_sha256: f.valueSha256,
+      source: f.source, admissibility: f.admissibility, asserted_at: f.assertedAt.toISOString(),
+      attester: f.attester })),
+    remedy: p.remedy === null ? null : {
+      target: p.remedy.target, exhaustive: p.remedy.exhaustive, evaluations: p.remedy.evaluations,
+      sets: p.remedy.sets.map((set) => set.map((c) => ({ fact: c.fact, fact_type: c.factType,
+        constraints: c.constraints.map((k) => ({ path: k.path, op: k.op, value: k.value, truth: k.truth })) }))),
+    },
+  };
+}
+
+/** Everything an examiner needs, on any connection — the seal path signs inside its transaction. */
+export async function loadProof(db: Db, workspaceId: string, sealId: string): Promise<Proof> {
+  const seal = await loadSeal(db, workspaceId, sealId);
 
   const { rows: facts } = await db.query<{
     fact: string; fact_type: FactType; value_sha256: string;
-    source: string; admissibility: string; asserted_at: Date;
+    source: string; admissibility: string; asserted_at: Date; attester: string | null;
   }>(
-    `SELECT fact, fact_type, value_sha256, source, admissibility, asserted_at
+    `SELECT fact, fact_type, value_sha256, source, admissibility, asserted_at, attester
        FROM seal_facts WHERE seal_id = $1 ORDER BY fact`, [sealId]);
 
   const { rows: events } = await db.query<{
@@ -130,10 +190,17 @@ export async function proof(p: Principal, sealId: string): Promise<Proof> {
     sealedBy: seal.sealed_by,
     sealedAt: seal.sealed_at,
     expiresAt: seal.expires_at,
+    asOf: seal.as_of,
+    ruleRef: seal.rule_ref === null ? null : fromStored(seal.rule_ref),
+    remedy: seal.remedy,
+    reviewFlaggedAt: seal.review_flagged_at,
+    signature: seal.signature,
+    signaturePq: seal.signature_pq,
     reasons: seal.reasons,
     facts: facts.map((f) => ({
       fact: f.fact, factType: f.fact_type, valueSha256: f.value_sha256,
       source: f.source, admissibility: f.admissibility, assertedAt: f.asserted_at,
+      attester: f.attester,
     })),
     events: events.map((e) => ({
       kind: e.kind, actor: e.actor, evidenceSha256: e.evidence_sha256,
@@ -146,6 +213,15 @@ export async function proof(p: Principal, sealId: string): Promise<Proof> {
       ruleHash: 'sha256(canonical JSON of `rule`: object keys sorted, '
         + 'commutative children of all/any sorted by their canonical form)',
       valueDigest: 'sha256(canonical JSON of {"t": fact_type, "v": value})',
+      ruleRef: 'if present, rule_ref.version MUST equal rule_hash. Nothing else about it is '
+        + 'verifiable without the institution\'s own registry, and the record does not depend on it.',
+      signature: 'if present, Ed25519 over the canonical JSON (keys sorted, strings NFC) of the sealed '
+        + 'core — seal_id, scope, disposition, rule, rule_hash, grammar_version, sealed_by, sealed_at, '
+        + 'expires_at, as_of, rule_ref, reasons, facts, remedy — under the key published at '
+        + '/.well-known/crimp-keys.json for its kid.',
+      signaturePq: 'if present, ML-DSA-65 (FIPS 204) over the same canonical bytes, under the ml-dsa-65 key '
+        + 'published for its kid (public_key is SubjectPublicKeyInfo DER, base64). The signature that '
+        + 'survives a quantum computer. Absent means not issued, never invalid.',
       note: 'Recompute each value digest from your own record of the value, compare, then '
         + 're-run `rule` under grammar_version. Crimp never held the values, so it cannot '
         + 'have altered them.',

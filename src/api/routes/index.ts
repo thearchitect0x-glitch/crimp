@@ -4,20 +4,33 @@ import type { FastifyInstance } from 'fastify';
 import { authorized } from '../app.js';
 import {
   attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
-  carveOutBody, mintKeyBody, windowQuery, errors,
+  carveOutBody, mintKeyBody, windowQuery, errors, rulesetBody, ruleBody, closeRuleBody, catalogueBody,
+  clockBody, findingsQuery, sourceBody, decisionBody,
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
-  sourcesToWire, quadrantToWire, cliffsToWire, keyToWire,
-  proofToWire, disclosureToWire,
+  sourcesToWire, quadrantToWire, estimateToWire, cliffsToWire, keyToWire,
+  proofToWire, disclosureToWire, registeredRuleToWire, catalogueEntryToWire,
+  clockToWire, timelinessToWire, findingToWire,
   type WireClaw, type WireFact,
 } from '../serialize.js';
 import { attest } from '../../domain/attest.js';
 import { seal, lookup, exercise, claw } from '../../domain/seal.js';
-import { sourceReliability, quadrant, cliffs } from '../../domain/insight.js';
+import { sourceReliability, quadrant, cliffs, quietErrorEstimate } from '../../domain/insight.js';
 import { declareCohort, placeInCohort } from '../../domain/cohort.js';
 import { mergeSubjects, carveOut } from '../../domain/merge.js';
 import { proof, disclosure, disclosures } from '../../domain/record.js';
+import { declareRuleset, commitRule, closeRule, ruleHistory } from '../../domain/registry.js';
+import { catalogueFact, listCatalogue, type FactClass } from '../../domain/catalogue.js';
+import type { FactType } from '../../domain/rule.js';
+import { startClock, clocksFor, timeliness } from '../../domain/clocks.js';
+import { listFindings } from '../../domain/findings.js';
+import { noticeFor } from '../../domain/notice.js';
+import { harmLedger } from '../../domain/harm.js';
+import { declareSource, listSources } from '../../domain/sources.js';
+import { decide } from '../../domain/decisions.js';
+import { personCopy } from '../../domain/personcopy.js';
+import type { Admissibility } from '../../domain/admissibility.js';
 import { mintKey, revokeKey, type Scope } from '../../domain/auth.js';
 import { getPool } from '../../db/pool.js';
 import { loadStrengths } from '../../domain/strengths.js';
@@ -33,6 +46,16 @@ function windowDays(raw: string | undefined, fallback = 90): number {
       { days: raw });
   }
   return n;
+}
+
+/** Parse a timestamp where the message can name the field. */
+function timestamp(raw: string | null | undefined, field: string): Date | null {
+  if (raw == null) return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    throw new ApiError(400, 'invalid_request', `"${raw}" is not a valid timestamp for ${field}.`);
+  }
+  return d;
 }
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
@@ -65,15 +88,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     Body: {
       idempotency_key: string; expires_at?: string | null;
       aliases: unknown; scope: string; disposition: 'bind' | 'permit' | 'commit';
-      rule: unknown; claw: WireClaw; max_uses?: number | null; required_facts?: string[];
+      rule?: unknown; rule_ref?: { ruleset: string; rule_id: string }; as_of?: string | null;
+      claw: WireClaw; max_uses?: number | null; required_facts?: string[];
     };
   }>('/seals', { schema: { body: sealBody, response: errors } }, async (req, reply) => {
     const p = await authorized(req, 'seals:write');
-    const expiresAt = req.body.expires_at == null ? null : new Date(req.body.expires_at);
-    if (expiresAt !== null && Number.isNaN(expiresAt.getTime())) {
-      throw new ApiError(400, 'invalid_request',
-        `"${req.body.expires_at}" is not a valid timestamp.`);
-    }
+    const expiresAt = timestamp(req.body.expires_at, 'expires_at');
     const out = await seal(p, {
       idempotencyKey: req.body.idempotency_key,
       expiresAt,
@@ -81,6 +101,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       scope: req.body.scope,
       disposition: req.body.disposition,
       rule: req.body.rule,
+      ruleRef: req.body.rule_ref === undefined ? null
+        : { ruleset: req.body.rule_ref.ruleset, ruleId: req.body.rule_ref.rule_id },
+      asOf: timestamp(req.body.as_of, 'as_of'),
       claw: clawFromWire(req.body.claw),
       maxUses: req.body.max_uses ?? null,
       requiredFacts: req.body.required_facts ?? [],
@@ -89,6 +112,199 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     // retry succeeded, but it did not create anything.
     reply.code(out.outcome === 'sealed' ? 201 : 200);
     return sealToWire(out);
+  });
+
+  /* ── Clocks and findings (cap-03) ────────────────────────────────── */
+  app.post<{ Body: { aliases: unknown; scope: string; clock: string; started_at: string } }>(
+    '/clocks', { schema: { body: clockBody, response: errors } }, async (req, reply) => {
+      const p = await authorized(req, 'attestations:write');
+      const startedAt = timestamp(req.body.started_at, 'started_at');
+      if (startedAt === null) throw new ApiError(400, 'invalid_request', 'started_at is required.');
+      const out = await startClock(p, {
+        aliases: req.body.aliases, scope: req.body.scope, clock: req.body.clock, startedAt,
+      }, await loadStrengths(p.workspaceId));
+      reply.code(out.outcome === 'started' ? 201 : 200);
+      return { outcome: out.outcome, ...clockToWire(out) };
+    });
+
+  // A read by aliases, like a lookup, and a POST for the same reason a
+  // lookup is: the aliases are a body, not a URL.
+  app.post<{ Body: { aliases: unknown } }>('/clocks/lookup', {
+    schema: { body: { type: 'object', required: ['aliases'], additionalProperties: false,
+      properties: { aliases: clockBody.properties.aliases } }, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'determinations:read');
+    const rows = await clocksFor(p, { aliases: req.body.aliases }, await loadStrengths(p.workspaceId));
+    return { clocks: rows.map(clockToWire) };
+  });
+
+  app.get<{ Querystring: { days?: string } }>('/insight/timeliness', {
+    schema: { querystring: windowQuery, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'insight:read');
+    return { clocks: (await timeliness(p, windowDays(req.query.days))).map(timelinessToWire) };
+  });
+
+  // cap-05. Days, never dollars: the record supports the first and not the second.
+  app.get<{ Querystring: { days?: string } }>('/insight/harm', {
+    schema: { querystring: windowQuery, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'insight:read');
+    const rows = await harmLedger(p, windowDays(req.query.days, 365));
+    return { ledger: rows.map((r) => ({
+      programme: r.programme, rule: r.rule, month: r.month, reversals: r.reversals,
+      days_without_coverage: r.daysWithoutCoverage, days_owed: r.daysOwed,
+    })) };
+  });
+
+  app.get<{ Querystring: { class?: string; days?: string } }>('/findings', {
+    schema: { querystring: findingsQuery, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'insight:read');
+    const rows = await listFindings(p, { class: req.query.class, days: windowDays(req.query.days) });
+    return { findings: rows.map(findingToWire) };
+  });
+
+  /* ── Sources (cap-07) ────────────────────────────────────────────── */
+  app.post<{ Body: { source: string; admissibility: Admissibility; programme?: string | null; description?: string | null } }>(
+    '/sources', { schema: { body: sourceBody, response: errors } }, async (req, reply) => {
+      const p = await authorized(req, 'rules:write');
+      const out = await declareSource(p, {
+        source: req.body.source, admissibility: req.body.admissibility,
+        programme: req.body.programme ?? null, description: req.body.description ?? null,
+      });
+      reply.code(201);
+      return out;
+    });
+
+  app.get('/sources', { schema: { response: errors } }, async (req) => {
+    const p = await authorized(req, 'rules:read');
+    return { sources: await listSources(p) };
+  });
+
+  /* ── The catalogue (cap-01) ──────────────────────────────────────── */
+  app.post<{
+    Body: {
+      fact: string; fact_type: FactType; class: FactClass; guarded_by?: string | null;
+      guard_value?: string | null; allowed_values?: string[] | null; description?: string | null;
+    };
+  }>('/catalogue', { schema: { body: catalogueBody, response: errors } }, async (req, reply) => {
+    const p = await authorized(req, 'rules:write');
+    const out = await catalogueFact(p, {
+      fact: req.body.fact, factType: req.body.fact_type, class: req.body.class,
+      guardedBy: req.body.guarded_by ?? null, guardValue: req.body.guard_value ?? null,
+      allowedValues: req.body.allowed_values ?? null, description: req.body.description ?? null,
+    });
+    reply.code(201);
+    return catalogueEntryToWire(out);
+  });
+
+  app.get('/catalogue', { schema: { response: errors } }, async (req) => {
+    const p = await authorized(req, 'rules:read');
+    return { facts: (await listCatalogue(p)).map(catalogueEntryToWire) };
+  });
+
+  /* ── The registry (cap-08) ───────────────────────────────────────── */
+  app.post<{ Body: { ruleset: string; description?: string | null; ex_parte_rule?: string | null } }>('/rulesets', {
+    schema: { body: rulesetBody, response: errors },
+  }, async (req, reply) => {
+    const p = await authorized(req, 'rules:write');
+    const out = await declareRuleset(p, {
+      ruleset: req.body.ruleset, description: req.body.description ?? null,
+      exParteRule: req.body.ex_parte_rule ?? null,
+    });
+    reply.code(201);
+    return { ruleset: out.ruleset, ex_parte_rule: out.exParteRule };
+  });
+
+  app.post<{
+    Params: { ruleset: string };
+    Body: {
+      rule_id: string; rule: unknown; legal_authority: string; effective_from: string;
+      effective_to?: string | null; scope?: string | null; note?: string | null;
+      disposition?: 'bind' | 'permit' | 'commit' | null;
+    };
+  }>('/rulesets/:ruleset/rules', {
+    schema: { body: ruleBody, response: errors },
+  }, async (req, reply) => {
+    const p = await authorized(req, 'rules:write');
+    const effectiveFrom = timestamp(req.body.effective_from, 'effective_from');
+    if (effectiveFrom === null) {
+      throw new ApiError(400, 'invalid_request', 'effective_from is required.');
+    }
+    const out = await commitRule(p, {
+      ruleset: req.params.ruleset,
+      ruleId: req.body.rule_id,
+      rule: req.body.rule,
+      legalAuthority: req.body.legal_authority,
+      effectiveFrom,
+      effectiveTo: timestamp(req.body.effective_to, 'effective_to'),
+      scope: req.body.scope ?? null,
+      note: req.body.note ?? null,
+      disposition: req.body.disposition ?? null,
+    });
+    reply.code(out.outcome === 'committed' ? 201 : 200);
+    return { outcome: out.outcome, ...registeredRuleToWire(out) };
+  });
+
+  // A POST with a verb, like /exercise: the one mutation a committed version
+  // admits, and it is recorded with the actor's authority.
+  app.post<{
+    Params: { ruleset: string; rule_id: string; version: string };
+    Body: { effective_to: string };
+  }>('/rulesets/:ruleset/rules/:rule_id/:version/close', {
+    schema: { body: closeRuleBody, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'rules:write');
+    const effectiveTo = timestamp(req.body.effective_to, 'effective_to');
+    if (effectiveTo === null) throw new ApiError(400, 'invalid_request', 'effective_to is required.');
+    return registeredRuleToWire(await closeRule(p, {
+      ruleset: req.params.ruleset, ruleId: req.params.rule_id,
+      version: req.params.version, effectiveTo,
+    }));
+  });
+
+  app.get<{ Params: { ruleset: string; rule_id: string } }>('/rulesets/:ruleset/rules/:rule_id', {
+    schema: { response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'rules:read');
+    const versions = await ruleHistory(p, req.params.ruleset, req.params.rule_id);
+    return { versions: versions.map(registeredRuleToWire) };
+  });
+
+  /* ── The person's copy (Phase 2) ─────────────────────────────────── */
+  // A POST, because it discloses values and is recorded as a disclosure on
+  // every determination it contains. Aliases are a body, not a URL.
+  app.post<{ Body: { aliases: unknown } }>('/subjects/person-copy', {
+    schema: { body: { type: 'object', required: ['aliases'], additionalProperties: false,
+      properties: { aliases: clockBody.properties.aliases } }, response: errors },
+  }, async (req) => {
+    const p = await authorized(req, 'seals:disclose');
+    const copy = await personCopy(p, { aliases: req.body.aliases }, await loadStrengths(p.workspaceId));
+    return { ...copy, determinations: copy.determinations.map(proofToWire) };
+  });
+
+  /* ── A caseworker's decision (cap-10) ────────────────────────────── */
+  app.post<{
+    Body: {
+      idempotency_key: string; aliases: unknown; scope: string; ruleset: string; rule_id: string;
+      facts: WireFact[]; as_of?: string | null; expires_at?: string | null; claw?: WireClaw;
+    };
+  }>('/decisions', { schema: { body: decisionBody, response: errors } }, async (req, reply) => {
+    const p = await authorized(req, 'seals:write');
+    const out = await decide(p, {
+      idempotencyKey: req.body.idempotency_key,
+      aliases: req.body.aliases,
+      scope: req.body.scope,
+      ruleset: req.body.ruleset,
+      ruleId: req.body.rule_id,
+      facts: req.body.facts.map(factFromWire),
+      asOf: timestamp(req.body.as_of, 'as_of'),
+      expiresAt: timestamp(req.body.expires_at, 'expires_at'),
+      claw: req.body.claw === undefined ? null : clawFromWire(req.body.claw),
+    }, await loadStrengths(p.workspaceId));
+    reply.code(out.outcome === 'sealed' ? 201 : 200);
+    return { ...sealToWire(out), attested: out.attested, attester: out.attester };
   });
 
   /* ── The hot path: a query ───────────────────────────────────────── */
@@ -118,6 +334,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const p = await authorized(req, 'seals:read');
     return proofToWire(await proof(p, req.params.id));
   });
+
+  // cap-04. The notice is derived from the record; with values it IS a
+  // disclosure and is recorded as one, so it is a POST like the disclosure.
+  app.post<{ Params: { id: string }; Querystring: { values?: string; language?: string; format?: string } }>(
+    '/seals/:id/notice', {
+      schema: { querystring: { type: 'object', additionalProperties: false, properties: {
+        values: { type: 'string', enum: ['true', 'false'] },
+        language: { type: 'string', pattern: '^[a-z]{2}(-[A-Z]{2})?$' },
+        format: { type: 'string', enum: ['json', 'text', 'html'] },
+      } }, response: errors },
+    }, async (req, reply) => {
+      const p = await authorized(req, 'seals:read');
+      const out = await noticeFor(p, req.params.id, {
+        values: req.query.values === 'true',
+        ...(req.query.language !== undefined ? { language: req.query.language } : {}),
+      });
+      if (req.query.format === 'text') return reply.type('text/plain; charset=utf-8').send(out.text);
+      if (req.query.format === 'html') return reply.type('text/html; charset=utf-8').send(out.html);
+      return { notice: out.notice, readability: out.readability, text: out.text, html: out.html };
+    });
 
   // A POST, because it has a side effect: the disclosure is recorded. Nobody
   // anywhere currently records who asked why a person was refused, and for a
@@ -232,7 +468,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     schema: { querystring: windowQuery, response: errors },
   }, async (req) => {
     const p = await authorized(req, 'insight:read');
-    return quadrantToWire(await quadrant(getPool(), p.workspaceId, windowDays(req.query.days)));
+    const days = windowDays(req.query.days);
+    const [q, e] = await Promise.all([quadrant(getPool(), p.workspaceId, days), quietErrorEstimate(getPool(), p.workspaceId, days)]);
+    return { ...quadrantToWire(q), estimate: estimateToWire(e) };
   });
 
   app.get('/insight/cliffs', { schema: { response: errors } }, async (req) => {

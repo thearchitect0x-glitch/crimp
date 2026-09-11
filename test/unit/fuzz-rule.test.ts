@@ -14,7 +14,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fc from 'fast-check';
 import {
-  validateRule, canonicalRule, factsReferenced, LIMITS,
+  validateRule, canonicalRule, factsReferenced, constantConclusion, LIMITS,
   TRUE, FALSE, UNKNOWN,
   type Rule, type Facts, type Fact, type Truth,
 } from '../../src/domain/rule.js';
@@ -132,10 +132,38 @@ describe('fuzz: the grammar is total', () => {
     }), opts);
   });
 
-  test('every generated rule validates, and validation agrees with introspection', () => {
+  /**
+   * The generator can produce `any[a=1, a≠1]` by chance, and since cap-01 the
+   * grammar refuses it. So the property is now two-sided: a rule is admitted
+   * with the right fact set, or it is refused as a constant conclusion — and
+   * then the detector must agree that it is one. Nothing else may happen.
+   */
+  test('every generated rule is admitted with its fact set, or refused as a constant conclusion', () => {
     fc.assert(fc.property(rule, (r) => {
-      const fromValidate = validateRule(r);
-      assert.deepEqual([...fromValidate].sort(), [...factsReferenced(r)].sort());
+      const constant = constantConclusion(r);
+      if (constant === null) {
+        assert.deepEqual([...validateRule(r)].sort(), [...factsReferenced(r)].sort());
+      } else {
+        assert.throws(() => validateRule(r), (e: unknown) =>
+          e instanceof ApiError && e.code === 'constant_conclusion');
+      }
+    }), opts);
+  });
+
+  /**
+   * A verdict of "constant" is a claim about EVERY assignment. Check it
+   * against assignments the detector never chose: random typed values of the
+   * kinds the rule compares against. A type error is not a counter-example.
+   */
+  test('a constant verdict survives random assignments it did not pick', () => {
+    fc.assert(fc.property(rule, facts, (r, f) => {
+      const c = constantConclusion(r);
+      if (c === null || c.path !== 'rule') return;
+      const names = [...factsReferenced(r)];
+      if (!names.every((n) => n in f)) return;   // the claim is over PRESENT facts
+      const out = tryEval(r, f);
+      if (out === TYPE_ERROR) return;
+      assert.equal(out, c.truth, `detector said ${c.truth}, evaluation said ${out}`);
     }), opts);
   });
 

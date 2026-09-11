@@ -50,17 +50,6 @@ export interface ClawRule {
 }
 
 /**
- * How long the first half of a quorum stands.
- *
- * A dual-control decision that takes longer than this is not one decision made
- * by two people, it is two unrelated decisions. It also bounds the attacker
- * who holds one credential now and expects to hold another later.
- */
-export const QUORUM_WINDOW_SECONDS = 7 * 24 * 3600;
-
-const JURISDICTION = /^[A-Z]{2}(-[A-Z0-9]{1,3})?$/;
-
-/**
  * THE TIME AXIS, which the authority ladder never bounded.
  *
  * `validateClawRule` has always bounded WHO may reverse a determination: an
@@ -116,6 +105,15 @@ export const TIME_BOUNDS: Record<Authority, TimeBound> = {
 
 /** The ceiling for the highest authority. Nothing may exceed it. */
 export const MAX_COOLING_OFF_SECONDS = TIME_BOUNDS.custodian.coolingOffSeconds;
+
+/**
+ * How long the first half of a quorum stands.
+ *
+ * A dual-control decision that takes longer than this is not one decision made
+ * by two people, it is two unrelated decisions. It also bounds the attacker
+ * who holds one credential now and expects to hold another later.
+ */
+export const QUORUM_WINDOW_SECONDS = 7 * 24 * 3600;
 
 /**
  * Validate a claw rule against the authority that is sealing.

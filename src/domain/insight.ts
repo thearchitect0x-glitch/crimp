@@ -18,6 +18,7 @@
  *   - These are hints, not verdicts. Every one of them is a reason to look, and
  *     none of them is a finding.
  */
+import { BREADTH, WIDE_SESSIONS_SQL } from './breadth.js';
 import type { Db } from '../db/pool.js';
 import { thresholds, type Rule } from './rule.js';
 import { PRESSURE_WINDOW_DAYS, tierOf } from './lifecycle.js';
@@ -111,6 +112,13 @@ export interface QuadrantCounts {
   /** Premises failed AND somebody had to fight. The number nothing else has. */
   wrongAndResisted: number;
   examined: number;
+  /**
+   * The same population split by whether anybody ever came back, rather
+   * than by tier: the tier's threshold of three attempts puts a person who
+   * asked once or twice into the "quiet" cell, and the estimate below
+   * needs the people who asked never.
+   */
+  attempts: { zero: { examined: number; lapsed: number }; some: { examined: number; lapsed: number } };
 }
 
 /**
@@ -139,22 +147,26 @@ export async function quadrant(
   const { rows } = await db.query<{
     id: string; state: string; attempts: string | null; sessions: string | null;
   }>(
-    `SELECT s.id, s.state,
+    `WITH wide AS (${WIDE_SESSIONS_SQL.replace('$WS', '$1').replace('$DAYS', '$3').replace('$N', '$4')})
+     SELECT s.id, s.state,
             COALESCE(sum(p.attempts), 0)                  AS attempts,
             count(p.*) FILTER (WHERE p.declared)          AS sessions
        FROM seals s
        LEFT JOIN pressure p
          ON p.seal_id = s.id
         AND p.last_at > now() - ($3 || ' days')::interval
+        -- A session that touched many people is nobody's contestation.
+        AND p.session NOT IN (SELECT session FROM wide)
       WHERE s.workspace_id = $1
         AND s.sealed_at   > now() - ($2 || ' days')::interval
       GROUP BY s.id, s.state`,
-    [workspaceId, String(days), String(PRESSURE_WINDOW_DAYS)]);
+    [workspaceId, String(days), String(PRESSURE_WINDOW_DAYS), BREADTH.distinctDeterminations]);
 
   const out: QuadrantCounts = {
     window: { days },
     normal: 0, contestedAndCorrect: 0, quietError: 0, wrongAndResisted: 0,
     examined: rows.length,
+    attempts: { zero: { examined: 0, lapsed: 0 }, some: { examined: 0, lapsed: 0 } },
   };
 
   for (const r of rows) {
@@ -171,8 +183,95 @@ export async function quadrant(
     else if (failed) out.quietError++;
     else if (pressed) out.contestedAndCorrect++;
     else out.normal++;
+    const bucket = Number(r.attempts ?? 0) === 0 ? out.attempts.zero : out.attempts.some;
+    bucket.examined++;
+    if (failed) bucket.lapsed++;
   }
   return out;
+}
+
+/* ── 2a · The error rate among people who never complained ───────────── */
+
+/**
+ * The classes that are the person's own word. `signed` proves non-repudiation,
+ * not truth (admissibility.ts), so a signed self-assertion is still the person
+ * correcting their own record, not a feed discovering it.
+ */
+const SELF_CLASSES: ReadonlySet<string> = new Set(['self', 'signed']);
+
+/** Fewer lapses among the people who fought than this, and the feed share is anecdote. */
+export const ESTIMATE_MIN_FOUGHT_LAPSES = 20;
+
+export interface QuietErrorEstimate {
+  window: { days: number };
+  zeroAttempt: { n: number; lapsed: number; lapsedViaFeed: number; lapsedViaSelf: number; unattributed: number };
+  fought: { n: number; lapsed: number; lapsedViaFeed: number; lapsedViaSelf: number; unattributed: number };
+  /** Of the lapses among people who fought, the share whose correction came through a source other than the person. */
+  feedShareAmongFought: number | null;
+  /** Lapses over the zero-attempt population: the lower bound the record shows directly. */
+  zeroAttemptLapseRate: number | null;
+  /** feed-corrected lapses among the zero-attempt population, divided by the feed share among the fought, over the zero-attempt population. */
+  calibratedRate: number | null;
+  minimumFoughtLapses: number;
+  assumptions: readonly string[];
+}
+
+export const ESTIMATE_ASSUMPTIONS = [
+  'A person who pushed back and was wrongly refused supplied the evidence: discovery among the fought is near complete. Where it is not, this estimate is LOW.',
+  'A fact that moved in the world without any error was corrected through a feed and is counted as one: this estimate is HIGH by the world-change rate.',
+  'Feeds do not know who complained, so their discovery rate is the same for the people who never did.',
+] as const;
+
+/**
+ * The quiet-error rate is a lower bound: a wrong refusal lapses only when a
+ * correcting fact arrives, and for a person who never pushed back that only
+ * happens through the institution's own feeds. The record holds the
+ * calibrator — the admissibility class of the attestation that corrected
+ * each lapsed determination, written on the lapsed event — so the feed
+ * discovery rate can be measured among the people who fought, for whom
+ * discovery is near complete, and applied to the people who never did.
+ * A two-list estimate in the manner of capture–recapture, where the lists
+ * are the person's own submission and the institution's feeds.
+ */
+export async function quietErrorEstimate(
+  db: Db, workspaceId: string, days = 90, opts: { minFoughtLapses?: number } = {},
+): Promise<QuietErrorEstimate> {
+  const minimum = opts.minFoughtLapses ?? ESTIMATE_MIN_FOUGHT_LAPSES;
+  const { rows } = await db.query<{ state: string; attempts: string | null; detail: Record<string, unknown> | null }>(
+    `WITH wide AS (${WIDE_SESSIONS_SQL.replace('$WS', '$1').replace('$DAYS', '$3').replace('$N', '$4')})
+     SELECT s.state,
+            (SELECT sum(p.attempts) FROM pressure p WHERE p.seal_id = s.id
+               AND p.last_at > now() - ($3 || ' days')::interval
+               AND p.session NOT IN (SELECT session FROM wide)) AS attempts,
+            (SELECT e.detail FROM seal_events e WHERE e.seal_id = s.id AND e.kind = 'lapsed'
+              ORDER BY e.occurred_at DESC LIMIT 1) AS detail
+       FROM seals s
+      WHERE s.workspace_id = $1 AND s.disposition = 'bind'
+        AND s.sealed_at > now() - ($2 || ' days')::interval`,
+    [workspaceId, String(days), String(PRESSURE_WINDOW_DAYS), BREADTH.distinctDeterminations]);
+  const cell = () => ({ n: 0, lapsed: 0, lapsedViaFeed: 0, lapsedViaSelf: 0, unattributed: 0 });
+  const zero = cell(); const fought = cell();
+  for (const r of rows) {
+    const c = Number(r.attempts ?? 0) === 0 ? zero : fought;
+    c.n++;
+    if (r.state !== 'lapsed') continue;
+    c.lapsed++;
+    const changed = Array.isArray(r.detail?.['changed']) ? (r.detail!['changed'] as Array<{ now: { admissibility: string } | null }>) : [];
+    const classes = changed.map((x) => x.now?.admissibility ?? null).filter((x): x is string => x !== null);
+    if (classes.length === 0) c.unattributed++;
+    else if (classes.some((k) => !SELF_CLASSES.has(k))) c.lapsedViaFeed++;
+    else c.lapsedViaSelf++;
+  }
+  const attributedFought = fought.lapsedViaFeed + fought.lapsedViaSelf;
+  const share = attributedFought >= minimum && attributedFought > 0 ? fought.lapsedViaFeed / attributedFought : null;
+  return {
+    window: { days }, zeroAttempt: zero, fought,
+    feedShareAmongFought: share,
+    zeroAttemptLapseRate: zero.n > 0 ? zero.lapsed / zero.n : null,
+    calibratedRate: share !== null && share > 0 && zero.n > 0 ? (zero.lapsedViaFeed / share) / zero.n : null,
+    minimumFoughtLapses: minimum,
+    assumptions: ESTIMATE_ASSUMPTIONS,
+  };
 }
 
 /* ── 3 · Cliffs ──────────────────────────────────────────────────────── */

@@ -111,9 +111,21 @@ export const attestBody = {
   },
 } as const;
 
+const ruleRef = {
+  type: 'object',
+  required: ['ruleset', 'rule_id'],
+  additionalProperties: false,
+  properties: {
+    ruleset: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
+    rule_id: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}(\\.[a-z][a-z0-9_]{0,30}){0,3}$' },
+  },
+} as const;
+
 export const sealBody = {
   type: 'object',
-  required: ['idempotency_key', 'aliases', 'scope', 'disposition', 'rule', 'claw'],
+  required: ['idempotency_key', 'aliases', 'scope', 'disposition', 'claw'],
+  // A rule, inline or registered. Neither is a body nobody can act on.
+  anyOf: [{ required: ['rule'] }, { required: ['rule_ref'] }],
   additionalProperties: false,
   properties: {
     // Required. A retry without one creates a second determination, which for
@@ -126,10 +138,120 @@ export const sealBody = {
     scope: { type: 'string', maxLength: 127 },
     disposition: { type: 'string', enum: ['bind', 'permit', 'commit'] },
     rule,
+    // cap-08. Which registered rule to seal under, and the date the decision
+    // is about. Both optional; a record without them is what every record was.
+    rule_ref: ruleRef,
+    as_of: { type: ['string', 'null'], maxLength: 64 },
     claw,
     max_uses: { type: ['integer', 'null'], minimum: 1 },
     required_facts: { type: 'array', maxItems: 16, items: { type: 'string', maxLength: 96 } },
   },
+} as const;
+
+export const rulesetBody = {
+  type: 'object',
+  required: ['ruleset'],
+  additionalProperties: false,
+  properties: {
+    ruleset: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
+    description: { type: ['string', 'null'], maxLength: 500 },
+    ex_parte_rule: { type: ['string', 'null'], maxLength: 127 },
+  },
+} as const;
+
+export const ruleBody = {
+  type: 'object',
+  required: ['rule_id', 'rule', 'legal_authority', 'effective_from'],
+  additionalProperties: false,
+  properties: {
+    rule_id: ruleRef.properties.rule_id,
+    rule,
+    // Shape-checked in the domain layer, where the message can say what a
+    // citation looks like. Here only bounded.
+    legal_authority: { type: 'string', minLength: 1, maxLength: 200 },
+    effective_from: { type: 'string', maxLength: 64 },
+    effective_to: { type: ['string', 'null'], maxLength: 64 },
+    scope: { type: ['string', 'null'], maxLength: 127 },
+    note: { type: ['string', 'null'], maxLength: 1000 },
+    disposition: { type: ['string', 'null'], enum: ['bind', 'permit', 'commit', null] },
+  },
+} as const;
+
+/**
+ * cap-10. A caseworker's decision. Read what is NOT here: no `rule`, no
+ * `disposition`, no `outcome`, no `decision`. `additionalProperties: false`
+ * is what makes their absence a refusal rather than an omission.
+ */
+export const decisionBody = {
+  type: 'object',
+  required: ['idempotency_key', 'aliases', 'scope', 'ruleset', 'rule_id', 'facts'],
+  additionalProperties: false,
+  properties: {
+    idempotency_key: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[\\w.:-]+$' },
+    aliases,
+    scope: { type: 'string', maxLength: 127 },
+    ruleset: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}$' },
+    rule_id: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,30}(\\.[a-z][a-z0-9_]{0,30}){0,3}$' },
+    facts: attestBody.properties.facts,
+    as_of: { type: ['string', 'null'], maxLength: 64 },
+    expires_at: { type: ['string', 'null'], maxLength: 64 },
+    claw,
+  },
+} as const;
+
+export const catalogueBody = {
+  type: 'object',
+  required: ['fact', 'fact_type', 'class'],
+  additionalProperties: false,
+  properties: {
+    fact: { type: 'string', maxLength: 96 },
+    fact_type: { type: 'string', enum: [...FACT_TYPES] },
+    class: { type: 'string', enum: ['plain', 'non_response', 'delivery'] },
+    guarded_by: { type: ['string', 'null'], maxLength: 96 },
+    guard_value: { type: ['string', 'null'], maxLength: 64 },
+    allowed_values: { type: ['array', 'null'], maxItems: 64, items: { type: 'string', maxLength: 64 } },
+    description: { type: ['string', 'null'], maxLength: 500 },
+  },
+} as const;
+
+export const sourceBody = {
+  type: 'object',
+  required: ['source', 'admissibility'],
+  additionalProperties: false,
+  properties: {
+    source: { type: 'string', maxLength: 63 },
+    admissibility: { type: 'string', maxLength: 16 },
+    programme: { type: ['string', 'null'], maxLength: 31 },
+    description: { type: ['string', 'null'], maxLength: 500 },
+  },
+} as const;
+
+export const clockBody = {
+  type: 'object',
+  required: ['aliases', 'scope', 'clock', 'started_at'],
+  additionalProperties: false,
+  properties: {
+    aliases,
+    scope: { type: 'string', maxLength: 127 },
+    clock: { type: 'string', maxLength: 64 },
+    started_at: { type: 'string', maxLength: 64 },
+  },
+} as const;
+
+export const findingsQuery = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    class: { type: 'string', maxLength: 64 },
+    days: { type: 'string', maxLength: 4 },
+  },
+} as const;
+
+export const closeRuleBody = {
+  type: 'object',
+  required: ['effective_to'],
+  additionalProperties: false,
+  properties: { effective_to: { type: 'string', maxLength: 64 } },
 } as const;
 
 export const lookupBody = {

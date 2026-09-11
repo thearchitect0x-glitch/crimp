@@ -8,11 +8,14 @@
  * check here whenever you add a setting that is safe in development and unsafe
  * outside it.
  */
+import { pqSupported } from './signing.js';
 import { config as loadEnv } from 'dotenv';
 
 loadEnv({ quiet: true });
 
 const DEV_SECRET = 'dev-secret-do-not-use-in-production';
+/** Bytes 0..31: the seed the test suite and the published vectors sign with. Never a production key. */
+export const TEST_SIGNING_SEED = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 
 function env(name: string, fallback?: string): string {
   const v = process.env[name];
@@ -43,6 +46,32 @@ export const config = {
 
   corsOrigins: (process.env['CORS_ORIGINS'] ?? '').split(',').map((s) => s.trim()).filter(Boolean),
 
+  /**
+   * Signs every record's sealed core (SPEC §7.0f). The 32-byte Ed25519 seed,
+   * base64. Read at use rather than at load so a test can set it. Absent in
+   * development means records are unsigned and say so; absent in production
+   * refuses to start — an unsigned record is internally consistent and
+   * proves nothing about who issued it.
+   */
+  get signingKey(): string | null { return process.env['SIGNING_KEY'] || null; },
+  /** Optional ML-DSA-65 private key (PKCS#8 DER, base64): every core is signed twice. */
+  get signingKeyPq(): string | null { return process.env['SIGNING_KEY_PQ'] || null; },
+  /** Raw Ed25519 public keys this deployment signed with before, comma-separated base64. Published so old records keep verifying. */
+  get signingPreviousPublicKeys(): string[] {
+    return (process.env['SIGNING_PREVIOUS_PUBLIC_KEYS'] ?? '').split(',').map((k) => k.trim()).filter((k) => k.length > 0);
+  },
+
+  /**
+   * Where a person can check a record: the format's home, serving the
+   * browser verifier. Absent, a notice says the record can be checked and
+   * not where; set, it says where. Never a URL inside the record itself —
+   * the record must not depend on a page still being hosted.
+   */
+  get verifyUrl(): string | null {
+    const v = process.env['VERIFY_URL'] || null;
+    return v === null ? null : v.replace(/\/+$/, '');
+  },
+
   dbPoolMax: Number(process.env['DB_POOL_MAX'] ?? 10),
   dbSsl: process.env['DB_SSL'] === 'true',
   statementTimeoutMs: Number(process.env['STATEMENT_TIMEOUT_MS'] ?? 10_000),
@@ -57,6 +86,13 @@ export function assertProductionSafety(cfg: typeof config = config): void {
   if (cfg.authSecret.length < 32) fail.push('AUTH_SECRET is shorter than 32 characters.');
   if (cfg.blindSecret === DEV_SECRET) fail.push('BLIND_SECRET is the development default.');
   if (cfg.blindSecret.length < 32) fail.push('BLIND_SECRET is shorter than 32 characters.');
+  if (cfg.signingKey === null) fail.push('SIGNING_KEY is not set; records would be unsigned.');
+  if (cfg.signingKeyPq !== null && !pqSupported()) {
+    fail.push('SIGNING_KEY_PQ is set but this runtime cannot use ML-DSA-65 (Node 25 / OpenSSL 3.5 required); records would silently lack the second signature.');
+  }
+  else if (cfg.signingKey === TEST_SIGNING_SEED) {
+    fail.push('SIGNING_KEY is the published test seed; every record would be signed with a key printed in the conformance vectors.');
+  }
   if (cfg.blindSecret === cfg.authSecret) {
     fail.push('BLIND_SECRET must differ from AUTH_SECRET — they have different rotation semantics '
       + 'and sharing them makes an auth rotation silently orphan every subject.');

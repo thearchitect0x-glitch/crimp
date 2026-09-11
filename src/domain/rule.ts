@@ -32,6 +32,10 @@
  */
 import { canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
+// A cycle, on purpose and safely: evaluate.ts uses nothing from this module at
+// load time, only inside functions, and `evaluate` is a hoisted declaration.
+// Admission needs evaluation to say whether a rule can ever say anything.
+import { evaluate, RuleTypeError } from './evaluate.js';
 
 /**
  * The semantics a sealed rule was evaluated under.
@@ -170,7 +174,132 @@ export function validateRule(rule: unknown): Set<string> {
   // this, so the check is explicit rather than implied.
   if (facts.size === 0) bad('A rule must reference at least one fact.');
 
+  // F1. `any[a=1, a≠1]` is TRUE whenever `a` is attested, whatever it says:
+  // a presence test, which is the operator this grammar withholds, rebuilt
+  // from parts. Refused at admission, never re-decided at evaluation.
+  const constant = constantConclusion(rule as Rule);
+  if (constant !== null) {
+    throw new ApiError(400, 'constant_conclusion',
+      `The rule at "${constant.path}" is ${constant.truth} under every value of the facts it `
+      + 'names. It decides nothing about them; it can only test whether they were attested, '
+      + 'and absence must be attested positively rather than observed.',
+      { path: constant.path, truth: constant.truth, assignments: constant.assignments });
+  }
+
   return facts;
+}
+
+/**
+ * The number of representative assignments a multi-fact subtree is checked
+ * over. Above this the subtree is not checked. Stated in the specification
+ * (§3) so a second implementation refuses exactly the same rules.
+ */
+export const CONSTANT_CHECK_BOUND = 65536;
+
+export interface ConstantConclusion {
+  truth: typeof TRUE | typeof FALSE;
+  /** Where in the rule, in the same path form the reasons use. */
+  path: string;
+  assignments: number;
+}
+
+/**
+ * Bounded, exact-where-it-runs detection of a subtree that evaluates the same
+ * under every assignment in which its facts are present.
+ *
+ * For each fact a subtree names, its literals partition the fact's values
+ * into finitely many cells that no comparison can tell apart: for integers
+ * each literal n gives cells below, at and above it (n-1, n, n+1 cover them
+ * all); for strings each literal plus one string that is none of them; for
+ * booleans both. Evaluating one representative per cell is therefore exact.
+ * Across facts the product grows, so a multi-fact subtree is checked only
+ * when its product is within CONSTANT_CHECK_BOUND; a single-fact subtree is
+ * always checked, which is where the presence-test shape actually lives.
+ */
+export function constantConclusion(rule: Rule): ConstantConclusion | null {
+  const walk = (node: Rule, path: string): ConstantConclusion | null => {
+    const here = checkNode(node, path);
+    if (here !== null) return here;
+    const kids: Array<[Rule, string]> = 'all' in node ? node.all.map((k, i) => [k, join(path, `all[${i}]`)])
+      : 'any' in node ? node.any.map((k, i) => [k, join(path, `any[${i}]`)])
+        : 'not' in node ? [[node.not, join(path, 'not')]] : [];
+    for (const [k, kp] of kids) {
+      const found = walk(k, kp);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  return walk(rule, '');
+}
+
+const join = (path: string, seg: string): string => (path === '' ? seg : `${path}.${seg}`);
+
+function checkNode(node: Rule, path: string): ConstantConclusion | null {
+  const reps = representatives(node);
+  if (reps === null) return null;
+  const names = [...reps.keys()];
+  const sizes = names.map((n) => reps.get(n)!.length);
+  const total = sizes.reduce((a, b) => a * b, 1);
+  if (names.length > 1 && total > CONSTANT_CHECK_BOUND) return null;
+
+  let seenTrue = false, seenFalse = false;
+  const idx = names.map(() => 0);
+  for (let k = 0; k < total; k++) {
+    const facts: Record<string, Fact> = {};
+    names.forEach((n, i) => { facts[n] = reps.get(n)![idx[i]!]!; });
+    let t: Truth;
+    try { t = evaluate(node, facts); } catch (e) {
+      if (e instanceof RuleTypeError) return null;  // cannot be judged; refused elsewhere
+      throw e;
+    }
+    if (t === TRUE) seenTrue = true; else if (t === FALSE) seenFalse = true; else return null;
+    if (seenTrue && seenFalse) return null;
+    // odometer
+    for (let i = 0; i < idx.length; i++) {
+      if (++idx[i]! < sizes[i]!) break;
+      idx[i] = 0;
+    }
+  }
+  return { truth: seenTrue ? TRUE : FALSE, path: path === '' ? 'rule' : path, assignments: total };
+}
+
+/**
+ * One representative per cell, per fact — or null if a fact's literals are of
+ * mixed kinds. Shared with the remedy search (cap-02), which needs the same
+ * partition for the same reason: it is what makes "every value" finite.
+ */
+export function representatives(node: Rule): Map<string, Fact[]> | null {
+  const literals = new Map<string, Set<boolean | number | string>>();
+  const collect = (n: Rule): void => {
+    if ('all' in n) return n.all.forEach(collect);
+    if ('any' in n) return n.any.forEach(collect);
+    if ('not' in n) return collect(n.not);
+    const c = n as Comparison;
+    const set = literals.get(c.fact) ?? new Set();
+    for (const v of Array.isArray(c.value) ? c.value : [c.value]) set.add(v);
+    literals.set(c.fact, set);
+  };
+  collect(node);
+
+  const out = new Map<string, Fact[]>();
+  for (const [fact, set] of literals) {
+    const kinds = new Set([...set].map((v) => typeof v));
+    if (kinds.size !== 1) return null;
+    const kind = [...kinds][0];
+    if (kind === 'boolean') {
+      out.set(fact, [{ type: 'bool', value: true }, { type: 'bool', value: false }]);
+    } else if (kind === 'number') {
+      const cells = new Set<number>();
+      for (const n of set as Set<number>) { cells.add(n - 1); cells.add(n); cells.add(n + 1); }
+      out.set(fact, [...cells].sort((a, b) => a - b).map((value) => ({ type: 'int', value })));
+    } else {
+      const strs = [...set as Set<string>];
+      // Longer than every member, so equal to none of them.
+      const fresh = strs.join('') + '\u0001';
+      out.set(fact, [...strs, fresh].map((value) => ({ type: 'str', value })));
+    }
+  }
+  return out;
 }
 
 function validateLiteral(op: Op, value: unknown): void {
@@ -182,6 +311,13 @@ function validateLiteral(op: Op, value: unknown): void {
     }
     const kinds = new Set(value.map((v) => typeof v));
     if (kinds.size !== 1) bad(`Operator "${op}" requires all values to be the same type.`);
+    // The evaluator refuses a set operator over a bool fact, so a boolean set
+    // member is a rule that can never evaluate against anything. Found by the
+    // cap-01 conformance vectors: the grammar admitted what the evaluator
+    // could not run. Refused here, where the caller is still listening.
+    if (kinds.has('boolean')) {
+      bad(`Operator "${op}" takes numbers or strings. A bool has two values; compare it with eq.`, { op });
+    }
     for (const v of value) scalarLiteral(v, op);
     return;
   }
@@ -225,9 +361,20 @@ export function canonicalRule(rule: Rule): string {
     if ('any' in node) return { any: node.any.map(norm).map(canonicalize).sort().map((s) => JSON.parse(s)) };
     if ('not' in node) return { not: norm(node.not) };
     const c = node as Comparison;
-    // Set members are compared as a set, so their order carries no meaning.
+    // Set members are compared as a set, so neither their order NOR their
+    // multiplicity carries meaning. Sorting alone was not enough: `in ["CA"]`
+    // and `in ["CA","CA"]` are the same rule and hashed differently, so two
+    // identical policies produced two different determinations and neither
+    // could be found from the other.
+    //
+    // Caught by the published conformance vectors, which were derived from the
+    // specification by an independent implementation rather than from this
+    // code. It is also the last moment this is free to fix: canonical form
+    // decides the rule hash, so changing it after the first real determination
+    // would silently orphan every determination sealed before the change.
     const value = Array.isArray(c.value)
-      ? [...c.value].sort((a, b) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))
+      ? [...new Set(c.value.map((m) => JSON.stringify(m)))]
+        .sort().map((m) => JSON.parse(m) as number | string)
       : c.value;
     return { fact: c.fact, op: c.op, value };
   };

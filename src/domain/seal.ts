@@ -7,8 +7,9 @@
  * points at attested facts; this module evaluates the rule and derives the
  * disposition. There is no parameter through which a conclusion can arrive.
  */
+import { BREADTH, WIDE_SESSIONS_SQL } from './breadth.js';
 import type pg from 'pg';
-import { withTx, type Db } from '../db/pool.js';
+import { withTx, getPool, type Db } from '../db/pool.js';
 import { newId, sha256Hex, canonicalize } from '../lib/ids.js';
 import { ApiError } from '../lib/errors.js';
 import { blindAliases, type MergeStrength } from '../lib/blind.js';
@@ -18,7 +19,7 @@ import {
   validateRule, canonicalRule, factsReferenced,
   GRAMMAR_VERSION, SUPPORTED_GRAMMAR_VERSIONS,
   TRUE, FALSE, UNKNOWN,
-  type Rule, type Facts, type Fact, type FactType,
+  type Rule, type Facts, type Fact, type FactType, type Truth,
 } from './rule.js';
 import { evaluate } from './evaluate.js';
 import { validateScope, ancestors, covers } from './scope.js';
@@ -28,6 +29,16 @@ import {
 } from './authority.js';
 import { meetsFloor, type Admissibility } from './admissibility.js';
 import { requireScope, type Principal } from './auth.js';
+import {
+  resolveRule, refOf, fromStored, toStored as toStoredRef, assertScopeWithin, exParteRuleOf,
+  type RuleRef, type StoredRuleRef,
+} from './registry.js';
+import { loadCatalogue, assertCatalogued, applyGuards, guardsOf } from './catalogue.js';
+import { corrections, favourable, type Remedy } from './remedy.js';
+import { harmOf, harmToStored } from './harm.js';
+import { logEvaluation } from './drift.js';
+import { signer } from './signer.js';
+import { loadProof, recordCore } from './record.js';
 import { classify, tierOf, harden, PRESSURE_WINDOW_DAYS, type Pressure } from './lifecycle.js';
 
 export type Disposition = 'bind' | 'permit' | 'commit';
@@ -52,7 +63,21 @@ export interface SealInput {
   aliases: unknown;
   scope: string;
   disposition: Disposition;
-  rule: unknown;
+  /** The rule, inline. Optional only when `ruleRef` names a registered one. */
+  rule?: unknown;
+  /**
+   * A registered rule to seal under (cap-08). Resolved to the version in force
+   * on `asOf` BEFORE evaluation; the evaluator receives a concrete rule and
+   * remains unable to see a clock. If `rule` is also given it must be the same
+   * rule, or the caller has told two stories and is refused.
+   */
+  ruleRef?: { ruleset: string; ruleId: string } | null;
+  /**
+   * The date the decision is ABOUT, which is not always the date it is made.
+   * Selects the registry version; recorded on the seal; never read by
+   * evaluation. Null means "as of now".
+   */
+  asOf?: Date | null;
   claw: ClawRule;
   maxUses?: number | null;
   /** When this determination stops standing on its own. Null means never. */
@@ -67,6 +92,15 @@ export interface SealResult {
   outcome: 'sealed' | 'not_applicable' | 'replayed';
   disposition: Disposition;
   ruleHash: string;
+  /** Which registered version was selected, so nothing is decided silently. Null for an inline rule. */
+  ruleRef: RuleRef | null;
+  /**
+   * What would move this the person's way (cap-02). For a sealed refusal,
+   * what would make it lapse; for a permit that did not apply, what would
+   * earn it. Null for a commit, and for a refusal that did not apply — there
+   * is nothing to remedy in not being refused.
+   */
+  remedy: Remedy | null;
   reason: string;
   /**
    * The clauses that decided it, value-free.
@@ -96,7 +130,7 @@ export interface SealResult {
 interface FactRow {
   fact: string; fact_type: FactType;
   bool_value: boolean | null; int_value: number | null; str_value: string | null;
-  source: string; admissibility: Admissibility; asserted_at: Date;
+  source: string; admissibility: Admissibility; asserted_at: Date; attester: string | null;
 }
 
 function toFact(r: FactRow): Fact {
@@ -123,7 +157,8 @@ async function loadFacts(
     // silently re-decided, and a fresh seal is refused with `facts_not_attested`.
     // That is 42 CFR 435.916 in one clause — if the data on hand is stale you
     // may not determine from it, you must go and ask.
-    `SELECT fact, fact_type, bool_value, int_value, str_value, source, admissibility, asserted_at
+    `SELECT fact, fact_type, bool_value, int_value, str_value, source, admissibility, asserted_at,
+            attester
        FROM attestations
       WHERE workspace_id = $1 AND subject_id = $2 AND fact = ANY($3::text[])
         AND (expires_at IS NULL OR expires_at > now())`,
@@ -139,6 +174,68 @@ function valueDigest(r: FactRow): string {
   const raw = r.fact_type === 'bool' ? r.bool_value
     : r.fact_type === 'str' ? r.str_value : r.int_value;
   return sha256Hex(canonicalize({ t: r.fact_type, v: raw }));
+}
+
+/* ── Ex parte (cap-07) ───────────────────────────────────────────────── */
+
+/**
+ * Try the programme's substantive rule from facts on file before a
+ * procedural rule may seal. Returns what was tried and how it came out, for
+ * the record, or null when the rule is not procedural. Throws when the merits
+ * are decidable — the refusal names the facts and the programmes they came
+ * from, which is the remedy: "you already have this".
+ */
+async function exParteAttempt(
+  tx: pg.PoolClient, workspaceId: string, subjectId: string,
+  catalogue: Awaited<ReturnType<typeof loadCatalogue>>, referenced: ReadonlySet<string>,
+  ruleRef: RuleRef | null, asOf: Date | null,
+): Promise<Record<string, unknown> | null> {
+  const procedural = [...referenced].some((f) => catalogue.get(f)?.class === 'non_response');
+  if (!procedural) return null;
+  if (ruleRef === null) {
+    throw new ApiError(400, 'procedural_needs_registry',
+      'A rule that rests on a non-response fact is a procedural determination, and a procedural '
+      + 'determination must be made under a committed rule so the programme\'s ex parte rule can '
+      + 'be tried first. Seal it with a rule_ref.', { nonResponse: [...referenced].filter((f) => catalogue.get(f)?.class === 'non_response') });
+  }
+  const exParteId = await exParteRuleOf(tx, workspaceId, ruleRef.ruleset);
+  if (exParteId === null) return { ruleset: ruleRef.ruleset, rule_id: null, outcome: 'not_declared' };
+
+  let substantive;
+  try {
+    substantive = await resolveRule(tx, workspaceId, ruleRef.ruleset, exParteId, asOf ?? new Date());
+  } catch (e) {
+    if (e instanceof ApiError && (e.code === 'unknown_rule' || e.code === 'no_rule_in_force')) {
+      throw new ApiError(409, 'ex_parte_rule_not_in_force',
+        `Ruleset "${ruleRef.ruleset}" names "${exParteId}" as its ex parte rule, but no version of it is in `
+        + 'force for this date. A programme that has declared how it decides on the merits must keep '
+        + 'that rule in force before it may terminate anybody procedurally.',
+        { ruleset: ruleRef.ruleset, exParteRule: exParteId, cause: e.code });
+    }
+    throw e;
+  }
+  const names = [...factsReferenced(substantive.rule)];
+  const loaded = await loadFacts(tx, workspaceId, subjectId, [...names, ...guardsOf(catalogue, names)]);
+  const { facts } = applyGuards(catalogue, loaded.facts, names);
+  let truth: Truth;
+  try { truth = evaluate(substantive.rule, facts); } catch { truth = UNKNOWN; }
+
+  const attempt = { ruleset: ruleRef.ruleset, rule_id: exParteId, version: substantive.version, outcome: truth };
+  if (truth === UNKNOWN) {
+    return { ...attempt, missing: names.filter((n) => facts[n] === undefined) };
+  }
+  const sources = [...new Set(loaded.rows.map((r) => r.source))];
+  const { rows: prog } = await tx.query<{ source: string; programme: string | null }>(
+    'SELECT source, programme FROM fact_sources WHERE workspace_id = $1 AND source = ANY($2::text[])',
+    [workspaceId, sources]);
+  const programmeOf = new Map(prog.map((r) => [r.source, r.programme]));
+  throw new ApiError(409, 'cross_program_fact_available',
+    `The merits can be decided from facts already on file: "${exParteId}" evaluates ${truth}. `
+    + 'A procedural termination is not available while the determination can be made ex parte — '
+    + 'decide it on the merits instead (42 CFR 435.916(b)(1)).',
+    { ...attempt, facts: loaded.rows.filter((r) => facts[r.fact] !== undefined).map((r) => ({
+      fact: r.fact, source: r.source, programme: programmeOf.get(r.source) ?? null,
+      asserted_at: r.asserted_at.toISOString() })) });
 }
 
 /* ── Seal ────────────────────────────────────────────────────────────── */
@@ -196,8 +293,49 @@ export async function seal(
     if (expiresAt === null || expiresAt > ceiling) expiresAt = ceiling;
   }
   const clawRule = validateClawRule(sealedBy, input.claw, p.jurisdiction);
-  const referenced = validateRule(input.rule);
-  const rule = input.rule as Rule;
+
+  const asOf = input.asOf ?? null;
+  if (asOf !== null && (!(asOf instanceof Date) || Number.isNaN(asOf.getTime()))) {
+    throw new ApiError(400, 'invalid_request', 'as_of must be a timestamp.');
+  }
+
+  // Registry selection happens HERE, before evaluation, and hands the
+  // evaluator a concrete rule. Time enters the decision only as the date the
+  // caller says the decision is about, and that date is recorded.
+  let ruleRef: RuleRef | null = null;
+  let ruleText: unknown = input.rule;
+  if (input.ruleRef != null) {
+    const registered = await resolveRule(getPool(), workspaceId,
+      input.ruleRef.ruleset, input.ruleRef.ruleId, asOf ?? new Date());
+    assertScopeWithin(registered, scope);
+    // cap-10. A rule that says what kind of determination it makes binds
+    // every seal under it. Otherwise "disposition" is an outcome field.
+    if (registered.disposition !== null && registered.disposition !== input.disposition) {
+      throw new ApiError(400, 'disposition_fixed_by_rule',
+        `Rule "${registered.ruleId}" makes a ${registered.disposition}; it cannot be sealed as a `
+        + `${input.disposition}. The kind of determination is committed with the rule, not chosen per seal.`,
+        { ruleId: registered.ruleId, fixed: registered.disposition, requested: input.disposition });
+    }
+    if (ruleText !== undefined) {
+      validateRule(ruleText);
+      const inlineHash = sha256Hex(canonicalRule(ruleText as Rule));
+      if (inlineHash !== registered.version) {
+        throw new ApiError(400, 'rule_ref_mismatch',
+          `The inline rule is not the version of "${registered.ruleId}" in force on `
+          + `${(asOf ?? new Date()).toISOString()}. Send one or the other; sending both that `
+          + 'disagree is two stories.',
+          { inline: inlineHash, registered: registered.version });
+      }
+    }
+    ruleText = registered.rule;
+    ruleRef = refOf(registered);
+  }
+  if (ruleText === undefined) {
+    throw new ApiError(400, 'invalid_request',
+      'A determination needs a rule: inline, or a rule_ref into the registry.');
+  }
+  const referenced = validateRule(ruleText);
+  const rule = ruleText as Rule;
 
   // A rule that references none of the fact classes policy requires is a rule
   // that decides nothing while looking like it decides something — the vacuous
@@ -213,13 +351,37 @@ export async function seal(
   const ruleHash = sha256Hex(canonicalRule(rule));
   const aliases = blindAliases(workspaceId, input.aliases, strengths);
 
+  // cap-09. Every evaluation leaves a subject-free row — outcome and reason,
+  // per rule — because two of the three outcomes otherwise leave nothing a
+  // monitor could count. Written after the transaction settles, so a refusal
+  // that rolled everything back is still counted as the `unknown` it was.
+  const ruleKey = ruleRef === null ? ruleHash.slice(0, 16) : `${ruleRef.ruleset}/${ruleRef.ruleId}`;
+  let result: SealResult;
+  try {
+    result = await sealInTx();
+  } catch (e) {
+    if (e instanceof ApiError && UNDECIDED.has(e.code)) {
+      const guarded = (e.detail as { guarded?: unknown[] } | undefined)?.guarded;
+      await logEvaluation(workspaceId, ruleKey, 'unknown',
+        e.code === 'facts_not_attested' && Array.isArray(guarded) && guarded.length > 0
+          ? 'delivery_unattested' : e.code);
+    }
+    throw e;
+  }
+  if (result.outcome !== 'replayed') {
+    await logEvaluation(workspaceId, ruleKey, result.outcome === 'sealed' ? 'yes' : 'no', null);
+  }
+  return result;
+
+  async function sealInTx(): Promise<SealResult> {
   return withTx(async (tx) => {
     // Replay before doing any work. A retry must be cheap and must not
     // re-resolve subjects or re-evaluate anything.
     const { rows: prior } = await tx.query<{
       id: string; disposition: Disposition; rule_hash: string;
-      reasons: Reason[]; expires_at: Date | null;
-    }>(`SELECT id, disposition, rule_hash, reasons, expires_at FROM seals
+      reasons: Reason[]; expires_at: Date | null; rule_ref: StoredRuleRef | null;
+      remedy: Remedy | null;
+    }>(`SELECT id, disposition, rule_hash, reasons, expires_at, rule_ref, remedy FROM seals
          WHERE workspace_id = $1 AND idempotency_key = $2`,
       [workspaceId, input.idempotencyKey]);
     if (prior[0]) {
@@ -239,24 +401,61 @@ export async function seal(
         // different decision under the same identifier. Same for the expiry.
         reasons: prior[0].reasons,
         expiresAt: prior[0].expires_at,
+        ruleRef: prior[0].rule_ref === null ? null : fromStored(prior[0].rule_ref),
+        remedy: prior[0].remedy,
       };
     }
 
     const { subjectId } = await resolveForWrite(tx, workspaceId, aliases,
       { doing: 'sealing a determination' });
-    const { facts, rows } = await loadFacts(tx, workspaceId, subjectId, [...referenced]);
+
+    // A closed catalogue admits only what it names — for an inline rule here,
+    // for a registered one at commit. Then the guards: a non-response fact is
+    // withheld until its delivery fact holds, and the evaluator never learns
+    // there was anything to withhold.
+    const catalogue = await loadCatalogue(tx, workspaceId);
+    assertCatalogued(catalogue, referenced, 'a rule');
+    const loaded = await loadFacts(tx, workspaceId, subjectId,
+      [...referenced, ...guardsOf(catalogue, referenced)]);
+    const { facts, withheld } = applyGuards(catalogue, loaded.facts, referenced);
+    // What the record commits to: every fact the evaluator read, and every
+    // guard that held — the determination rested on the delivery as surely
+    // as on the non-response it unlocked. A withheld fact is not here.
+    const rows = loaded.rows.filter((r) => facts[r.fact] !== undefined);
+
+    // cap-07. EX PARTE FIRST. A rule that rests on a non-response fact is a
+    // procedural determination. Before one may seal, the programme's own
+    // substantive rule is tried against every fact on file — from any
+    // programme, because the fact store has no programmes. If the merits are
+    // decidable, the procedural path is closed: decide it on the merits. If
+    // they are not, the attempt is recorded on the seal: that record IS the
+    // 42 CFR 435.916(b)(1) compliance evidence.
+    const exParte = await exParteAttempt(tx, workspaceId, subjectId, catalogue, referenced, ruleRef, asOf);
 
     // Throws RuleTypeError (400) on a literal that cannot be compared with the
     // fact it names. That is a bug in the rule, not missing data, and it must
     // be refused loudly rather than absorbed as UNKNOWN.
     const truth = evaluate(rule, facts);
 
+    // The direction that helps the person, if this disposition has one. A
+    // remedy is derived from the rule's literals and the facts' CELLS, never
+    // their values, so it sits at the same sensitivity as the reasons.
+    const want = favourable(input.disposition);
+    const remedyToward = (t: typeof TRUE | typeof FALSE | null): Remedy | null =>
+      (t === null || t === truth ? null : corrections(rule, facts, t));
+
     if (truth === UNKNOWN) {
       const missing = [...referenced].filter((f) => facts[f] === undefined);
       throw new ApiError(409, 'facts_not_attested',
         'This rule reads facts that have not been attested, so it has not been answered — it has '
         + 'neither been satisfied nor violated. Attest them and seal again. An agent may not '
-        + 'decide on facts it never gathered.', { missing });
+        + 'decide on facts it never gathered.'
+        + (withheld.length > 0
+          ? ` ${withheld.length} of them cannot be read until delivery is attested: `
+            + withheld.map((w) => `${w.fact} (needs ${w.guardedBy} = ${w.requires}, `
+              + `${w.observed === null ? 'nothing attested' : `attested ${w.observed}`})`).join('; ')
+          : ''),
+        { missing, guarded: withheld, remedy: remedyToward(want) });
     }
 
     if (truth === FALSE) {
@@ -264,7 +463,10 @@ export async function seal(
       // no determination exists. Recorded nowhere as a seal, returned plainly.
       return {
         sealId: null, outcome: 'not_applicable' as const, expiresAt: null,
-        disposition: input.disposition, ruleHash,
+        disposition: input.disposition, ruleHash, ruleRef,
+        // A permit that did not apply: what would earn it. A refusal that did
+        // not apply needs no remedy — that IS the favourable outcome.
+        remedy: remedyToward(want),
         reason: 'The rule did not hold against the attested facts. No determination was created.',
         // Which clauses failed, so the caller knows why their own rule did not
         // apply. Nothing is stored: no determination exists to attach it to.
@@ -276,6 +478,7 @@ export async function seal(
     // which branch of an `any` fired needs the facts as they were, and those
     // are kept only as digests.
     const why = reasons(rule, facts, TRUE);
+    const remedy = remedyToward(want);
 
     const sealId = newId('seal');
     await tx.query(
@@ -283,38 +486,67 @@ export async function seal(
                           grammar_version, sealed_by, claw_authority, claw_evidence_floor,
                           claw_cooling_off_s, max_uses, idempotency_key, expires_at,
                           reasons, claw_quorum, claw_jurisdiction,
-                          last_evaluated_at, evaluation_due)
+                          last_evaluated_at, evaluation_due, rule_ref, as_of, remedy)
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,
-               $17,$18,now(),false)`,
+               $17,$18,now(),false,$19::jsonb,$20,$21::jsonb)`,
       [sealId, workspaceId, subjectId, scope, input.disposition, JSON.stringify(rule),
         ruleHash, GRAMMAR_VERSION, sealedBy, clawRule.authority, clawRule.evidenceFloor,
         clawRule.coolingOffSeconds, input.maxUses ?? null,
         input.idempotencyKey, expiresAt, JSON.stringify(why),
-        clawRule.quorum ?? 1, clawRule.jurisdiction ?? null],
+        clawRule.quorum ?? 1, clawRule.jurisdiction ?? null,
+        ruleRef === null ? null : JSON.stringify(toStoredRef(ruleRef)), asOf,
+        remedy === null ? null : JSON.stringify(remedy)],
     );
 
-    for (const r of rows) {
+    // One statement for every commitment: a round trip per fact was the
+    // largest avoidable cost in the seal path once the pure work was measured
+    // in microseconds.
+    if (rows.length > 0) {
+      const vals: unknown[] = [];
+      const tuples = rows.map((r, i) => {
+        const b = i * 8;
+        vals.push(sealId, r.fact, r.fact_type, valueDigest(r), r.source, r.admissibility, r.asserted_at, r.attester);
+        return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8})`;
+      });
       await tx.query(
-        `INSERT INTO seal_facts (seal_id, fact, fact_type, value_sha256, source, admissibility, asserted_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [sealId, r.fact, r.fact_type, valueDigest(r), r.source, r.admissibility, r.asserted_at],
-      );
+        `INSERT INTO seal_facts (seal_id, fact, fact_type, value_sha256, source, admissibility,
+                                 asserted_at, attester)
+         VALUES ${tuples.join(',')}`, vals);
+    }
+
+    // The issuer's signature over the sealed core, made now and never again:
+    // the core does not move, so the signature stays valid for the life of
+    // the record whatever happens to its state.
+    const sg = signer();
+    if (sg !== null) {
+      const core = recordCore(await loadProof(tx, workspaceId, sealId));
+      const pq = sg.signCorePq(core);
+      await tx.query('UPDATE seals SET signature = $2::jsonb, signature_pq = $3::jsonb WHERE id = $1',
+        [sealId, JSON.stringify(sg.signCore(core)), pq === null ? null : JSON.stringify(pq)]);
     }
 
     await tx.query(
       `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, detail)
        VALUES ($1,$2,'sealed',$3,$4::jsonb)`,
       [sealId, workspaceId, sealedBy,
-        JSON.stringify({ scope, disposition: input.disposition, rule_hash: ruleHash })],
+        JSON.stringify({ scope, disposition: input.disposition, rule_hash: ruleHash,
+          ...(ruleRef === null ? {} : { ruleset: ruleRef.ruleset, rule_id: ruleRef.ruleId }),
+          ...(exParte === null ? {} : { ex_parte: exParte }) })],
     );
 
     return {
-      sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash,
-      expiresAt,
+      sealId, outcome: 'sealed' as const, disposition: input.disposition, ruleHash, ruleRef,
+      remedy, expiresAt,
       reason: 'The rule held. The determination is sealed.', reasons: why,
     };
   });
+  }
 }
+
+/** Refusals that mean "not answered", as opposed to "malformed" or "not allowed". */
+const UNDECIDED: ReadonlySet<string> = new Set([
+  'facts_not_attested', 'cross_program_fact_available', 'ex_parte_rule_not_in_force', 'rule_type_mismatch',
+]);
 
 /* ── Lookup: a query, not a gate ─────────────────────────────────────── */
 
@@ -349,6 +581,12 @@ export interface Determination {
   code: string;
   /** `permit` only: uses remaining, or null when unbounded. */
   remaining?: number | null;
+  /**
+   * cap-06. A ruling elsewhere put the rule this rests on under review. The
+   * determination still stands — nothing decided silently — and the reader
+   * is told.
+   */
+  underReview: boolean;
 }
 
 export interface LookupResult {
@@ -391,13 +629,18 @@ export async function lookup(p: Principal, args: {
     // `resolveForRead` also raises `merge_required` and names the endpoint that
     // resolves it, which is what stopped this being a dead end.
     const subjectId = await resolveForRead(tx, workspaceId, aliases);
-    if (subjectId === null) return { determinations: [] };
+    const declared = typeof args.session === 'string' && /^[0-9a-f]{32}$/.test(args.session);
+    if (subjectId === null) {
+      if (declared) await noteSession(tx, workspaceId, args.session!, { lookups: 1, unknown: 1, refusals: 0 });
+      return { determinations: [] };
+    }
 
-    const { rows: found } = await tx.query<{
-      id: string; scope: string; disposition: Disposition; state: 'sealed' | 'tainted';
-      max_uses: number | null; uses: number;
+    const { rows: found } = await tx.query<ExamRow & {
+      max_uses: number | null; uses: number; review_flagged_at: Date | null;
     }>(
-      `SELECT id, scope, disposition, state, max_uses, uses
+      `SELECT id, subject_id, rule, state, grammar_version,
+              (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
+              disposition, scope, sealed_at, max_uses, uses, review_flagged_at
          FROM seals
         WHERE workspace_id = $1 AND subject_id = $2 AND scope = ANY($3::text[])
           AND state IN ('sealed', 'tainted')
@@ -408,34 +651,79 @@ export async function lookup(p: Principal, args: {
       [workspaceId, subjectId, ancestors(scope)],
     );
 
+    // Correction at the read. The write corrects what it can reach and the
+    // sweep corrects in time; this is the third clock. Nothing reported here
+    // stands on facts the institution no longer holds: every determination
+    // about to be reported is re-run against the facts held now, and one
+    // whose rule no longer holds is recorded lapsed — here, by the read that
+    // would otherwise have refused the person on it. A read writes only when
+    // something changed.
+    const catalogue = found.length > 0 ? await loadCatalogue(tx, workspaceId) : null;
     const out: Determination[] = [];
+    let refusals = 0;
     for (const s of found) {
       if (!covers(s.scope, scope)) continue;
+      if (catalogue !== null) {
+        const ex = await examine(tx, workspaceId, s, catalogue);
+        if (ex.next !== s.state) {
+          const moved = await transition(tx, workspaceId, s, ex);
+          if (moved !== null) {
+            if (moved.to === 'lapsed' || moved.to === 'expired') continue;   // no longer stands
+            s.state = moved.to as 'sealed' | 'tainted';
+          }
+        }
+      }
       if (s.disposition === 'bind') {
+        refusals++;
         // A tainted bind still stands. Tainted means the ground is gone, not
         // that the claim was disproved, and lifting on an unknown is the guess
         // a gate must never make.
         await bumpPressure(tx, s.id, args.session);
         out.push({
-          sealId: s.id, scope: s.scope, disposition: 'bind', state: s.state,
+          sealId: s.id, scope: s.scope, disposition: 'bind', state: s.state as 'sealed' | 'tainted',
           code: s.state === 'tainted' ? CODES.refusalTainted : CODES.refusalStanding,
+          underReview: s.review_flagged_at !== null,
         });
       } else if (s.disposition === 'permit') {
         const remaining = s.max_uses === null ? null : s.max_uses - s.uses;
         out.push({
-          sealId: s.id, scope: s.scope, disposition: 'permit', state: s.state,
+          sealId: s.id, scope: s.scope, disposition: 'permit', state: s.state as 'sealed' | 'tainted',
           code: remaining !== null && remaining <= 0 ? CODES.permitExhausted : CODES.permitAvailable,
           remaining,
+          underReview: s.review_flagged_at !== null,
         });
       } else {
         out.push({
-          sealId: s.id, scope: s.scope, disposition: 'commit', state: s.state,
+          sealId: s.id, scope: s.scope, disposition: 'commit', state: s.state as 'sealed' | 'tainted',
           code: CODES.commitMade,
+          underReview: s.review_flagged_at !== null,
         });
       }
     }
+    if (declared) await noteSession(tx, workspaceId, args.session!, { lookups: 1, unknown: 0, refusals });
     return { determinations: out };
   });
+}
+
+/**
+ * What a declared session did today: how often it asked, how often about
+ * somebody the system does not know, how often it was refused. Breadth
+ * (breadth.ts) reads this to tell a queue from an enumeration: a caseworker's
+ * session asks about people who exist; a search for whoever is not bound
+ * asks, mostly, about people who do not.
+ */
+async function noteSession(
+  tx: pg.PoolClient, workspaceId: string, session: string,
+  n: { lookups: number; unknown: number; refusals: number },
+): Promise<void> {
+  await tx.query(
+    `INSERT INTO session_activity (workspace_id, session, day, lookups, unknown_subjects, refusals)
+     VALUES ($1, $2, current_date, $3, $4, $5)
+     ON CONFLICT (workspace_id, session, day) DO UPDATE SET
+       lookups = session_activity.lookups + EXCLUDED.lookups,
+       unknown_subjects = session_activity.unknown_subjects + EXCLUDED.unknown_subjects,
+       refusals = session_activity.refusals + EXCLUDED.refusals`,
+    [workspaceId, session, n.lookups, n.unknown, n.refusals]);
 }
 
 /**
@@ -499,11 +787,16 @@ async function bumpPressure(tx: pg.PoolClient, sealId: string, session?: string)
 
 export async function pressureOf(db: Db, sealId: string): Promise<Pressure> {
   const { rows } = await db.query<{ attempts: string; sessions: string }>(
-    `SELECT COALESCE(sum(attempts), 0) AS attempts,
+    // A session that touched many people in the window — a queue worker's,
+    // or an enumerator's — is not the party seeking relief coming back, and
+    // must never raise the bar against the person it touched.
+    `WITH wide AS (${WIDE_SESSIONS_SQL.replace('$WS', '(SELECT workspace_id FROM seals WHERE id = $1)').replace('$DAYS', '$2').replace('$N', '$3')})
+     SELECT COALESCE(sum(attempts), 0) AS attempts,
             count(*) FILTER (WHERE declared) AS sessions
        FROM pressure
-      WHERE seal_id = $1 AND last_at > now() - ($2 || ' days')::interval`,
-    [sealId, String(PRESSURE_WINDOW_DAYS)]);
+      WHERE seal_id = $1 AND last_at > now() - ($2 || ' days')::interval
+        AND session NOT IN (SELECT session FROM wide)`,
+    [sealId, String(PRESSURE_WINDOW_DAYS), BREADTH.distinctDeterminations]);
   const r = rows[0];
   return { attempts: Number(r?.attempts ?? 0), sessions: Number(r?.sessions ?? 0) };
 }
@@ -693,15 +986,190 @@ export interface SweepResult {
  * out), then least recently examined. `last_evaluated_at` advances for every
  * row EXAMINED rather than every row changed, which is what makes the cursor
  * move and every determination eventually reachable.
+ *
+ * TWO MORE THINGS THE SCHEDULING BENCHMARK OF 10 SEPTEMBER 2026 FOUND.
+ * First, fact expiry is a change that nothing writes. An attestation that
+ * ran out under a standing determination left it `sealed` on evidence its
+ * own owner had declared stale — 200 of 200, through five passes — because
+ * neither trigger fires without a write. So every pass first marks due any
+ * determination whose subject has an attestation that expired since the
+ * determination was last examined: exact, and idempotent, because the
+ * examination moves the cursor past the expiry. Second, under sustained
+ * churn above the batch, due rows sort first and rows past their own expiry
+ * never reach the front: 500 expired determinations stayed `sealed` through
+ * ten overloaded passes and were recorded only when the feeds went quiet.
+ * When due work fills an entire batch, a tenth of it is now given to rows
+ * that are not due, so expiry is recorded at a bounded rate however busy
+ * the feeds are; a batch with room in it is unchanged.
  */
+interface ExamRow {
+  id: string; subject_id: string; rule: Rule; state: string;
+  grammar_version: string; expired: boolean; evaluation_due: boolean;
+  disposition: Disposition; scope: string; sealed_at: Date;
+}
+interface Examination { next: string; guarded: unknown[]; loaded: FactRow[] | null }
+
+/** Re-run one determination against the facts held now. Pure read. */
+async function examine(
+  db: Db, workspaceId: string, s: ExamRow, catalogue: Awaited<ReturnType<typeof loadCatalogue>>,
+): Promise<Examination> {
+  if (s.expired) {
+    // Ran out. NOT an error — collapsing this into `lapsed` would count
+    // every expiry as the institution having been wrong.
+    return { next: 'expired', guarded: [], loaded: null };
+  }
+  if (!SUPPORTED_GRAMMAR_VERSIONS.has(s.grammar_version)) {
+    // Cannot reproduce the semantics this was sealed under, so cannot check
+    // it. Lost ground, not a disproof — and never a silent re-decision under
+    // rules nobody agreed to.
+    return { next: 'tainted', guarded: [], loaded: null };
+  }
+  const names = [...factsReferenced(s.rule)];
+  const loaded = await loadFacts(db, workspaceId, s.subject_id, [...names, ...guardsOf(catalogue, names)]);
+  // The same guard the seal applied. A finding of non-response that stood
+  // on delivered mail does not survive the mail coming back.
+  const { facts, withheld } = applyGuards(catalogue, loaded.facts, names);
+  let next: string;
+  try {
+    next = classify(evaluate(s.rule, facts));
+  } catch {
+    // A type mismatch against changed attestations means the ground moved
+    // in a way the rule cannot read. Lost ground, not a disproof.
+    next = 'tainted';
+  }
+  return { next, guarded: withheld, loaded: loaded.rows };
+}
+
+/**
+ * What moved under a determination that changed state: which committed
+ * facts differ now — by name, source and admissibility class, never by
+ * value — and the refusal pressure it stood under. On the record so that
+ * the estimate of error among people who never complained (insight.ts) is
+ * computable from records alone, by anyone who holds them.
+ */
+async function whatMoved(db: Db, sealId: string, loaded: FactRow[] | null): Promise<Record<string, unknown>> {
+  const { rows: committed } = await db.query<{ fact: string; value_sha256: string; source: string; admissibility: string }>(
+    'SELECT fact, value_sha256, source, admissibility FROM seal_facts WHERE seal_id = $1 ORDER BY fact', [sealId]);
+  const now = new Map((loaded ?? []).map((r) => [r.fact, r]));
+  const changed: Array<Record<string, unknown>> = [];
+  for (const c of committed) {
+    const n = now.get(c.fact);
+    const was = { source: c.source, admissibility: c.admissibility };
+    if (n === undefined) changed.push({ fact: c.fact, was, now: null });
+    else if (valueDigest(n) !== c.value_sha256 || n.source !== c.source) {
+      changed.push({ fact: c.fact, was, now: { source: n.source, admissibility: n.admissibility } });
+    }
+  }
+  const { rows: p } = await db.query<{ attempts: string; sessions: string }>(
+    `SELECT COALESCE(sum(attempts), 0) AS attempts, count(*) FILTER (WHERE declared) AS sessions
+       FROM pressure WHERE seal_id = $1 AND last_at > now() - ($2 || ' days')::interval`,
+    [sealId, String(PRESSURE_WINDOW_DAYS)]);
+  return { changed, pressure: { attempts: Number(p[0]?.attempts ?? 0), sessions: Number(p[0]?.sessions ?? 0) } };
+}
+
+/** Record the outcome of an examination. Null when nothing changed or somebody else got there first. */
+async function transition(
+  tx: pg.PoolClient, workspaceId: string, s: ExamRow, ex: Examination,
+): Promise<Reevaluation | null> {
+  // The cursor advances whether or not anything changed. A pass that
+  // examines a determination and leaves it alone has still examined it,
+  // and recording that is what stops the sweep looping on its own head.
+  const { rows: upd } = await tx.query<{ settled_at: Date | null }>(
+    `UPDATE seals
+        SET state = $2,
+            settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END,
+            last_evaluated_at = now(),
+            evaluation_due = false
+      WHERE id = $1 AND state = $3
+      RETURNING settled_at`,
+    [s.id, ex.next, s.state]);
+  if (upd.length === 0) return null;  // somebody clawed it first; their record wins
+  if (ex.next === s.state) return null;
+  // cap-05. A refusal that lapsed stood for a measurable time; the
+  // reversal carries its cost. Only a void `bind`: not an expiry, not a
+  // taint, not a permit — see harm.ts for why each is excluded.
+  const harm = ex.next === 'lapsed' && s.disposition === 'bind'
+    ? harmToStored(harmOf({ scope: s.scope, sealedAt: s.sealed_at, reversedAt: upd[0]!.settled_at ?? new Date() }))
+    : null;
+  const moved = ex.next === 'lapsed' || ex.next === 'tainted' ? await whatMoved(tx, s.id, ex.loaded) : {};
+  await tx.query(
+    `INSERT INTO seal_events (seal_id, workspace_id, kind, detail)
+     VALUES ($1,$2,$3,$4::jsonb)`,
+    [s.id, workspaceId, ex.next, JSON.stringify({ from: s.state,
+      ...(ex.guarded.length > 0 ? { guarded: ex.guarded } : {}),
+      ...(harm === null ? {} : { harm }),
+      ...moved })]);
+  return { sealId: s.id, from: s.state, to: ex.next };
+}
+
+/** How many of a subject's determinations a single write re-executes before handing the rest to the sweep. */
+export const SYNC_REEXECUTION_CAP = 8;
+
+/**
+ * Correction at the moment of the write.
+ *
+ * The change-driven trigger marked a subject's determinations due and left
+ * them for the next pass — up to a minute away, and behind whatever else
+ * was due. But the write that moved the ground is a transaction, the
+ * determinations it moves are a handful, and re-executing them here means
+ * the fact and its consequence become visible together: no reader ever
+ * sees the new fact beside the old refusal. Bounded by the cap, locked with
+ * SKIP LOCKED so a pass already holding a row is left to finish it, and the
+ * sweep remains the backstop for everything past the cap.
+ */
+export async function reexecuteSubject(
+  tx: pg.PoolClient, workspaceId: string, subjectId: string, cap = SYNC_REEXECUTION_CAP,
+): Promise<Reevaluation[]> {
+  const { rows } = await tx.query<ExamRow>(
+    `SELECT id, subject_id, rule, state, grammar_version,
+            (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
+            disposition, scope, sealed_at
+       FROM seals
+      WHERE workspace_id = $1 AND subject_id = $2 AND state IN ('sealed', 'tainted') AND evaluation_due
+      ORDER BY sealed_at
+      LIMIT $3
+      FOR UPDATE SKIP LOCKED`,
+    [workspaceId, subjectId, cap]);
+  if (rows.length === 0) return [];
+  const catalogue = await loadCatalogue(tx, workspaceId);
+  const out: Reevaluation[] = [];
+  for (const s of rows) {
+    const moved = await transition(tx, workspaceId, s, await examine(tx, workspaceId, s, catalogue));
+    if (moved !== null) out.push(moved);
+  }
+  return out;
+}
+
+/**
+ * The third trigger: a fact that ran out under a standing determination.
+ * Runs once per pass across every workspace BEFORE the pass decides which
+ * workspaces have due work — the benchmark that found the hole was re-run
+ * with this inside the per-workspace batch and found it again, because a
+ * workspace with nothing else due never reached the batch. Exact and
+ * idempotent: the examination moves the cursor past the expiry.
+ */
+export async function markFactExpiryDue(db: Db, workspaceId: string | null = null): Promise<number> {
+  const { rowCount } = await db.query(
+    `UPDATE seals s SET evaluation_due = true
+       FROM attestations a
+      WHERE ($1::text IS NULL OR s.workspace_id = $1)
+        AND a.workspace_id = s.workspace_id AND a.subject_id = s.subject_id
+        AND s.state IN ('sealed', 'tainted') AND NOT s.evaluation_due
+        AND a.expires_at IS NOT NULL AND a.expires_at <= now()
+        AND a.expires_at > COALESCE(s.last_evaluated_at, s.sealed_at)`,
+    [workspaceId]);
+  return rowCount ?? 0;
+}
+
 export async function reevaluate(workspaceId: string, limit = 100): Promise<SweepResult> {
   const pool = (await import('../db/pool.js')).getPool();
-  const { rows } = await pool.query<{
-    id: string; subject_id: string; rule: Rule; state: string;
-    grammar_version: string; expired: boolean;
-  }>(
+  await markFactExpiryDue(pool, workspaceId);
+
+  type Row = ExamRow;
+  const { rows } = await pool.query<Row>(
     `SELECT id, subject_id, rule, state, grammar_version,
-            (expires_at IS NOT NULL AND expires_at <= now()) AS expired
+            (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
+            disposition, scope, sealed_at
        FROM seals
       WHERE workspace_id = $1 AND state IN ('sealed', 'tainted')
         AND (evaluation_due
@@ -710,51 +1178,32 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
       ORDER BY evaluation_due DESC, last_evaluated_at NULLS FIRST
       LIMIT $2`,
     [workspaceId, limit]);
+  // The reserved share. Only when due work fills the ENTIRE batch — so a
+  // batch with room in it is still due-first and nothing waits that need
+  // not — a tenth of it is given to rows that are not due: never examined,
+  // or past their own expiry, least recently examined first. The due rows
+  // they displace are the last in order and are next pass's first.
+  const reserve = Math.floor(limit / 10);
+  if (reserve > 0 && rows.length === limit && rows.every((r) => r.evaluation_due)) {
+    const { rows: extra } = await pool.query<Row>(
+      `SELECT id, subject_id, rule, state, grammar_version,
+              (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
+              disposition, scope, sealed_at
+         FROM seals
+        WHERE workspace_id = $1 AND state IN ('sealed', 'tainted') AND NOT evaluation_due
+          AND (last_evaluated_at IS NULL OR (expires_at IS NOT NULL AND expires_at <= now()))
+        ORDER BY last_evaluated_at NULLS FIRST
+        LIMIT $2`,
+      [workspaceId, reserve]);
+    if (extra.length > 0) rows.splice(rows.length - extra.length, extra.length, ...extra);
+  }
 
+  const catalogue = await loadCatalogue(pool, workspaceId);
   const changes: Reevaluation[] = [];
   for (const s of rows) {
-    let next: string;
-    if (s.expired) {
-      // Ran out. NOT an error — collapsing this into `lapsed` would count
-      // every expiry as the institution having been wrong.
-      next = 'expired';
-    } else if (!SUPPORTED_GRAMMAR_VERSIONS.has(s.grammar_version)) {
-      // Cannot reproduce the semantics this was sealed under, so cannot check
-      // it. Lost ground, not a disproof — and never a silent re-decision under
-      // rules nobody agreed to.
-      next = 'tainted';
-    } else {
-      const names = [...factsReferenced(s.rule)];
-      const { facts } = await loadFacts(pool, workspaceId, s.subject_id, names);
-      try {
-        next = classify(evaluate(s.rule, facts));
-      } catch {
-        // A type mismatch against changed attestations means the ground moved
-        // in a way the rule cannot read. Lost ground, not a disproof.
-        next = 'tainted';
-      }
-    }
-
-    await withTx(async (tx) => {
-      // The cursor advances whether or not anything changed. A pass that
-      // examines a determination and leaves it alone has still examined it,
-      // and recording that is what stops the sweep looping on its own head.
-      const { rowCount } = await tx.query(
-        `UPDATE seals
-            SET state = $2,
-                settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END,
-                last_evaluated_at = now(),
-                evaluation_due = false
-          WHERE id = $1 AND state = $3`,
-        [s.id, next, s.state]);
-      if (rowCount === 0) return;  // somebody clawed it first; their record wins
-      if (next === s.state) return;
-      await tx.query(
-        `INSERT INTO seal_events (seal_id, workspace_id, kind, detail)
-         VALUES ($1,$2,$3,$4::jsonb)`,
-        [s.id, workspaceId, next, JSON.stringify({ from: s.state })]);
-      changes.push({ sealId: s.id, from: s.state, to: next });
-    });
+    const ex = await examine(pool, workspaceId, s, catalogue);
+    const moved = await withTx((tx) => transition(tx, workspaceId, s, ex));
+    if (moved !== null) changes.push(moved);
   }
 
   const { rows: left } = await pool.query<{ n: string }>(

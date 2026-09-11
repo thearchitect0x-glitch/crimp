@@ -1,0 +1,11 @@
+-- SPDX-License-Identifier: Apache-2.0
+-- Copyright 2026 Deimos AI LLC
+--
+-- cap-02 · The remedy: what would change this determination.
+--
+-- Stored at seal time, like the reasons, because it is derived from the facts
+-- as they were and those are kept only as digests. It carries the rule's own
+-- literals rearranged — which clause on which fact must take which truth —
+-- and never a value the person's facts actually held. Null on every seal that
+-- predates this migration, and on a `commit`, which has no side to be on.
+ALTER TABLE seals ADD COLUMN remedy JSONB;

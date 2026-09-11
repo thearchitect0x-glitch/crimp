@@ -1,0 +1,1192 @@
+{
+  "spec_version": "0.2",
+  "note": "Expected values derived from SPEC.md, not from any implementation. If an implementation disagrees, establish which side is wrong before editing either.",
+  "canonical": [
+    {
+      "name": "commutative children sort, so order cannot change identity",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "canonical": "{\"all\":[{\"fact\":\"carrier.delivered\",\"op\":\"eq\",\"value\":false},{\"fact\":\"prior_refunds_90d\",\"op\":\"lt\",\"value\":3}]}",
+      "rule_sha256": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5"
+    },
+    {
+      "name": "the same rule written the other way round hashes identically",
+      "rule": {
+        "all": [
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          },
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          }
+        ]
+      },
+      "canonical": "{\"all\":[{\"fact\":\"carrier.delivered\",\"op\":\"eq\",\"value\":false},{\"fact\":\"prior_refunds_90d\",\"op\":\"lt\",\"value\":3}]}",
+      "rule_sha256": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5"
+    },
+    {
+      "name": "set members sort AND de-duplicate — SPEC 5.4",
+      "rule": {
+        "fact": "state",
+        "op": "in",
+        "value": [
+          "TX",
+          "CA",
+          "CA",
+          "AL"
+        ]
+      },
+      "canonical": "{\"fact\":\"state\",\"op\":\"in\",\"value\":[\"AL\",\"CA\",\"TX\"]}",
+      "rule_sha256": "f0138e9f360b6a6c4d40a870080307367bf3b6ff83872cdaa69df2aa068c623e"
+    },
+    {
+      "name": "double negation is preserved, not folded — the grammar is not simplified",
+      "rule": {
+        "not": {
+          "not": {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          }
+        }
+      },
+      "canonical": "{\"not\":{\"not\":{\"fact\":\"a\",\"op\":\"eq\",\"value\":true}}}",
+      "rule_sha256": "93c3f9efd8b1e0b421873779e5829ae0db08d9cfb87d73ecded1433eb456a437"
+    }
+  ],
+  "digest": [
+    {
+      "name": "integer",
+      "fact_type": "int",
+      "value": 7,
+      "value_sha256": "a27103d6e0e29c80b8446132b95879d1d6ed74517aa17769ebafaaf9540ce78f"
+    },
+    {
+      "name": "boolean false — distinct from absent, which has no digest at all",
+      "fact_type": "bool",
+      "value": false,
+      "value_sha256": "4edf146e54aeae5a988adc5f8e6961ebcda73457d71cd354d2b3c152b65b7b3c"
+    },
+    {
+      "name": "string, NFC normalised",
+      "fact_type": "str",
+      "value": "café",
+      "value_sha256": "96994357502bfafa2a4f4c089b61a9adfc422cec6f587f5f798cb7806b8be178"
+    },
+    {
+      "name": "epoch millis are integers",
+      "fact_type": "time",
+      "value": 1788000000000,
+      "value_sha256": "cdd555cbd702f993fcca1758f1786b1d4acdcabf12b6c9302a756a0082689d29"
+    }
+  ],
+  "evaluate": [
+    {
+      "name": "both hold",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 1
+        }
+      },
+      "truth": "true"
+    },
+    {
+      "name": "one fails and decides the conjunction",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 9
+        }
+      },
+      "truth": "false"
+    },
+    {
+      "name": "an ABSENT fact is unknown, never false — SPEC 4",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        }
+      },
+      "truth": "unknown"
+    },
+    {
+      "name": "one false child decides a conjunction even with an unknown sibling",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 9
+        }
+      },
+      "truth": "false"
+    },
+    {
+      "name": "one true child decides a disjunction even with an unknown sibling",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          },
+          {
+            "fact": "b",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "facts": {
+        "a": {
+          "type": "bool",
+          "value": true
+        }
+      },
+      "truth": "true"
+    },
+    {
+      "name": "negation of unknown is unknown",
+      "rule": {
+        "not": {
+          "fact": "a",
+          "op": "eq",
+          "value": true
+        }
+      },
+      "facts": {},
+      "truth": "unknown"
+    }
+  ],
+  "reasons": [
+    {
+      "name": "a conjunction that held needed every clause",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 1
+        }
+      },
+      "truth": "true",
+      "reasons": [
+        {
+          "path": "all[0]",
+          "fact": "carrier.delivered",
+          "truth": "true",
+          "polarity": "direct"
+        },
+        {
+          "path": "all[1]",
+          "fact": "prior_refunds_90d",
+          "truth": "true",
+          "polarity": "direct"
+        }
+      ]
+    },
+    {
+      "name": "a conjunction that failed names only the clause that failed",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 9
+        }
+      },
+      "truth": "false",
+      "reasons": [
+        {
+          "path": "all[1]",
+          "fact": "prior_refunds_90d",
+          "truth": "false",
+          "polarity": "direct"
+        }
+      ]
+    },
+    {
+      "name": "a disjunction that held names only the branch that fired",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          },
+          {
+            "fact": "b",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "facts": {
+        "a": {
+          "type": "bool",
+          "value": false
+        },
+        "b": {
+          "type": "bool",
+          "value": true
+        }
+      },
+      "truth": "true",
+      "reasons": [
+        {
+          "path": "any[1]",
+          "fact": "b",
+          "truth": "true",
+          "polarity": "direct"
+        }
+      ]
+    },
+    {
+      "name": "a clause under one negation is negated and carries the OPPOSITE truth",
+      "rule": {
+        "not": {
+          "fact": "a",
+          "op": "eq",
+          "value": true
+        }
+      },
+      "facts": {
+        "a": {
+          "type": "bool",
+          "value": false
+        }
+      },
+      "truth": "true",
+      "reasons": [
+        {
+          "path": "not",
+          "fact": "a",
+          "truth": "false",
+          "polarity": "negated"
+        }
+      ]
+    },
+    {
+      "name": "double negation is DIRECT — polarity is parity, not presence",
+      "rule": {
+        "not": {
+          "not": {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          }
+        }
+      },
+      "facts": {
+        "a": {
+          "type": "bool",
+          "value": true
+        }
+      },
+      "truth": "true",
+      "reasons": [
+        {
+          "path": "not.not",
+          "fact": "a",
+          "truth": "true",
+          "polarity": "direct"
+        }
+      ]
+    },
+    {
+      "name": "asking for an outcome that did not happen returns nothing",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 1
+        }
+      },
+      "truth": "false",
+      "reasons": []
+    }
+  ],
+  "refuse": [
+    {
+      "name": "an empty conjunction is vacuously true — a decision about nobody",
+      "rule": {
+        "all": []
+      }
+    },
+    {
+      "name": "an empty disjunction",
+      "rule": {
+        "any": []
+      }
+    },
+    {
+      "name": "non-integer numbers make equality a lie",
+      "rule": {
+        "fact": "a",
+        "op": "eq",
+        "value": 1.5
+      }
+    },
+    {
+      "name": "an ordered comparison against a boolean",
+      "rule": {
+        "fact": "a",
+        "op": "lt",
+        "value": true
+      }
+    },
+    {
+      "name": "a set operator with an empty set",
+      "rule": {
+        "fact": "a",
+        "op": "in",
+        "value": []
+      }
+    },
+    {
+      "name": "an unknown operator",
+      "rule": {
+        "fact": "a",
+        "op": "matches",
+        "value": "x"
+      }
+    },
+    {
+      "name": "an unusable fact name",
+      "rule": {
+        "fact": "A.Bad-Name",
+        "op": "eq",
+        "value": 1
+      }
+    },
+    {
+      "name": "no presence operator exists — SPEC 3.2",
+      "rule": {
+        "fact": "a",
+        "op": "present",
+        "value": true
+      }
+    },
+    {
+      "name": "constant conclusion: any[a=1, a≠1] is true whenever a is attested — a presence test",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": 1
+          },
+          {
+            "fact": "a",
+            "op": "ne",
+            "value": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "constant conclusion: all[a=1, a≠1] is false whenever a is attested",
+      "rule": {
+        "all": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": 1
+          },
+          {
+            "fact": "a",
+            "op": "ne",
+            "value": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "a set operator over booleans can never evaluate — the grammar refuses what the evaluator cannot run",
+      "rule": {
+        "fact": "a",
+        "op": "in",
+        "value": [
+          true,
+          false
+        ]
+      }
+    },
+    {
+      "name": "constant conclusion: any[a<5, a>3] covers every integer",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "lt",
+            "value": 5
+          },
+          {
+            "fact": "a",
+            "op": "gt",
+            "value": 3
+          }
+        ]
+      }
+    },
+    {
+      "name": "constant conclusion buried in a subtree is still refused",
+      "rule": {
+        "all": [
+          {
+            "fact": "b",
+            "op": "lt",
+            "value": 5
+          },
+          {
+            "any": [
+              {
+                "fact": "a",
+                "op": "eq",
+                "value": 1
+              },
+              {
+                "fact": "a",
+                "op": "ne",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "constant conclusion: any[a=true, a=false] — a bool has two values and this names both",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": true
+          },
+          {
+            "fact": "a",
+            "op": "eq",
+            "value": false
+          }
+        ]
+      }
+    }
+  ],
+  "record": [
+    {
+      "name": "a rule_ref whose version equals rule_hash is consistent",
+      "record": {
+        "grammar_version": "1",
+        "commitment_scheme": "sha256-v1",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "state": "sealed",
+        "as_of": "2026-03-01T00:00:00.000Z",
+        "rule_ref": {
+          "ruleset": "refunds",
+          "rule_id": "refund.eligibility",
+          "version": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+          "legal_authority": "12 CFR 1026.13(e)",
+          "effective_from": "2026-01-01T00:00:00.000Z",
+          "effective_to": null
+        },
+        "facts": [],
+        "reasons": []
+      },
+      "rule_ref_consistent": true
+    },
+    {
+      "name": "a rule_ref naming a different version is a record that tells two stories",
+      "record": {
+        "grammar_version": "1",
+        "commitment_scheme": "sha256-v1",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "state": "sealed",
+        "as_of": "2026-03-01T00:00:00.000Z",
+        "rule_ref": {
+          "ruleset": "refunds",
+          "rule_id": "refund.eligibility",
+          "version": "0000000000000000000000000000000000000000000000000000000000000000",
+          "legal_authority": "12 CFR 1026.13(e)",
+          "effective_from": "2026-01-01T00:00:00.000Z",
+          "effective_to": null
+        },
+        "facts": [],
+        "reasons": []
+      },
+      "rule_ref_consistent": false
+    },
+    {
+      "name": "a record without rule_ref or as_of is a valid record — the fields are optional",
+      "record": {
+        "grammar_version": "1",
+        "commitment_scheme": "sha256-v1",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "state": "sealed",
+        "facts": [],
+        "reasons": []
+      },
+      "rule_ref_consistent": true
+    }
+  ],
+  "admit": [
+    {
+      "name": "any[a<5, a>5] is false at 5 — a gap is not a constant",
+      "rule": {
+        "any": [
+          {
+            "fact": "a",
+            "op": "lt",
+            "value": 5
+          },
+          {
+            "fact": "a",
+            "op": "gt",
+            "value": 5
+          }
+        ]
+      }
+    },
+    {
+      "name": "a >= 0 is false below zero",
+      "rule": {
+        "fact": "a",
+        "op": "gte",
+        "value": 0
+      }
+    },
+    {
+      "name": "s in [A, B] is false for any other string",
+      "rule": {
+        "fact": "s",
+        "op": "in",
+        "value": [
+          "A",
+          "B"
+        ]
+      }
+    },
+    {
+      "name": "genuinely joint conditions: all[any[a=1, b=1], a≠1]",
+      "rule": {
+        "all": [
+          {
+            "any": [
+              {
+                "fact": "a",
+                "op": "eq",
+                "value": 1
+              },
+              {
+                "fact": "b",
+                "op": "eq",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "fact": "a",
+            "op": "ne",
+            "value": 1
+          }
+        ]
+      }
+    }
+  ],
+  "remedy": [
+    {
+      "name": "a refusal that holds: either clause failing would make it lapse",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 1
+        }
+      },
+      "target": "false",
+      "exhaustive": true,
+      "sets": [
+        [
+          {
+            "fact": "carrier.delivered",
+            "fact_type": "bool",
+            "constraints": [
+              {
+                "path": "all[0]",
+                "op": "eq",
+                "value": false,
+                "truth": "false"
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "fact": "prior_refunds_90d",
+            "fact_type": "int",
+            "constraints": [
+              {
+                "path": "all[1]",
+                "op": "lt",
+                "value": 3,
+                "truth": "false"
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "name": "a conjunction with both clauses failing needs both to change",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": true
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 5
+        }
+      },
+      "target": "true",
+      "exhaustive": true,
+      "sets": [
+        [
+          {
+            "fact": "carrier.delivered",
+            "fact_type": "bool",
+            "constraints": [
+              {
+                "path": "all[0]",
+                "op": "eq",
+                "value": false,
+                "truth": "true"
+              }
+            ]
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "fact_type": "int",
+            "constraints": [
+              {
+                "path": "all[1]",
+                "op": "lt",
+                "value": 3,
+                "truth": "true"
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "name": "a disjunction with neither holding: two independent single-fact remedies",
+      "rule": {
+        "any": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": true
+        },
+        "prior_refunds_90d": {
+          "type": "int",
+          "value": 5
+        }
+      },
+      "target": "true",
+      "exhaustive": true,
+      "sets": [
+        [
+          {
+            "fact": "carrier.delivered",
+            "fact_type": "bool",
+            "constraints": [
+              {
+                "path": "any[0]",
+                "op": "eq",
+                "value": false,
+                "truth": "true"
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "fact": "prior_refunds_90d",
+            "fact_type": "int",
+            "constraints": [
+              {
+                "path": "any[1]",
+                "op": "lt",
+                "value": 3,
+                "truth": "true"
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "name": "an absent fact is remedied by attesting it in the right cell",
+      "rule": {
+        "all": [
+          {
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false
+          },
+          {
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3
+          }
+        ]
+      },
+      "facts": {
+        "carrier.delivered": {
+          "type": "bool",
+          "value": false
+        }
+      },
+      "target": "false",
+      "exhaustive": true,
+      "sets": [
+        [
+          {
+            "fact": "carrier.delivered",
+            "fact_type": "bool",
+            "constraints": [
+              {
+                "path": "all[0]",
+                "op": "eq",
+                "value": false,
+                "truth": "false"
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "fact": "prior_refunds_90d",
+            "fact_type": "int",
+            "constraints": [
+              {
+                "path": "all[1]",
+                "op": "lt",
+                "value": 3,
+                "truth": "false"
+              }
+            ]
+          }
+        ]
+      ]
+    }
+  ],
+  "signature": [
+    {
+      "name": "a signed core verifies under the published key",
+      "test_seed_base64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "key": {
+        "kid": "56475aa75463474c",
+        "alg": "ed25519",
+        "public_key": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+      },
+      "record": {
+        "seal_id": "seal_vector_1",
+        "scope": "refund",
+        "disposition": "bind",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "grammar_version": "1",
+        "sealed_by": "agent",
+        "sealed_at": "2026-09-10T12:00:00.000Z",
+        "expires_at": null,
+        "as_of": null,
+        "rule_ref": null,
+        "reasons": [
+          {
+            "path": "all[0]",
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false,
+            "truth": "true",
+            "polarity": "direct"
+          },
+          {
+            "path": "all[1]",
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3,
+            "truth": "true",
+            "polarity": "direct"
+          }
+        ],
+        "facts": [],
+        "remedy": null,
+        "state": "sealed",
+        "signature": {
+          "kid": "56475aa75463474c",
+          "alg": "ed25519",
+          "sig": "GuSqeKNTKQNSAQ6ZNWhgLVCo7KrKym4fpnvAMTBIDAPhZCIjV7cYaGqYpWkqSU7fJhmME1rcJtMWCnv7OlT4Bg=="
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "a core altered after signing does not — the disposition was changed",
+      "test_seed_base64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "key": {
+        "kid": "56475aa75463474c",
+        "alg": "ed25519",
+        "public_key": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+      },
+      "record": {
+        "seal_id": "seal_vector_1",
+        "scope": "refund",
+        "disposition": "permit",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "grammar_version": "1",
+        "sealed_by": "agent",
+        "sealed_at": "2026-09-10T12:00:00.000Z",
+        "expires_at": null,
+        "as_of": null,
+        "rule_ref": null,
+        "reasons": [
+          {
+            "path": "all[0]",
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false,
+            "truth": "true",
+            "polarity": "direct"
+          },
+          {
+            "path": "all[1]",
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3,
+            "truth": "true",
+            "polarity": "direct"
+          }
+        ],
+        "facts": [],
+        "remedy": null,
+        "state": "sealed",
+        "signature": {
+          "kid": "56475aa75463474c",
+          "alg": "ed25519",
+          "sig": "GuSqeKNTKQNSAQ6ZNWhgLVCo7KrKym4fpnvAMTBIDAPhZCIjV7cYaGqYpWkqSU7fJhmME1rcJtMWCnv7OlT4Bg=="
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "state and events are not signed; changing them leaves the signature valid",
+      "test_seed_base64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "key": {
+        "kid": "56475aa75463474c",
+        "alg": "ed25519",
+        "public_key": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+      },
+      "record": {
+        "seal_id": "seal_vector_1",
+        "scope": "refund",
+        "disposition": "bind",
+        "rule": {
+          "all": [
+            {
+              "fact": "carrier.delivered",
+              "op": "eq",
+              "value": false
+            },
+            {
+              "fact": "prior_refunds_90d",
+              "op": "lt",
+              "value": 3
+            }
+          ]
+        },
+        "rule_hash": "96ccd6519687c2b852345220b214e836a50db109b9c500912527b8a01d81d9a5",
+        "grammar_version": "1",
+        "sealed_by": "agent",
+        "sealed_at": "2026-09-10T12:00:00.000Z",
+        "expires_at": null,
+        "as_of": null,
+        "rule_ref": null,
+        "reasons": [
+          {
+            "path": "all[0]",
+            "fact": "carrier.delivered",
+            "op": "eq",
+            "value": false,
+            "truth": "true",
+            "polarity": "direct"
+          },
+          {
+            "path": "all[1]",
+            "fact": "prior_refunds_90d",
+            "op": "lt",
+            "value": 3,
+            "truth": "true",
+            "polarity": "direct"
+          }
+        ],
+        "facts": [],
+        "remedy": null,
+        "state": "lapsed",
+        "events": [
+          {
+            "kind": "lapsed"
+          }
+        ],
+        "signature": {
+          "kid": "56475aa75463474c",
+          "alg": "ed25519",
+          "sig": "GuSqeKNTKQNSAQ6ZNWhgLVCo7KrKym4fpnvAMTBIDAPhZCIjV7cYaGqYpWkqSU7fJhmME1rcJtMWCnv7OlT4Bg=="
+        }
+      },
+      "valid": true
+    }
+  ]
+}

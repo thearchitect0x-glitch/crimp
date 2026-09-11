@@ -14,10 +14,15 @@
  */
 import type { SealResult, LookupResult } from '../domain/seal.js';
 import type { ClawRule } from '../domain/authority.js';
-import type { SourceReliability, QuadrantCounts, Cliff } from '../domain/insight.js';
+import type { SourceReliability, QuadrantCounts, Cliff, QuietErrorEstimate } from '../domain/insight.js';
 import type { MintedKey } from '../domain/auth.js';
 import type { Reason } from '../domain/explain.js';
-import type { Proof, Disclosure } from '../domain/record.js';
+import { recordCore, type Proof, type Disclosure } from '../domain/record.js';
+import { toStored, type RegisteredRule } from '../domain/registry.js';
+import type { CatalogueEntry } from '../domain/catalogue.js';
+import type { Remedy } from '../domain/remedy.js';
+import type { Clock, Timeliness } from '../domain/clocks.js';
+import type { Finding } from '../domain/findings.js';
 import { ApiError } from '../lib/errors.js';
 
 /* ── Inbound ─────────────────────────────────────────────────────────── */
@@ -85,6 +90,67 @@ export function sealToWire(r: SealResult): Record<string, unknown> {
     reason: r.reason,
     reasons: r.reasons.map(reasonToWire),
     expires_at: r.expiresAt?.toISOString() ?? null,
+    rule_ref: r.ruleRef === null ? null : toStored(r.ruleRef),
+    remedy: remedyToWire(r.remedy),
+  };
+}
+
+/** A remedy on the wire. Rule literals and cells only — nothing observed. */
+export function remedyToWire(r: Remedy | null): Record<string, unknown> | null {
+  if (r === null) return null;
+  return {
+    target: r.target,
+    exhaustive: r.exhaustive,
+    evaluations: r.evaluations,
+    sets: r.sets.map((set) => set.map((c) => ({
+      fact: c.fact, fact_type: c.factType,
+      constraints: c.constraints.map((k) => ({ path: k.path, op: k.op, value: k.value, truth: k.truth })),
+    }))),
+  };
+}
+
+export function clockToWire(c: Clock): Record<string, unknown> {
+  return {
+    clock_id: c.id, scope: c.scope, clock: c.name, authority: c.authority,
+    started_at: c.startedAt.toISOString(), due_at: c.dueAt.toISOString(), status: c.status,
+    met_at: c.metAt?.toISOString() ?? null, missed_at: c.missedAt?.toISOString() ?? null,
+    resolved_at: c.resolvedAt?.toISOString() ?? null, seal_id: c.sealId,
+  };
+}
+
+export function timelinessToWire(t: Timeliness): Record<string, unknown> {
+  return {
+    clock: t.clock, authority: t.authority, running: t.running, met: t.met, missed: t.missed,
+    mean_hours_to_meet: t.meanHoursToMeet, mean_hours_late: t.meanHoursLate, unresolved: t.unresolved,
+  };
+}
+
+export function findingToWire(f: Finding): Record<string, unknown> {
+  return {
+    finding_id: f.id, class: f.class, subject_kind: f.subjectKind, subject_id: f.subjectId,
+    detail: f.detail, occurred_at: f.occurredAt.toISOString(),
+  };
+}
+
+export function catalogueEntryToWire(e: CatalogueEntry): Record<string, unknown> {
+  return {
+    fact: e.fact, fact_type: e.factType, class: e.class,
+    guarded_by: e.guardedBy, guard_value: e.guardValue, allowed_values: e.allowedValues,
+    description: e.description, declared_by: e.declaredBy,
+    declared_at: e.declaredAt.toISOString(),
+  };
+}
+
+export function registeredRuleToWire(r: RegisteredRule): Record<string, unknown> {
+  return {
+    ...toStored(r),
+    rule: r.rule,
+    grammar_version: r.grammarVersion,
+    scope: r.scope,
+    disposition: r.disposition,
+    committed_by: r.committedBy,
+    committed_at: r.committedAt.toISOString(),
+    note: r.note,
   };
 }
 
@@ -99,23 +165,14 @@ function reasonToWire(r: Reason): Record<string, unknown> {
 }
 
 export function proofToWire(p: Proof): Record<string, unknown> {
+  // The sealed core first — the same bytes the signature covers — then what
+  // moves: state, the review flag, the events, and how to check it all.
   return {
-    seal_id: p.sealId,
-    scope: p.scope,
-    disposition: p.disposition,
+    ...recordCore(p),
     state: p.state,
-    rule: p.rule,
-    rule_hash: p.ruleHash,
-    grammar_version: p.grammarVersion,
-    sealed_by: p.sealedBy,
-    sealed_at: p.sealedAt.toISOString(),
-    expires_at: p.expiresAt?.toISOString() ?? null,
-    reasons: p.reasons.map(reasonToWire),
-    facts: p.facts.map((f) => ({
-      fact: f.fact, fact_type: f.factType, value_sha256: f.valueSha256,
-      source: f.source, admissibility: f.admissibility,
-      asserted_at: f.assertedAt.toISOString(),
-    })),
+    review_flagged_at: p.reviewFlaggedAt?.toISOString() ?? null,
+    signature: p.signature,
+    signature_pq: p.signaturePq,
     events: p.events.map((e) => ({
       kind: e.kind, actor: e.actor, evidence_sha256: e.evidenceSha256,
       evidence_class: e.evidenceClass, occurred_at: e.occurredAt.toISOString(),
@@ -154,6 +211,7 @@ export function lookupToWire(r: LookupResult): Record<string, unknown> {
       state: d.state,
       code: d.code,
       ...(d.remaining !== undefined ? { remaining: d.remaining } : {}),
+      under_review: d.underReview,
     })),
   };
 }
@@ -178,6 +236,26 @@ export function quadrantToWire(q: QuadrantCounts): Record<string, unknown> {
     contested_and_correct: q.contestedAndCorrect,
     quiet_error: q.quietError,
     wrong_and_resisted: q.wrongAndResisted,
+    by_attempts: {
+      zero: { examined: q.attempts.zero.examined, lapsed: q.attempts.zero.lapsed },
+      some: { examined: q.attempts.some.examined, lapsed: q.attempts.some.lapsed },
+    },
+  };
+}
+
+export function estimateToWire(e: QuietErrorEstimate): Record<string, unknown> {
+  const cell = (c: QuietErrorEstimate['zeroAttempt']) => ({
+    n: c.n, lapsed: c.lapsed, lapsed_via_feed: c.lapsedViaFeed, lapsed_via_self: c.lapsedViaSelf, unattributed: c.unattributed,
+  });
+  return {
+    window: { days: e.window.days },
+    zero_attempt: cell(e.zeroAttempt),
+    fought: cell(e.fought),
+    feed_share_among_fought: e.feedShareAmongFought,
+    zero_attempt_lapse_rate: e.zeroAttemptLapseRate,
+    calibrated_rate: e.calibratedRate,
+    minimum_fought_lapses: e.minimumFoughtLapses,
+    assumptions: [...e.assumptions],
   };
 }
 

@@ -25,9 +25,12 @@
     "fuzz": "FUZZ_RUNS=${FUZZ_RUNS:-25000} tsx --test test/unit/fuzz-*.test.ts",
     "audit": "npm audit --omit=dev --audit-level=high",
     "mint": "tsx scripts/mint.ts",
+    "keygen:pq": "tsx scripts/keygen-pq.ts",
+    "conformance": "tsx scripts/conformance.ts && node scripts/conformance-verifier.mjs",
     "dev:worker": "tsx watch src/worker/main.ts",
     "start:worker": "node dist/worker/main.js",
-    "sweep": "tsx scripts/sweep.ts"
+    "sweep": "tsx scripts/sweep.ts",
+    "site": "tsx scripts/site.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.2",

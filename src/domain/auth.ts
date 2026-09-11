@@ -62,6 +62,11 @@ export const SCOPES = [
   // policy from inside the workspace it is supposed to be constrained by.
   'seals:read',
   'seals:disclose',
+  // Committing policy, and reading its history. Both absent from AGENT_SCOPES,
+  // and commit is gated on `operator` on top of the scope: an agent may apply
+  // a rule, it may not author the committed policy it is then bound by.
+  'rules:write',
+  'rules:read',
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 
@@ -77,7 +82,14 @@ export const AGENT_SCOPES: readonly Scope[] = [
   'attestations:write', 'seals:write', 'determinations:read', 'permits:exercise',
 ];
 
-const PREFIX_CHARS = 'abcdefghijkmnpqrstuvwxyz23456789';
+/**
+ * Exactly 32 symbols, for the same reason as `ID_ALPHABET`: a five-bit mask
+ * over a byte is uniform; a modulo over 26 or 36 would not be.
+ */
+export const KEY_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789';
+if (KEY_ALPHABET.length !== 32 || new Set(KEY_ALPHABET).size !== 32) {
+  throw new Error('KEY_ALPHABET must hold exactly 32 distinct symbols');
+}
 
 function mac(secret: string): string {
   return createHmac('sha256', config.authSecret).update(`key:v1:${secret}`).digest('hex');
@@ -86,7 +98,7 @@ function mac(secret: string): string {
 function randomToken(len: number): string {
   const buf = randomBytes(len);
   let out = '';
-  for (const b of buf) out += PREFIX_CHARS[b % PREFIX_CHARS.length];
+  for (const b of buf) out += KEY_ALPHABET[b & 31];
   return out;
 }
 

@@ -8,7 +8,7 @@
 # agreed to. `grammar_version` catches that after the fact; sharing one image
 # stops it happening.
 
-FROM node:22-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 # Manifests first, so a dependency layer survives a source-only change.
 COPY package.json package-lock.json ./
@@ -20,12 +20,12 @@ COPY src ./src
 # then cannot migrate.
 RUN npm run build
 
-FROM node:22-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-FROM node:22-alpine
+FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 # tini reaps zombies and forwards signals. Without it the worker never sees
@@ -34,6 +34,12 @@ RUN apk add --no-cache tini
 COPY --from=deps  /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
+# Read from disk at request time, not compiled: the format's home (served at
+# `/`) and the independent verifier (embedded in a person's copy). server.ts
+# refuses to start in production without them, so a build that forgets these
+# lines fails loudly rather than 404ing the site.
+COPY web ./web
+COPY spec ./spec
 
 # Non-root. The process needs no filesystem writes at all.
 USER node

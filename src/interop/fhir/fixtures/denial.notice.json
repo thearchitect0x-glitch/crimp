@@ -1,0 +1,133 @@
+{
+  "version": "notice-1",
+  "language": "en",
+  "sealId": "seal_fixture",
+  "programme": "prior_auth",
+  "outcome": {
+    "disposition": "bind",
+    "state": "sealed",
+    "scope": "prior_auth.imaging.mri",
+    "sealedAt": "2026-09-01T12:00:00.000Z",
+    "expiresAt": "2026-12-01T00:00:00.000Z",
+    "statement": "refused",
+    "underReview": false
+  },
+  "rule": {
+    "ruleHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "rule": {
+      "all": [
+        {
+          "fact": "clinical.conservative_therapy_weeks",
+          "op": "lt",
+          "value": 6
+        },
+        {
+          "fact": "clinical.red_flag",
+          "op": "eq",
+          "value": false
+        }
+      ]
+    },
+    "ruleset": "prior_auth",
+    "ruleId": "imaging.mri_lumbar",
+    "legalAuthority": "42 CFR 438.210(d)(1)",
+    "effectiveFrom": "2026-01-01T00:00:00.000Z",
+    "effectiveTo": null
+  },
+  "reasons": [
+    {
+      "path": "all[0]",
+      "fact": "clinical.conservative_therapy_weeks",
+      "op": "lt",
+      "value": 6,
+      "truth": "true",
+      "polarity": "direct",
+      "label": "Weeks of conservative therapy tried"
+    },
+    {
+      "path": "all[1]",
+      "fact": "clinical.red_flag",
+      "op": "eq",
+      "value": false,
+      "truth": "true",
+      "polarity": "direct",
+      "label": "Red-flag symptom present"
+    }
+  ],
+  "facts": [
+    {
+      "fact": "clinical.conservative_therapy_weeks",
+      "label": "Weeks of conservative therapy tried",
+      "source": "ehr_feed",
+      "admissibility": "internal",
+      "assertedAt": "2026-08-30T00:00:00.000Z",
+      "attester": "key_1"
+    },
+    {
+      "fact": "clinical.red_flag",
+      "label": "Red-flag symptom present",
+      "source": "ehr_feed",
+      "admissibility": "internal",
+      "assertedAt": "2026-08-30T00:00:00.000Z",
+      "attester": "key_1"
+    }
+  ],
+  "remedy": {
+    "target": "false",
+    "exhaustive": true,
+    "evaluations": 4,
+    "sets": [
+      [
+        {
+          "fact": "clinical.conservative_therapy_weeks",
+          "factType": "int",
+          "constraints": [
+            {
+              "path": "all[0]",
+              "op": "lt",
+              "value": 6,
+              "truth": "false"
+            }
+          ]
+        }
+      ],
+      [
+        {
+          "fact": "clinical.red_flag",
+          "factType": "bool",
+          "constraints": [
+            {
+              "path": "all[1]",
+              "op": "eq",
+              "value": false,
+              "truth": "false"
+            }
+          ]
+        }
+      ]
+    ]
+  },
+  "clocks": [
+    {
+      "clock": "prior_auth_standard_7_day",
+      "authority": "42 CFR 438.210(d)(1); CMS-0057-F",
+      "status": "met",
+      "startedAt": "2026-08-28T00:00:00.000Z",
+      "dueAt": "2026-09-04T00:00:00.000Z",
+      "metAt": "2026-09-01T12:00:00.000Z",
+      "missedAt": null
+    }
+  ],
+  "appeal": {
+    "authority": "42 CFR 438.402(c)(2)(ii)",
+    "days": 60,
+    "continuedBenefitsDays": 10,
+    "text": "You have the right to appeal this decision. You may file an appeal within 60 days of the date of this notice. You may ask for a fast appeal if waiting could seriously harm your health. You may ask to see the medical criteria used. If you appeal before the date this decision takes effect, your current services may continue during the appeal.",
+    "programme": "Prior authorization"
+  },
+  "valuesDisclosed": false,
+  "labels": {
+    "clinical.conservative_therapy_weeks": "Weeks of conservative therapy tried",
+    "clinical.red_flag": "Red-flag symptom present"
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "ClaimResponse",
+        "id": "seal_fixture",
+        "meta": {
+          "source": "https://crimp.deimoscore.com/fhir/record/seal_fixture"
+        },
+        "extension": [
+          {
+            "url": "https://crimp.deimoscore.com/fhir/StructureDefinition/determination-record",
+            "valueString": "seal_fixture"
+          },
+          {
+            "url": "https://crimp.deimoscore.com/fhir/StructureDefinition/rule-hash",
+            "valueString": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          {
+            "url": "https://crimp.deimoscore.com/fhir/StructureDefinition/legal-authority",
+            "valueString": "42 CFR 438.210(d)(1)"
+          },
+          {
+            "url": "https://crimp.deimoscore.com/fhir/StructureDefinition/clock",
+            "extension": [
+              {
+                "url": "name",
+                "valueString": "prior_auth_standard_7_day"
+              },
+              {
+                "url": "authority",
+                "valueString": "42 CFR 438.210(d)(1); CMS-0057-F"
+              },
+              {
+                "url": "status",
+                "valueCode": "met"
+              },
+              {
+                "url": "due",
+                "valueDateTime": "2026-09-04T00:00:00.000Z"
+              }
+            ]
+          },
+          {
+            "url": "https://crimp.deimoscore.com/fhir/StructureDefinition/remedy",
+            "valueString": "{\"target\":\"false\",\"exhaustive\":true,\"evaluations\":4,\"sets\":[[{\"fact\":\"clinical.conservative_therapy_weeks\",\"factType\":\"int\",\"constraints\":[{\"path\":\"all[0]\",\"op\":\"lt\",\"value\":6,\"truth\":\"false\"}]}],[{\"fact\":\"clinical.red_flag\",\"factType\":\"bool\",\"constraints\":[{\"path\":\"all[1]\",\"op\":\"eq\",\"value\":false,\"truth\":\"false\"}]}]]}"
+          }
+        ],
+        "status": "active",
+        "type": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/claim-type",
+              "code": "professional"
+            }
+          ]
+        },
+        "use": "preauthorization",
+        "created": "2026-09-01T12:00:00.000Z",
+        "outcome": "complete",
+        "disposition": "refused",
+        "preAuthPeriod": {
+          "start": "2026-09-01T12:00:00.000Z",
+          "end": "2026-12-01T00:00:00.000Z"
+        },
+        "item": [
+          {
+            "itemSequence": 1,
+            "adjudication": [
+              {
+                "category": {
+                  "coding": [
+                    {
+                      "system": "http://terminology.hl7.org/CodeSystem/adjudication",
+                      "code": "benefit"
+                    }
+                  ],
+                  "text": "denied"
+                },
+                "reason": {
+                  "coding": [
+                    {
+                      "system": "https://crimp.deimoscore.com/fhir/CodeSystem/reason",
+                      "code": "all[0]:clinical.conservative_therapy_weeks:lt",
+                      "display": "Weeks of conservative therapy tried is less than 6"
+                    },
+                    {
+                      "system": "https://crimp.deimoscore.com/fhir/CodeSystem/reason",
+                      "code": "all[1]:clinical.red_flag:eq",
+                      "display": "Red-flag symptom present is false"
+                    }
+                  ],
+                  "text": "Weeks of conservative therapy tried is less than 6; Red-flag symptom present is false"
+                }
+              }
+            ]
+          }
+        ],
+        "processNote": [
+          {
+            "number": 1,
+            "type": "display",
+            "text": "What would change this: Weeks of conservative therapy tried not is less than 6 or Red-flag symptom present not is false"
+          },
+          {
+            "number": 2,
+            "type": "display",
+            "text": "Your right to appeal: You have the right to appeal this decision. You may file an appeal within 60 days of the date of this notice. You may ask for a fast appeal if waiting could seriously harm your health. You may ask to see the medical criteria used. If you appeal before the date this decision takes effect, your current services may continue during the appeal. Ask within 60 days. Legal authority: 42 CFR 438.402(c)(2)(ii)"
+          }
+        ]
+      }
+    }
+  ]
+}
