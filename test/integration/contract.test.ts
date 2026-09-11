@@ -151,9 +151,12 @@ describe('grammar version', () => {
       facts: [{ fact: 'prior_refunds_90d', type: 'int', value: 7, source: 'core_ledger' }] },
     STRENGTHS);
 
-    const { changes } = await reevaluate(A.ws);
-    assert.equal(changes[0]?.to, 'tainted', 'lost ground, not a disproof');
+    // The write re-executed it under THIS build's evaluator, which cannot
+    // reproduce version 99: lost ground, not a disproof, at the write itself.
     assert.equal(await stateOf(s.sealId!), 'tainted');
+    assert.equal(await countEvents(s.sealId!, 'lapsed'), 0, 'never re-decided');
+    const { changes } = await reevaluate(A.ws);
+    assert.equal(changes.length, 0, 'nothing left for the pass');
   });
 });
 

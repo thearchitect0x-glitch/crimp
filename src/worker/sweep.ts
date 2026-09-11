@@ -11,6 +11,7 @@ import { getPool } from '../db/pool.js';
 import { reevaluate, markFactExpiryDue, type Reevaluation } from '../domain/seal.js';
 import { advanceClocks, resolveMissed } from '../domain/clocks.js';
 import { propagateAdjudications, workspacesWithPendingReversals } from '../domain/systemic.js';
+import { probingBreadth } from '../domain/breadth.js';
 import { recordDrift, DRIFT } from '../domain/drift.js';
 
 export interface PassResult {
@@ -25,6 +26,8 @@ export interface PassResult {
   systemic: { reviews: number; flagged: number };
   /** cap-09. Drift findings newly recorded this pass. */
   drift: number;
+  /** Breadth findings recorded this pass: one session refused across many determinations. */
+  breadth: number;
 }
 
 /**
@@ -79,7 +82,7 @@ export async function sweepOnce(opts: {
              OR (expires_at IS NOT NULL AND expires_at <= now()))`);
 
   const out: PassResult = { workspaces: due.length, examined: 0, changes: [], backlogged: 0,
-    clocks: { met: 0, missed: 0 }, systemic, drift: 0 };
+    clocks: { met: 0, missed: 0 }, systemic, drift: 0, breadth: 0 };
 
   for (const { workspace_id: ws } of due) {
     let remaining = 0;
@@ -122,5 +125,8 @@ export async function sweepOnce(opts: {
     lastDriftCheck.set(ws, Date.now());
     out.drift += (await recordDrift(ws)).length;
   }
+  // Breadth: one session, many people. A finding about the session.
+  out.breadth = await probingBreadth(pool);
+
   return out;
 }

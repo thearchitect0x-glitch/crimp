@@ -9,14 +9,14 @@ import {
 } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
-  sourcesToWire, quadrantToWire, cliffsToWire, keyToWire,
+  sourcesToWire, quadrantToWire, estimateToWire, cliffsToWire, keyToWire,
   proofToWire, disclosureToWire, registeredRuleToWire, catalogueEntryToWire,
   clockToWire, timelinessToWire, findingToWire,
   type WireClaw, type WireFact,
 } from '../serialize.js';
 import { attest } from '../../domain/attest.js';
 import { seal, lookup, exercise, claw } from '../../domain/seal.js';
-import { sourceReliability, quadrant, cliffs } from '../../domain/insight.js';
+import { sourceReliability, quadrant, cliffs, quietErrorEstimate } from '../../domain/insight.js';
 import { declareCohort, placeInCohort } from '../../domain/cohort.js';
 import { mergeSubjects, carveOut } from '../../domain/merge.js';
 import { proof, disclosure, disclosures } from '../../domain/record.js';
@@ -468,7 +468,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     schema: { querystring: windowQuery, response: errors },
   }, async (req) => {
     const p = await authorized(req, 'insight:read');
-    return quadrantToWire(await quadrant(getPool(), p.workspaceId, windowDays(req.query.days)));
+    const days = windowDays(req.query.days);
+    const [q, e] = await Promise.all([quadrant(getPool(), p.workspaceId, days), quietErrorEstimate(getPool(), p.workspaceId, days)]);
+    return { ...quadrantToWire(q), estimate: estimateToWire(e) };
   });
 
   app.get('/insight/cliffs', { schema: { response: errors } }, async (req) => {

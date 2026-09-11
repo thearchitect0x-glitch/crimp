@@ -865,3 +865,49 @@ the backlog grows by the excess per pass and corrected rows wait in
 least-recently-examined order (p99 three passes at 1.5× capacity).
 
 **Tests.** 452 → 454.
+
+## Correction at the write, the estimate from the record, and breadth · 10 September 2026
+
+Round two of testing before the filing, aimed at invention rather than
+defect.
+
+**Correction at the moment of the write.** The change-driven trigger marked
+a subject's determinations due and left them for the next pass. The write
+that moves the ground is a transaction and the determinations it moves are
+a handful, so `attest` and `eraseSubject` now re-execute them inside the
+same transaction (`reexecuteSubject`, capped at eight, `FOR UPDATE SKIP
+LOCKED`): the fact and its consequence commit together, no reader sees the
+new fact beside the old refusal, and the sweep is the backstop for anything
+past the cap. Three sweep tests were rewritten to assert the immediate
+transition rather than the due flag they used to assert.
+
+**The lapsed event says what moved.** Every `lapsed` and `tainted` event now
+carries `changed` — each committed fact whose digest or source differs now,
+by name, source and admissibility class, never by value — and the pressure
+the determination stood under. This is what makes the estimate below
+computable from records alone.
+
+**The estimate of error among people who never complained.**
+`quietErrorEstimate` (insight.ts, and on `GET /insight/quadrant` as
+`estimate`): the quiet-error rate is a lower bound; the admissibility class
+of the correcting attestation, measured among the people who fought,
+calibrates the feed discovery rate for the people who never did. A two-list
+estimate in the manner of capture–recapture, with its three assumptions
+stated on the response and a minimum of twenty attributed lapses among the
+fought before a share is reported. The quadrant also splits by attempt
+count (`by_attempts`), because the tier threshold of three puts a person
+who asked once or twice into the quiet cell.
+
+**Breadth.** One declared session refused across ten or more distinct
+determinations in the window is a `probing_breadth` finding about the
+session (`breadth.ts`, migration 021), recorded by the sweep once per
+session per day. Deliberately not a hardening: enumeration detection by
+distinct targets is ordinary security practice, and what matters here is
+that a third party's breadth never raises the bar against the people it
+touched.
+
+**Measured.** The pure work in a seal is under 0.3 ms even for the
+SNAP-shaped rule (profile in the package's experiments); the path is
+round-trip bound, so the per-fact commitment inserts became one statement.
+
+**Tests.** 454 → 458.
