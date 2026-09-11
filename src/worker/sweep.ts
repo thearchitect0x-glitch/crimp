@@ -12,6 +12,7 @@ import { reevaluate, markFactExpiryDue, type Reevaluation } from '../domain/seal
 import { advanceClocks, resolveMissed } from '../domain/clocks.js';
 import { propagateAdjudications, workspacesWithPendingReversals } from '../domain/systemic.js';
 import { probingBreadth } from '../domain/breadth.js';
+import { closeDays } from '../domain/transparency.js';
 import { PRESSURE_WINDOW_DAYS } from '../domain/lifecycle.js';
 import { recordDrift, DRIFT } from '../domain/drift.js';
 
@@ -29,6 +30,8 @@ export interface PassResult {
   drift: number;
   /** Breadth findings recorded this pass: one session refused across many determinations. */
   breadth: number;
+  /** Closed workspace-days and global days whose Merkle roots were computed this pass. */
+  transparency: { workspaceDays: number; globalDays: number };
 }
 
 /**
@@ -83,7 +86,7 @@ export async function sweepOnce(opts: {
              OR (expires_at IS NOT NULL AND expires_at <= now()))`);
 
   const out: PassResult = { workspaces: due.length, examined: 0, changes: [], backlogged: 0,
-    clocks: { met: 0, missed: 0 }, systemic, drift: 0, breadth: 0 };
+    clocks: { met: 0, missed: 0 }, systemic, drift: 0, breadth: 0, transparency: { workspaceDays: 0, globalDays: 0 } };
 
   for (const { workspace_id: ws } of due) {
     let remaining = 0;
@@ -135,6 +138,9 @@ export async function sweepOnce(opts: {
   }
   // Breadth: one session, many people. A finding about the session.
   out.breadth = await probingBreadth(pool);
+
+  // The transparency anchor: fold every closed day's cores into its roots.
+  out.transparency = await closeDays(pool);
 
   return out;
 }

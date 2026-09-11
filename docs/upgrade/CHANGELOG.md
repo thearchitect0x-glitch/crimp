@@ -1010,3 +1010,34 @@ to start in that state, and the tests skip with the reason where the
 runtime lacks it.
 
 **Tests.** 458 → 468.
+
+## The record's date, without the issuer's key · 11 September 2026
+
+Round four. The post-quantum signature protects who; nothing protected
+when. A verifier in 2038 may not trust a 2026 key at all.
+
+**The transparency anchor.** Every sealed core's digest is now kept
+(`seals.core_sha256`, signed or not). Once a day the pass folds each
+workspace's closed day into an RFC 6962 Merkle root and the workspace
+roots into one global root (`transparency.ts`, migration 024). The global
+roots are published at `/.well-known/crimp-roots.json`; a record's
+inclusion proof is at `GET /v1/seals/:id/inclusion`; the verifier walks
+core → workspace root → global root and checks it against a published
+list (`--roots`). An operator anchors a global root to a public timestamp
+and records the anchor once; it is never replaced. The tree is over roots,
+so it names no tenant.
+
+**The verifier's policy.** `--require-pq`: a verifier that will no longer
+accept an Ed25519-only record can say so, and its absence becomes a
+failure. The post-quantum check now states the honest reason first in a
+browser (no node:crypto) before any key lookup.
+
+**Independently verified.** Our ML-DSA-65 and Ed25519 signatures over a
+real sealed core verify under Homebrew OpenSSL 3.6.3, a separate build
+from the OpenSSL 3.5.5 inside Node, and fail there on a one-bit change to
+the message. Sizes match FIPS 204: 1 952-byte public key, 3 309-byte
+signature.
+
+**The boot log** now states whether the crypto module runs in FIPS mode
+and whether the runtime can issue the second signature, for the auditor
+reading it.

@@ -198,3 +198,25 @@ on Node 25; browsers' WebCrypto cannot yet) and
 reports it as not checked where it cannot. Absent means not issued, never
 invalid. Why: a record about a person may need to verify in 2040, and
 re-signing history is what a record must never need.
+
+## `inclusion` — the record's date, without the issuer's key
+
+A signature proves who issued a record; it does not prove when, and a
+verifier decades on may not trust the issuer's key at all. So every sealed
+core's digest is kept; once a day (UTC, closed days only) each workspace's
+digests are folded into a Merkle root (RFC 6962 construction, `sha256`,
+`algorithm: "rfc6962-sha256/1"`), and the workspace roots, in workspace
+order, into one global root. The global roots are published without
+authentication at `/.well-known/crimp-roots.json` (`{ day, root, workspaces,
+computed_at, anchor }`, newest first) and may be anchored to a public
+timestamp; the `anchor` field carries whatever did it. The tree is over
+roots, so it names no tenant.
+
+`GET /v1/seals/:id/inclusion` returns the record's proof once its day has
+closed: `{ algorithm, day, leaf, workspace: { index, leaf_count, root,
+path }, global: { index, workspaces, root, path, anchor } }`, where `leaf`
+is `sha256` of the canonical sealed core and each `path` entry is `{ hash,
+side }`. Attached to a record as `inclusion`, the verifier walks core →
+workspace root → global root and, given the published roots, checks the
+global root against the list. The CLI takes `--roots roots.json`. Absent
+is not a finding.

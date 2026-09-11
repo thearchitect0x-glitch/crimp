@@ -517,13 +517,14 @@ export async function seal(
     // The issuer's signature over the sealed core, made now and never again:
     // the core does not move, so the signature stays valid for the life of
     // the record whatever happens to its state.
+    // The core's digest is kept whether or not this deployment signs: it is
+    // the leaf the transparency anchor folds into the day's root.
+    const core = recordCore(await loadProof(tx, workspaceId, sealId));
+    const coreDigest = sha256Hex(canonicalize(core));
     const sg = signer();
-    if (sg !== null) {
-      const core = recordCore(await loadProof(tx, workspaceId, sealId));
-      const pq = sg.signCorePq(core);
-      await tx.query('UPDATE seals SET signature = $2::jsonb, signature_pq = $3::jsonb WHERE id = $1',
-        [sealId, JSON.stringify(sg.signCore(core)), pq === null ? null : JSON.stringify(pq)]);
-    }
+    const pq = sg === null ? null : sg.signCorePq(core);
+    await tx.query('UPDATE seals SET core_sha256 = $2, signature = $3::jsonb, signature_pq = $4::jsonb WHERE id = $1',
+      [sealId, coreDigest, sg === null ? null : JSON.stringify(sg.signCore(core)), pq === null ? null : JSON.stringify(pq)]);
 
     await tx.query(
       `INSERT INTO seal_events (seal_id, workspace_id, kind, actor, detail)

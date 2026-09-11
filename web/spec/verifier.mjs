@@ -214,13 +214,14 @@ export async function verifySignature(det, keys) {
  */
 export async function verifySignaturePq(det, keys) {
   const sig = det.signature_pq;
-  const key = (keys ?? []).find((k) => k.kid === sig.kid);
-  if (!key) return { ok: null, detail: `no published key for kid ${sig.kid}` };
-  if (key.alg !== 'ml-dsa-65') return { ok: false, detail: `key ${sig.kid} is ${key.alg}, not ml-dsa-65` };
+  // The honest reason first: a browser cannot check this yet, whatever keys it holds.
   let nodeCrypto;
   try { nodeCrypto = await import('node:crypto'); } catch {
     return { ok: null, detail: 'this runtime cannot verify ml-dsa-65 (no node:crypto); the Ed25519 signature is the one checked here' };
   }
+  const key = (keys ?? []).find((k) => k.kid === sig.kid);
+  if (!key) return { ok: null, detail: `no published key for kid ${sig.kid}` };
+  if (key.alg !== 'ml-dsa-65') return { ok: false, detail: `key ${sig.kid} is ${key.alg}, not ml-dsa-65` };
   try {
     const pub = nodeCrypto.createPublicKey({ key: Buffer.from(key.public_key, 'base64'), format: 'der', type: 'spki' });
     const ok = nodeCrypto.verify(null, Buffer.from(canonicalJson(core(det)), 'utf8'), pub, Buffer.from(sig.sig, 'base64'));
@@ -228,6 +229,46 @@ export async function verifySignaturePq(det, keys) {
   } catch (e) {
     return { ok: null, detail: `could not verify: ${e.message}` };
   }
+}
+
+/* ── Transparency: the record's date, without the issuer's key ─────────── */
+
+const hexToBytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
+const bytesToHex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+async function sha256Hex(...parts) {
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const buf = new Uint8Array(total); let o = 0;
+  for (const p of parts) { buf.set(p, o); o += p.length; }
+  return bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)));
+}
+/** RFC 6962: leaf = sha256(0x00 || leaf), node = sha256(0x01 || left || right). */
+export async function merkleRootFromPath(leafHex, steps) {
+  let h = await sha256Hex(new Uint8Array([0]), hexToBytes(leafHex));
+  for (const s of steps) {
+    h = s.side === 'left' ? await sha256Hex(new Uint8Array([1]), hexToBytes(s.hash), hexToBytes(h))
+                          : await sha256Hex(new Uint8Array([1]), hexToBytes(h), hexToBytes(s.hash));
+  }
+  return h;
+}
+
+/**
+ * Walk the record's inclusion proof: core → workspace root → global root,
+ * then compare the global root with a published list if the caller has one.
+ */
+export async function verifyInclusion(det, roots) {
+  const inc = det.inclusion;
+  if (inc.algorithm !== 'rfc6962-sha256/1') return { ok: false, detail: `unknown transparency algorithm ${inc.algorithm}` };
+  const leaf = await sha256Hex(new TextEncoder().encode(canonicalJson(core(det))));
+  if (leaf !== inc.leaf) return { ok: false, detail: 'the record\'s core does not hash to the leaf the proof claims' };
+  const wsRoot = await merkleRootFromPath(leaf, inc.workspace.path);
+  if (wsRoot !== inc.workspace.root) return { ok: false, detail: 'the path does not reach the workspace root it claims' };
+  if (inc.global == null) return { ok: null, detail: `reaches the workspace root for ${inc.day}; no global root yet` };
+  const gRoot = await merkleRootFromPath(inc.workspace.root, inc.global.path);
+  if (gRoot !== inc.global.root) return { ok: false, detail: 'the path does not reach the global root it claims' };
+  const published = (roots ?? []).find((r) => r.day === inc.day);
+  if (!published) return { ok: null, detail: `reaches global root ${gRoot.slice(0, 16)}… for ${inc.day}; not checked against a published list` };
+  if (published.root !== gRoot) return { ok: false, detail: `the global root for ${inc.day} differs from the published one` };
+  return { ok: true, detail: `included in the published global root for ${inc.day}` + (published.anchor ? ' (anchored)' : ' (not yet anchored)') };
 }
 
 /* ── §8 · Verification procedure ─────────────────────────────────────── */
@@ -332,10 +373,21 @@ export async function verify(det, held = {}, opts = {}) {
   } else {
     add('signature', null, 'unsigned — internally consistent at best; nothing says who issued it');
   }
-  // The second signature, when issued. Absent is not a finding.
+  // The second signature, when issued. Absent is not a finding — unless the
+  // caller's policy requires it: a verifier in 2038 may decide that an
+  // Ed25519-only record from 2026 is no longer proof of anything, and say so.
   if (det.signature_pq != null) {
     const r = await verifySignaturePq(det, opts.keys);
-    add('signature · post-quantum', r.ok, r.detail);
+    add('signature · post-quantum', opts.requirePq && r.ok === null ? false : r.ok,
+      opts.requirePq && r.ok === null ? `${r.detail} — and this verifier requires it` : r.detail);
+  } else if (opts.requirePq) {
+    add('signature · post-quantum', false, 'no post-quantum signature, and this verifier requires one');
+  }
+  // The transparency anchor, when the caller attached the record's inclusion
+  // proof (GET /v1/seals/:id/inclusion) and, optionally, the published roots.
+  if (det.inclusion != null) {
+    const r = await verifyInclusion(det, opts.roots);
+    add('inclusion', r.ok, r.detail);
   }
 
   // ACCURACY is checkable with no values at all: it is a property of the

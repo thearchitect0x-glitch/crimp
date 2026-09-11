@@ -17,6 +17,7 @@ import {
 import { attest } from '../../domain/attest.js';
 import { seal, lookup, exercise, claw } from '../../domain/seal.js';
 import { sourceReliability, quadrant, cliffs, quietErrorEstimate } from '../../domain/insight.js';
+import { inclusionOf } from '../../domain/transparency.js';
 import { declareCohort, placeInCohort } from '../../domain/cohort.js';
 import { mergeSubjects, carveOut } from '../../domain/merge.js';
 import { proof, disclosure, disclosures } from '../../domain/record.js';
@@ -328,6 +329,17 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /* ── The record ──────────────────────────────────────────────────── */
+  /** The path from this record's core to the day's published root. Null until the day has closed. */
+  app.get<{ Params: { id: string } }>('/seals/:id/inclusion', { schema: { response: errors } }, async (req) => {
+    const p = await authorized(req, 'seals:read');
+    const inc = await inclusionOf(getPool(), p.workspaceId, req.params.id);
+    if (inc === null) {
+      const { rows } = await getPool().query('SELECT 1 FROM seals WHERE workspace_id = $1 AND id = $2', [p.workspaceId, req.params.id]);
+      if (rows.length === 0) throw new ApiError(404, 'not_found', 'No such determination.');
+    }
+    return { inclusion: inc };
+  });
+
   app.get<{ Params: { id: string } }>('/seals/:id', {
     schema: { response: errors },
   }, async (req) => {
