@@ -65,8 +65,9 @@ describe('the signature', () => {
 });
 
 describe('a deployment holding a post-quantum key', () => {
-  test('signs every core twice, publishes both keys and the previous one, and the record verifies under each', async () => {
-    const { generatePqKeyPair, verifyCore, verifyCorePq } = await import('../../src/lib/signing.js');
+  test('signs every core twice, publishes both keys and the previous one, and the record verifies under each', async (t) => {
+    const { generatePqKeyPair, verifyCore, verifyCorePq, pqSupported } = await import('../../src/lib/signing.js');
+    if (!pqSupported()) { t.skip('ML-DSA-65 needs Node 25 or OpenSSL 3.5'); return; }
     const { signer } = await import('../../src/domain/signer.js');
     const { loadProof, recordCore } = await import('../../src/domain/record.js');
     const pq = generatePqKeyPair();

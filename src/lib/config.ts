@@ -8,6 +8,7 @@
  * check here whenever you add a setting that is safe in development and unsafe
  * outside it.
  */
+import { pqSupported } from './signing.js';
 import { config as loadEnv } from 'dotenv';
 
 loadEnv({ quiet: true });
@@ -86,6 +87,9 @@ export function assertProductionSafety(cfg: typeof config = config): void {
   if (cfg.blindSecret === DEV_SECRET) fail.push('BLIND_SECRET is the development default.');
   if (cfg.blindSecret.length < 32) fail.push('BLIND_SECRET is shorter than 32 characters.');
   if (cfg.signingKey === null) fail.push('SIGNING_KEY is not set; records would be unsigned.');
+  if (cfg.signingKeyPq !== null && !pqSupported()) {
+    fail.push('SIGNING_KEY_PQ is set but this runtime cannot use ML-DSA-65 (Node 25 / OpenSSL 3.5 required); records would silently lack the second signature.');
+  }
   else if (cfg.signingKey === TEST_SIGNING_SEED) {
     fail.push('SIGNING_KEY is the published test seed; every record would be signed with a key printed in the conformance vectors.');
   }

@@ -3,7 +3,8 @@
 /** §7.0f · Ed25519 over the canonical core: deterministic, key-bound, tamper-evident. */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { Signer, verifyCore, verifyCorePq, kidOf, generatePqKeyPair } from '../../src/lib/signing.js';
+import { Signer, verifyCore, verifyCorePq, kidOf, generatePqKeyPair, pqSupported } from '../../src/lib/signing.js';
+const NO_PQ = pqSupported() ? false : 'ML-DSA-65 needs Node 25 or OpenSSL 3.5';
 
 const SEED = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 const OTHER = Buffer.alloc(32, 7).toString('base64');
@@ -44,7 +45,7 @@ describe('record signing', () => {
 });
 
 describe('the post-quantum second signature', () => {
-  test('verifies under the published ml-dsa-65 key, fails on any change, and is absent when there is no key', () => {
+  test('verifies under the published ml-dsa-65 key, fails on any change, and is absent when there is no key', { skip: NO_PQ }, () => {
     const pq = generatePqKeyPair();
     const sg = new Signer(SEED, { pqPrivateKeyDer: pq.privateKeyDerBase64 });
     assert.equal(sg.hasPq, true);
@@ -59,13 +60,13 @@ describe('the post-quantum second signature', () => {
     assert.equal(new Signer(SEED).hasPq, false);
   });
 
-  test('refuses a key of the wrong kind', () => {
+  test('refuses a key of the wrong kind', { skip: NO_PQ }, () => {
     // An Ed25519 PKCS#8 handed in as the post-quantum key.
     const wrong = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(SEED, 'base64')]).toString('base64');
     assert.throws(() => new Signer(SEED, { pqPrivateKeyDer: wrong }), /ml-dsa-65/);
   });
 
-  test('previous keys are published beside the current ones, and never sign', () => {
+  test('previous keys are published beside the current ones, and never sign', { skip: NO_PQ }, () => {
     const older = new Signer(OTHER);
     const pq = generatePqKeyPair();
     const sg = new Signer(SEED, { pqPrivateKeyDer: pq.privateKeyDerBase64, previousPublicKeys: [older.published().public_key] });
@@ -78,5 +79,12 @@ describe('the post-quantum second signature', () => {
     assert.equal(verifyCore(core, sig, key.public_key), true);
     assert.equal(sg.signCore(core).kid, sg.kid, 'the current key signs; the previous one only verifies');
     assert.throws(() => new Signer(SEED, { previousPublicKeys: ['AAAA'] }), /32-byte/);
+  });
+});
+
+describe('a runtime without ML-DSA', () => {
+  test('refuses a post-quantum key loudly rather than issuing records without the second signature', { skip: pqSupported() ? 'this runtime has ML-DSA-65' : false }, () => {
+    assert.throws(() => new Signer(SEED, { pqPrivateKeyDer: 'AAAA' }), /cannot use ml-dsa-65/);
+    assert.equal(new Signer(SEED).signCorePq(core), null);
   });
 });

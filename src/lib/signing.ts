@@ -88,6 +88,9 @@ export class Signer {
     this.publicKeyRaw = spki.subarray(SPKI_PREFIX.length);
     this.kid = kidOf(this.publicKeyRaw);
     if (opts.pqPrivateKeyDer) {
+      if (!pqSupported()) {
+        throw new Error(`This runtime cannot use ${ALG_PQ} (Node 25 or OpenSSL 3.5 is required); unset SIGNING_KEY_PQ or upgrade.`);
+      }
       const priv = createPrivateKey({ key: Buffer.from(opts.pqPrivateKeyDer, 'base64'), format: 'der', type: 'pkcs8' });
       if (priv.asymmetricKeyType !== ALG_PQ) {
         throw new Error(`SIGNING_KEY_PQ must be an ${ALG_PQ} private key, PKCS#8 DER, base64; got ${priv.asymmetricKeyType}.`);
@@ -127,6 +130,20 @@ export class Signer {
     }
     return [...out, ...this.previous];
   }
+}
+
+/**
+ * Whether this runtime can make or check ML-DSA-65 signatures. Node 25
+ * (OpenSSL 3.5) can; Node 22 cannot. Probed once. A deployment that sets
+ * SIGNING_KEY_PQ on a runtime that cannot use it refuses to start rather
+ * than silently issuing records without the second signature.
+ */
+let pqProbe: boolean | null = null;
+export function pqSupported(): boolean {
+  if (pqProbe === null) {
+    try { generateKeyPairSync(ALG_PQ); pqProbe = true; } catch { pqProbe = false; }
+  }
+  return pqProbe;
 }
 
 /** Verify a post-quantum signature over a sealed core under a published ML-DSA-65 key (SPKI DER, base64). */

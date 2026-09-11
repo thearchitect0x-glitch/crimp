@@ -191,8 +191,10 @@ base64) over exactly the same canonical bytes. The published key set at
 "ml-dsa-65"` and `public_key` as the SubjectPublicKeyInfo DER in base64.
 Every published key also carries `status: "current" | "previous"`: after a
 rotation the previous public keys stay published, so a record signed
-before it keeps verifying. A verifier checks the second signature where
-its runtime can (node:crypto today; browsers' WebCrypto cannot yet) and
+before it keeps verifying. Issuing it needs a runtime with ML-DSA (Node 25, or OpenSSL 3.5);
+a deployment that sets `SIGNING_KEY_PQ` without one refuses to start. A
+verifier checks the second signature where its runtime can (node:crypto
+on Node 25; browsers' WebCrypto cannot yet) and
 reports it as not checked where it cannot. Absent means not issued, never
 invalid. Why: a record about a person may need to verify in 2040, and
 re-signing history is what a record must never need.

@@ -178,6 +178,12 @@ describe('production safety', () => {
       { ...base, blindSecret: 'dev-secret-do-not-use-in-production' } as unknown as Cfg), /BLIND_SECRET/);
   });
 
+  test('refuses a post-quantum key on a runtime that cannot use it', async () => {
+    const { pqSupported } = await import('../../src/lib/signing.js');
+    if (pqSupported()) return;   // on Node 25 the key is usable and the check passes; nothing to refuse
+    assert.throws(() => assertProductionSafety({ ...base, signingKeyPq: 'AAAA' } as unknown as Cfg), /cannot use ML-DSA-65/);
+  });
+
   test('refuses the published test signing seed', () => {
     assert.throws(() => assertProductionSafety({ ...base, signingKey: TEST_SIGNING_SEED } as unknown as Cfg),
       /published test seed/);
