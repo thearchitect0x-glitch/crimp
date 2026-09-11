@@ -111,6 +111,36 @@ describe('the sweep reaches past the batch size', () => {
 
 /* ── Attestation freshness ───────────────────────────────────────────── */
 
+describe('fact expiry is a change nothing writes', () => {
+  test('a determination standing on an attestation that ran out is re-examined without any write, and only once', async () => {
+    const A = await actors();
+    await say(A, 'fade', false, new Date(Date.now() + 400));
+    const id = await bind(A, 'fade');
+    assert.equal(await stateOf(id), 'sealed');
+    await new Promise((r) => setTimeout(r, 600));
+    // Nothing was written for this subject. Before the third trigger this
+    // determination stayed sealed on evidence its owner had declared stale.
+    const r = await reevaluate(A.ws);
+    assert.ok(r.changes.some((c) => c.sealId === id && c.to === 'tainted'), 'the expiry alone reached it');
+    assert.equal(await stateOf(id), 'tainted');
+    const again = await reevaluate(A.ws);
+    assert.equal(again.examined, 0, 'the examination moved the cursor past the expiry');
+  });
+
+  test('a determination past its own expiry is recorded even while due work fills every batch', async () => {
+    const A = await actors();
+    const past: string[] = [];
+    for (const t of ['x1', 'x2', 'x3']) { await say(A, t, false); past.push(await bind(A, t)); }
+    for (const id of past) await expireSeal(id);
+    // Thirty determinations made due by a write: three times the batch.
+    for (let i = 0; i < 30; i++) { await say(A, `d${i}`, false); await bind(A, `d${i}`); await say(A, `d${i}`, false); }
+    const r = await reevaluate(A.ws, 10);
+    assert.equal(r.examined, 10);
+    const states = await Promise.all(past.map((id) => stateOf(id)));
+    assert.ok(states.includes('expired'), `the reserved share reached an expired determination in a full batch: ${states}`);
+  });
+});
+
 describe("an expired attestation is UNKNOWN, not false", () => {
   test('a determination resting on a stale fact becomes tainted, never lapsed', async () => {
     const A = await actors();
