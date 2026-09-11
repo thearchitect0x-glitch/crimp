@@ -497,14 +497,20 @@ export async function seal(
         remedy === null ? null : JSON.stringify(remedy)],
     );
 
-    for (const r of rows) {
+    // One statement for every commitment: a round trip per fact was the
+    // largest avoidable cost in the seal path once the pure work was measured
+    // in microseconds.
+    if (rows.length > 0) {
+      const vals: unknown[] = [];
+      const tuples = rows.map((r, i) => {
+        const b = i * 8;
+        vals.push(sealId, r.fact, r.fact_type, valueDigest(r), r.source, r.admissibility, r.asserted_at, r.attester);
+        return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8})`;
+      });
       await tx.query(
         `INSERT INTO seal_facts (seal_id, fact, fact_type, value_sha256, source, admissibility,
                                  asserted_at, attester)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [sealId, r.fact, r.fact_type, valueDigest(r), r.source, r.admissibility, r.asserted_at,
-          r.attester],
-      );
+         VALUES ${tuples.join(',')}`, vals);
     }
 
     // The issuer's signature over the sealed core, made now and never again:
@@ -942,6 +948,144 @@ export interface SweepResult {
  * that are not due, so expiry is recorded at a bounded rate however busy
  * the feeds are; a batch with room in it is unchanged.
  */
+interface ExamRow {
+  id: string; subject_id: string; rule: Rule; state: string;
+  grammar_version: string; expired: boolean; evaluation_due: boolean;
+  disposition: Disposition; scope: string; sealed_at: Date;
+}
+interface Examination { next: string; guarded: unknown[]; loaded: FactRow[] | null }
+
+/** Re-run one determination against the facts held now. Pure read. */
+async function examine(
+  db: Db, workspaceId: string, s: ExamRow, catalogue: Awaited<ReturnType<typeof loadCatalogue>>,
+): Promise<Examination> {
+  if (s.expired) {
+    // Ran out. NOT an error — collapsing this into `lapsed` would count
+    // every expiry as the institution having been wrong.
+    return { next: 'expired', guarded: [], loaded: null };
+  }
+  if (!SUPPORTED_GRAMMAR_VERSIONS.has(s.grammar_version)) {
+    // Cannot reproduce the semantics this was sealed under, so cannot check
+    // it. Lost ground, not a disproof — and never a silent re-decision under
+    // rules nobody agreed to.
+    return { next: 'tainted', guarded: [], loaded: null };
+  }
+  const names = [...factsReferenced(s.rule)];
+  const loaded = await loadFacts(db, workspaceId, s.subject_id, [...names, ...guardsOf(catalogue, names)]);
+  // The same guard the seal applied. A finding of non-response that stood
+  // on delivered mail does not survive the mail coming back.
+  const { facts, withheld } = applyGuards(catalogue, loaded.facts, names);
+  let next: string;
+  try {
+    next = classify(evaluate(s.rule, facts));
+  } catch {
+    // A type mismatch against changed attestations means the ground moved
+    // in a way the rule cannot read. Lost ground, not a disproof.
+    next = 'tainted';
+  }
+  return { next, guarded: withheld, loaded: loaded.rows };
+}
+
+/**
+ * What moved under a determination that changed state: which committed
+ * facts differ now — by name, source and admissibility class, never by
+ * value — and the refusal pressure it stood under. On the record so that
+ * the estimate of error among people who never complained (insight.ts) is
+ * computable from records alone, by anyone who holds them.
+ */
+async function whatMoved(db: Db, sealId: string, loaded: FactRow[] | null): Promise<Record<string, unknown>> {
+  const { rows: committed } = await db.query<{ fact: string; value_sha256: string; source: string; admissibility: string }>(
+    'SELECT fact, value_sha256, source, admissibility FROM seal_facts WHERE seal_id = $1 ORDER BY fact', [sealId]);
+  const now = new Map((loaded ?? []).map((r) => [r.fact, r]));
+  const changed: Array<Record<string, unknown>> = [];
+  for (const c of committed) {
+    const n = now.get(c.fact);
+    const was = { source: c.source, admissibility: c.admissibility };
+    if (n === undefined) changed.push({ fact: c.fact, was, now: null });
+    else if (valueDigest(n) !== c.value_sha256 || n.source !== c.source) {
+      changed.push({ fact: c.fact, was, now: { source: n.source, admissibility: n.admissibility } });
+    }
+  }
+  const { rows: p } = await db.query<{ attempts: string; sessions: string }>(
+    `SELECT COALESCE(sum(attempts), 0) AS attempts, count(*) FILTER (WHERE declared) AS sessions
+       FROM pressure WHERE seal_id = $1 AND last_at > now() - ($2 || ' days')::interval`,
+    [sealId, String(PRESSURE_WINDOW_DAYS)]);
+  return { changed, pressure: { attempts: Number(p[0]?.attempts ?? 0), sessions: Number(p[0]?.sessions ?? 0) } };
+}
+
+/** Record the outcome of an examination. Null when nothing changed or somebody else got there first. */
+async function transition(
+  tx: pg.PoolClient, workspaceId: string, s: ExamRow, ex: Examination,
+): Promise<Reevaluation | null> {
+  // The cursor advances whether or not anything changed. A pass that
+  // examines a determination and leaves it alone has still examined it,
+  // and recording that is what stops the sweep looping on its own head.
+  const { rows: upd } = await tx.query<{ settled_at: Date | null }>(
+    `UPDATE seals
+        SET state = $2,
+            settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END,
+            last_evaluated_at = now(),
+            evaluation_due = false
+      WHERE id = $1 AND state = $3
+      RETURNING settled_at`,
+    [s.id, ex.next, s.state]);
+  if (upd.length === 0) return null;  // somebody clawed it first; their record wins
+  if (ex.next === s.state) return null;
+  // cap-05. A refusal that lapsed stood for a measurable time; the
+  // reversal carries its cost. Only a void `bind`: not an expiry, not a
+  // taint, not a permit — see harm.ts for why each is excluded.
+  const harm = ex.next === 'lapsed' && s.disposition === 'bind'
+    ? harmToStored(harmOf({ scope: s.scope, sealedAt: s.sealed_at, reversedAt: upd[0]!.settled_at ?? new Date() }))
+    : null;
+  const moved = ex.next === 'lapsed' || ex.next === 'tainted' ? await whatMoved(tx, s.id, ex.loaded) : {};
+  await tx.query(
+    `INSERT INTO seal_events (seal_id, workspace_id, kind, detail)
+     VALUES ($1,$2,$3,$4::jsonb)`,
+    [s.id, workspaceId, ex.next, JSON.stringify({ from: s.state,
+      ...(ex.guarded.length > 0 ? { guarded: ex.guarded } : {}),
+      ...(harm === null ? {} : { harm }),
+      ...moved })]);
+  return { sealId: s.id, from: s.state, to: ex.next };
+}
+
+/** How many of a subject's determinations a single write re-executes before handing the rest to the sweep. */
+export const SYNC_REEXECUTION_CAP = 8;
+
+/**
+ * Correction at the moment of the write.
+ *
+ * The change-driven trigger marked a subject's determinations due and left
+ * them for the next pass — up to a minute away, and behind whatever else
+ * was due. But the write that moved the ground is a transaction, the
+ * determinations it moves are a handful, and re-executing them here means
+ * the fact and its consequence become visible together: no reader ever
+ * sees the new fact beside the old refusal. Bounded by the cap, locked with
+ * SKIP LOCKED so a pass already holding a row is left to finish it, and the
+ * sweep remains the backstop for everything past the cap.
+ */
+export async function reexecuteSubject(
+  tx: pg.PoolClient, workspaceId: string, subjectId: string, cap = SYNC_REEXECUTION_CAP,
+): Promise<Reevaluation[]> {
+  const { rows } = await tx.query<ExamRow>(
+    `SELECT id, subject_id, rule, state, grammar_version,
+            (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
+            disposition, scope, sealed_at
+       FROM seals
+      WHERE workspace_id = $1 AND subject_id = $2 AND state IN ('sealed', 'tainted') AND evaluation_due
+      ORDER BY sealed_at
+      LIMIT $3
+      FOR UPDATE SKIP LOCKED`,
+    [workspaceId, subjectId, cap]);
+  if (rows.length === 0) return [];
+  const catalogue = await loadCatalogue(tx, workspaceId);
+  const out: Reevaluation[] = [];
+  for (const s of rows) {
+    const moved = await transition(tx, workspaceId, s, await examine(tx, workspaceId, s, catalogue));
+    if (moved !== null) out.push(moved);
+  }
+  return out;
+}
+
 /**
  * The third trigger: a fact that ran out under a standing determination.
  * Runs once per pass across every workspace BEFORE the pass decides which
@@ -967,11 +1111,7 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
   const pool = (await import('../db/pool.js')).getPool();
   await markFactExpiryDue(pool, workspaceId);
 
-  type Row = {
-    id: string; subject_id: string; rule: Rule; state: string;
-    grammar_version: string; expired: boolean; evaluation_due: boolean;
-    disposition: Disposition; scope: string; sealed_at: Date;
-  };
+  type Row = ExamRow;
   const { rows } = await pool.query<Row>(
     `SELECT id, subject_id, rule, state, grammar_version,
             (expires_at IS NOT NULL AND expires_at <= now()) AS expired, evaluation_due,
@@ -1007,63 +1147,9 @@ export async function reevaluate(workspaceId: string, limit = 100): Promise<Swee
   const catalogue = await loadCatalogue(pool, workspaceId);
   const changes: Reevaluation[] = [];
   for (const s of rows) {
-    let next: string;
-    let guarded: unknown[] = [];
-    if (s.expired) {
-      // Ran out. NOT an error — collapsing this into `lapsed` would count
-      // every expiry as the institution having been wrong.
-      next = 'expired';
-    } else if (!SUPPORTED_GRAMMAR_VERSIONS.has(s.grammar_version)) {
-      // Cannot reproduce the semantics this was sealed under, so cannot check
-      // it. Lost ground, not a disproof — and never a silent re-decision under
-      // rules nobody agreed to.
-      next = 'tainted';
-    } else {
-      const names = [...factsReferenced(s.rule)];
-      const loaded = await loadFacts(pool, workspaceId, s.subject_id,
-        [...names, ...guardsOf(catalogue, names)]);
-      // The same guard the seal applied. A finding of non-response that
-      // stood on delivered mail does not survive the mail coming back.
-      const { facts, withheld } = applyGuards(catalogue, loaded.facts, names);
-      guarded = withheld;
-      try {
-        next = classify(evaluate(s.rule, facts));
-      } catch {
-        // A type mismatch against changed attestations means the ground moved
-        // in a way the rule cannot read. Lost ground, not a disproof.
-        next = 'tainted';
-      }
-    }
-
-    await withTx(async (tx) => {
-      // The cursor advances whether or not anything changed. A pass that
-      // examines a determination and leaves it alone has still examined it,
-      // and recording that is what stops the sweep looping on its own head.
-      const { rows: upd } = await tx.query<{ settled_at: Date | null }>(
-        `UPDATE seals
-            SET state = $2,
-                settled_at = CASE WHEN $2 IN ('lapsed','expired') THEN now() ELSE settled_at END,
-                last_evaluated_at = now(),
-                evaluation_due = false
-          WHERE id = $1 AND state = $3
-          RETURNING settled_at`,
-        [s.id, next, s.state]);
-      if (upd.length === 0) return;  // somebody clawed it first; their record wins
-      if (next === s.state) return;
-      // cap-05. A refusal that lapsed stood for a measurable time; the
-      // reversal carries its cost. Only a void `bind`: not an expiry, not a
-      // taint, not a permit — see harm.ts for why each is excluded.
-      const harm = next === 'lapsed' && s.disposition === 'bind'
-        ? harmToStored(harmOf({ scope: s.scope, sealedAt: s.sealed_at, reversedAt: upd[0]!.settled_at ?? new Date() }))
-        : null;
-      await tx.query(
-        `INSERT INTO seal_events (seal_id, workspace_id, kind, detail)
-         VALUES ($1,$2,$3,$4::jsonb)`,
-        [s.id, workspaceId, next, JSON.stringify({ from: s.state,
-          ...(guarded.length > 0 ? { guarded } : {}),
-          ...(harm === null ? {} : { harm }) })]);
-      changes.push({ sealId: s.id, from: s.state, to: next });
-    });
+    const ex = await examine(pool, workspaceId, s, catalogue);
+    const moved = await withTx((tx) => transition(tx, workspaceId, s, ex));
+    if (moved !== null) changes.push(moved);
   }
 
   const { rows: left } = await pool.query<{ n: string }>(

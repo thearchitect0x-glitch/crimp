@@ -24,7 +24,7 @@ import { blindAliases, type MergeStrength } from '../lib/blind.js';
 import { resolveForWrite } from './subject.js';
 import { FACT_TYPES, type FactType } from './rule.js';
 import { requireScope, type Principal } from './auth.js';
-import { markDue } from './seal.js';
+import { markDue, reexecuteSubject } from './seal.js';
 import { loadCatalogue, assertCatalogued, assertAttestable } from './catalogue.js';
 
 const FACT_NAME = /^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,3}$/;
@@ -137,6 +137,9 @@ export async function attest(p: Principal, args: {
     // which facts each rule reads — a subject has few determinations, and
     // re-evaluating one whose inputs did not move is idempotent and cheap.
     await markDue(tx, workspaceId, subjectId);
+    // And, for the handful this write can reach, correct them now: the fact
+    // and its consequence commit together. The sweep takes whatever is left.
+    await reexecuteSubject(tx, workspaceId, subjectId);
 
     return { subjectId, count: args.facts.length };
   });
@@ -162,6 +165,7 @@ export async function eraseSubject(workspaceId: string, subjectId: string): Prom
     // unverifiable and must become `tainted` promptly rather than whenever the
     // cursor comes round, because an erasure is a legal event with a clock on it.
     await markDue(tx, workspaceId, subjectId);
+    await reexecuteSubject(tx, workspaceId, subjectId);
     // Cohort membership is personal data about the same subject, and it is not
     // reachable through any read path — which makes it exactly the kind of row
     // an erasure quietly leaves behind. It goes with the attestations.

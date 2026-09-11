@@ -6,7 +6,7 @@ import { closePool, getPool } from '../../src/db/pool.js';
 import { migrate } from '../../src/db/migrate.js';
 import { attest } from '../../src/domain/attest.js';
 import { seal, lookup, reevaluate } from '../../src/domain/seal.js';
-import { sourceReliability, quadrant, cliffs, VOLUME_FLOOR } from '../../src/domain/insight.js';
+import { sourceReliability, quadrant, cliffs, quietErrorEstimate, VOLUME_FLOOR } from '../../src/domain/insight.js';
 import { actors, STRENGTHS, type Actors } from '../helpers.js';
 import type { ClawRule } from '../../src/domain/authority.js';
 
@@ -203,5 +203,39 @@ describe('cliffs', () => {
     const [A, B] = [await actors(), await actors()];
     await sealFor(A, 'cl-iso', { refunds: 2 });
     assert.deepEqual(await cliffs(getPool(), B.ws), []);
+  });
+});
+
+
+describe('the error rate among people who never complained', () => {
+  test('the quadrant splits by attempts, and the estimate calibrates on the source class of corrections', async () => {
+    const A = await actors();
+    // Thirty who never came back: six wrong, four corrected by the carrier (a feed), two by the person.
+    for (let i = 0; i < 30; i++) await sealFor(A, `z${i}`);
+    for (let i = 0; i < 4; i++) await lapse(A, `z${i}`, 'carrier_api');
+    for (let i = 4; i < 6; i++) await lapse(A, `z${i}`, 'agent_report');
+    // Ten who fought (three refused attempts each): six wrong, two corrected by a feed, four by the person.
+    for (let i = 0; i < 10; i++) {
+      await sealFor(A, `f${i}`);
+      for (let k = 0; k < 3; k++) await lookup(A.agent, { aliases: who(`f${i}`), scope: 'refund', session: 'f'.repeat(32) }, STRENGTHS);
+    }
+    for (let i = 0; i < 2; i++) await lapse(A, `f${i}`, 'carrier_api');
+    for (let i = 2; i < 6; i++) await lapse(A, `f${i}`, 'agent_report');
+    await reevaluate(A.ws);
+
+    const q = await quadrant(getPool(), A.ws, 90);
+    assert.deepEqual(q.attempts, { zero: { examined: 30, lapsed: 6 }, some: { examined: 10, lapsed: 6 } });
+
+    const e = await quietErrorEstimate(getPool(), A.ws, 90, { minFoughtLapses: 1 });
+    assert.deepEqual(e.zeroAttempt, { n: 30, lapsed: 6, lapsedViaFeed: 4, lapsedViaSelf: 2, unattributed: 0 });
+    assert.deepEqual(e.fought, { n: 10, lapsed: 6, lapsedViaFeed: 2, lapsedViaSelf: 4, unattributed: 0 });
+    assert.equal(e.feedShareAmongFought, 2 / 6);
+    assert.equal(e.zeroAttemptLapseRate, 6 / 30);
+    // 4 feed-corrected among the quiet, divided by a feed share of one third: twelve wrong of thirty.
+    assert.ok(Math.abs(e.calibratedRate! - 12 / 30) < 1e-9, String(e.calibratedRate));
+    assert.equal(e.assumptions.length, 3);
+
+    const strict = await quietErrorEstimate(getPool(), A.ws, 90);
+    assert.equal(strict.calibratedRate, null, 'below the minimum the share is anecdote, and the estimate says so');
   });
 });

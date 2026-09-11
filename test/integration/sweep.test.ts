@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { closePool, getPool } from '../../src/db/pool.js';
 import { migrate } from '../../src/db/migrate.js';
 import { attest } from '../../src/domain/attest.js';
-import { seal, reevaluate, sweepLag } from '../../src/domain/seal.js';
+import { seal, lookup, reevaluate, sweepLag, SYNC_REEXECUTION_CAP } from '../../src/domain/seal.js';
 import { sweepOnce } from '../../src/worker/sweep.js';
 import { ApiError } from '../../src/lib/errors.js';
 import { actors, person, stateOf, expireSeal, STRENGTHS, type Actors } from '../helpers.js';
@@ -134,8 +134,10 @@ describe('fact expiry is a change nothing writes', () => {
     const past: string[] = [];
     for (const t of ['x1', 'x2', 'x3']) { await say(A, t, false); past.push(await bind(A, t)); }
     for (const id of past) await expireSeal(id);
-    // Thirty determinations made due by a write: three times the batch.
-    for (let i = 0; i < 30; i++) { await say(A, `d${i}`, false); await bind(A, `d${i}`); await say(A, `d${i}`, false); }
+    // Thirty determinations due: three times the batch. (Set directly — a
+    // write would correct them in place before the pass.)
+    for (let i = 0; i < 30; i++) { await say(A, `d${i}`, false); await bind(A, `d${i}`); }
+    await getPool().query('UPDATE seals SET evaluation_due = true WHERE workspace_id = $1 AND id <> ALL($2::text[])', [A.ws, past]);
     const r = await reevaluate(A.ws, 10);
     assert.equal(r.examined, 10);
     const states = await Promise.all(past.map((id) => stateOf(id)));
@@ -188,8 +190,8 @@ describe("an expired attestation is UNKNOWN, not false", () => {
 
 /* ── Prompt correction ───────────────────────────────────────────────── */
 
-describe('an attestation makes its determinations due', () => {
-  test('a changed fact jumps the queue instead of waiting its turn', async () => {
+describe('an attestation corrects its determinations at the moment of the write', () => {
+  test('a changed fact lapses the refusal in the same call, before any pass', async () => {
     const A = await actors();
     for (let i = 0; i < 20; i++) { await say(A, `q${i}`, false); await bind(A, `q${i}`); }
     await reevaluate(A.ws);   // everything examined, nothing due
@@ -197,15 +199,50 @@ describe('an attestation makes its determinations due', () => {
     const target = await bind(A, 'q19').catch(() => null);
     assert.equal(target, null, 'already sealed — replay, not a second determination');
 
+    const ids = await getPool().query<{ id: string }>(
+      `SELECT id FROM seals WHERE workspace_id = $1 ORDER BY sealed_at DESC LIMIT 1`, [A.ws]);
     await say(A, 'q19', true);   // the ground moves under one of twenty
+    // The write itself corrected it: the fact and its consequence committed together.
+    assert.equal(await stateOf(ids.rows[0]!.id), 'lapsed');
     const { rows } = await getPool().query<{ n: string }>(
       'SELECT count(*) AS n FROM seals WHERE workspace_id = $1 AND evaluation_due', [A.ws]);
-    assert.equal(Number(rows[0]!.n), 1, 'only the affected subject is marked due');
-
-    // One tiny batch is enough, because due work sorts first.
+    assert.equal(Number(rows[0]!.n), 0, 'nothing is left for the sweep');
     const r = await reevaluate(A.ws, 1);
-    assert.equal(r.changes.length, 1);
-    assert.equal(r.changes[0]?.to, 'lapsed');
+    assert.equal(r.changes.length, 0, 'and the sweep finds nothing to do');
+  });
+
+  test('the lapsed event says what moved — fact, source, class, pressure — and never a value', async () => {
+    const A = await actors();
+    await say(A, 'w', false);
+    const id = await bind(A, 'w');
+    for (let i = 0; i < 3; i++) await lookup(A.agent, { aliases: person('w'), scope: 'refund', session: 'a'.repeat(32) }, STRENGTHS);
+    await attest(A.agent, { aliases: person('w'), facts: [
+      { fact: 'carrier.delivered', type: 'bool', value: true, source: 'state_registry' } ] }, STRENGTHS);
+    assert.equal(await stateOf(id), 'lapsed');
+    const { rows } = await getPool().query<{ detail: Record<string, unknown> }>(
+      `SELECT detail FROM seal_events WHERE seal_id = $1 AND kind = 'lapsed'`, [id]);
+    const d = rows[0]!.detail;
+    assert.deepEqual(d['changed'], [{ fact: 'carrier.delivered', was: { source: 'carrier_api', admissibility: 'receipt' },
+      now: { source: 'state_registry', admissibility: 'authority' } }]);
+    assert.deepEqual(d['pressure'], { attempts: 3, sessions: 1 });
+    assert.equal(JSON.stringify(d).includes('"value"'), false, 'no value on the event');
+  });
+
+  test('more determinations than the cap: the write corrects the cap, the sweep the rest', async () => {
+    const A = await actors();
+    await say(A, 'many', false);
+    const ids: string[] = [];
+    for (let i = 0; i < SYNC_REEXECUTION_CAP + 3; i++) {
+      const r = await seal(A.agent, { idempotencyKey: `idem-many-${i}`, aliases: person('many'),
+        scope: `refund.line${i}`, disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
+      ids.push(r.sealId!);
+    }
+    await say(A, 'many', true);
+    const states = await Promise.all(ids.map((id) => stateOf(id)));
+    assert.equal(states.filter((x) => x === 'lapsed').length, SYNC_REEXECUTION_CAP, 'the cap, at the write');
+    await reevaluate(A.ws);
+    const after = await Promise.all(ids.map((id) => stateOf(id)));
+    assert.equal(after.filter((x) => x === 'lapsed').length, ids.length, 'the sweep finishes the rest');
   });
 });
 
@@ -220,14 +257,13 @@ describe('every path that moves ground marks its determinations due', () => {
       'SELECT subject_id FROM seals WHERE workspace_id = $1 LIMIT 1', [A.ws]);
     await eraseSubject(A.ws, rows[0]!.subject_id);
 
-    const { rows: due } = await getPool().query<{ n: string }>(
-      'SELECT count(*) AS n FROM seals WHERE workspace_id = $1 AND evaluation_due', [A.ws]);
-    assert.ok(Number(due[0]!.n) >= 1,
-      'an erasure is a legal event with a clock on it; the taint cannot wait for the cursor');
-
+    // An erasure is a legal event with a clock on it. The taint does not wait
+    // for the cursor, nor for the next pass: it is recorded by the erasure.
+    const { rows: st } = await getPool().query<{ state: string }>(
+      'SELECT state FROM seals WHERE workspace_id = $1 AND subject_id = $2', [A.ws, rows[0]!.subject_id]);
+    assert.equal(st[0]?.state, 'tainted', 'tainted by the erasure itself');
     const pass = await sweepOnce({ batchSize: 1, maxBatchesPerWorkspace: 1 });
-    assert.equal(pass.changes[0]?.to, 'tainted',
-      'and due work sorts first, so one tiny batch reaches it');
+    assert.equal(pass.changes.some((c) => c.to === 'tainted'), false, 'nothing left for the pass');
   });
 });
 
@@ -240,11 +276,12 @@ describe('a sweep pass across workspaces', () => {
     await say(B, 'w2', false); await bind(B, 'w2');
     await sweepOnce({ batchSize: 50 });
 
-    await say(A, 'w1', true);   // only A has moved
+    // Only A has due work. (A write would now correct it in place, so the
+    // due flag is set directly: this test is about who the pass visits.)
+    await getPool().query('UPDATE seals SET evaluation_due = true WHERE workspace_id = $1', [A.ws]);
     const pass = await sweepOnce({ batchSize: 50 });
     assert.equal(pass.workspaces, 1, 'an idle tenant costs nothing');
-    assert.equal(pass.changes.length, 1);
-    assert.equal(pass.changes[0]?.to, 'lapsed');
+    assert.equal(pass.examined, 1);
   });
 
   test('one large workspace cannot starve the pass', async () => {
@@ -266,7 +303,8 @@ describe('a sweep pass across workspaces', () => {
     assert.equal(before.dueNow, 0, 'a determination is evaluated at the moment it is sealed');
 
     await say(A, 'l0', true);
-    assert.equal((await sweepLag(getPool(), A.ws)).dueNow, 1);
+    // Corrected at the write, so nothing is due afterwards.
+    assert.equal((await sweepLag(getPool(), A.ws)).dueNow, 0);
     await sweepOnce();
     const after = await sweepLag(getPool(), A.ws);
     assert.equal(after.dueNow, 0);
@@ -286,5 +324,30 @@ describe('a sweep pass across workspaces', () => {
     const pass = await sweepOnce();
     assert.equal(pass.changes[0]?.to, 'expired');
     assert.equal(await stateOf(id), 'expired');
+  });
+});
+
+
+describe('breadth: one session across many people', () => {
+  test('is a finding about the session, and no determination is hardened', async () => {
+    const A = await actors();
+    const { probingBreadth, BREADTH } = await import('../../src/domain/breadth.js');
+    const { listFindings } = await import('../../src/domain/findings.js');
+    const session = 'b'.repeat(32);
+    for (let i = 0; i < BREADTH.distinctDeterminations; i++) {
+      await say(A, `p${i}`, false); await bind(A, `p${i}`);
+      await lookup(A.agent, { aliases: person(`p${i}`), scope: 'refund', session }, STRENGTHS);
+    }
+    assert.equal(await probingBreadth(getPool()), 1);
+    const found = await listFindings(A.operator, { class: 'probing_breadth' });
+    assert.equal(found.length, 1);
+    assert.equal(found[0]?.subjectKind, 'session');
+    assert.equal(found[0]?.subjectId, session);
+    assert.equal(found[0]?.detail['determinations'], BREADTH.distinctDeterminations);
+    assert.equal(await probingBreadth(getPool()), 0, 'once per session per day');
+    // One refusal each: no determination reached a tier that hardens.
+    const { rows } = await getPool().query<{ n: string }>(
+      `SELECT count(*) AS n FROM seal_events WHERE workspace_id = $1 AND kind = 'hardened'`, [A.ws]);
+    assert.equal(Number(rows[0]!.n), 0);
   });
 });

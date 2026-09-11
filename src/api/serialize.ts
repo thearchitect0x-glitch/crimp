@@ -14,7 +14,7 @@
  */
 import type { SealResult, LookupResult } from '../domain/seal.js';
 import type { ClawRule } from '../domain/authority.js';
-import type { SourceReliability, QuadrantCounts, Cliff } from '../domain/insight.js';
+import type { SourceReliability, QuadrantCounts, Cliff, QuietErrorEstimate } from '../domain/insight.js';
 import type { MintedKey } from '../domain/auth.js';
 import type { Reason } from '../domain/explain.js';
 import { recordCore, type Proof, type Disclosure } from '../domain/record.js';
@@ -235,6 +235,26 @@ export function quadrantToWire(q: QuadrantCounts): Record<string, unknown> {
     contested_and_correct: q.contestedAndCorrect,
     quiet_error: q.quietError,
     wrong_and_resisted: q.wrongAndResisted,
+    by_attempts: {
+      zero: { examined: q.attempts.zero.examined, lapsed: q.attempts.zero.lapsed },
+      some: { examined: q.attempts.some.examined, lapsed: q.attempts.some.lapsed },
+    },
+  };
+}
+
+export function estimateToWire(e: QuietErrorEstimate): Record<string, unknown> {
+  const cell = (c: QuietErrorEstimate['zeroAttempt']) => ({
+    n: c.n, lapsed: c.lapsed, lapsed_via_feed: c.lapsedViaFeed, lapsed_via_self: c.lapsedViaSelf, unattributed: c.unattributed,
+  });
+  return {
+    window: { days: e.window.days },
+    zero_attempt: cell(e.zeroAttempt),
+    fought: cell(e.fought),
+    feed_share_among_fought: e.feedShareAmongFought,
+    zero_attempt_lapse_rate: e.zeroAttemptLapseRate,
+    calibrated_rate: e.calibratedRate,
+    minimum_fought_lapses: e.minimumFoughtLapses,
+    assumptions: [...e.assumptions],
   };
 }
 

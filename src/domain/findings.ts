@@ -14,9 +14,9 @@ import { getPool, type Db } from '../db/pool.js';
 import { newId } from '../lib/ids.js';
 import { requireScope, type Principal } from './auth.js';
 
-export const FINDING_CLASSES = ['agency_timeliness', 'systemic_review', 'drift'] as const;
+export const FINDING_CLASSES = ['agency_timeliness', 'systemic_review', 'drift', 'probing_breadth'] as const;
 export type FindingClass = (typeof FINDING_CLASSES)[number];
-export type FindingSubject = 'clock' | 'seal' | 'rule' | 'workspace';
+export type FindingSubject = 'clock' | 'seal' | 'rule' | 'workspace' | 'session';
 
 export interface Finding {
   id: string;

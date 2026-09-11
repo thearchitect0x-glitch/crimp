@@ -375,10 +375,11 @@ describe('re-evaluation — the unbiased correction channel', () => {
       facts: [{ fact: 'carrier.delivered', type: 'bool', value: true, source: 'carrier_api' }] },
     STRENGTHS);
 
-    const { changes } = await reevaluate(ws);
-    assert.deepEqual(changes, [{ sealId: s.sealId!, from: 'sealed', to: 'lapsed' }]);
+    // Corrected by the carrier's own write, before any pass ran.
     assert.equal(await stateOf(s.sealId!), 'lapsed');
     assert.equal(await countEvents(s.sealId!, 'lapsed'), 1);
+    const { changes } = await reevaluate(ws);
+    assert.deepEqual(changes, [], 'the pass found it already corrected');
 
     const after = await lookup(A.agent, { aliases: person('e2'), scope: 'refund.issue' }, STRENGTHS);
     assert.deepEqual(after.determinations, [],
@@ -396,8 +397,11 @@ describe('re-evaluation — the unbiased correction channel', () => {
       'SELECT subject_id FROM seals WHERE id = $1', [s.sealId]);
     await eraseSubject(ws, rows[0]!.subject_id);
 
+    // Tainted by the erasure itself; the pass has nothing left.
+    assert.equal(await stateOf(s.sealId!), 'tainted');
+    assert.equal(await countEvents(s.sealId!, 'tainted'), 1);
     const { changes } = await reevaluate(ws);
-    assert.deepEqual(changes, [{ sealId: s.sealId!, from: 'sealed', to: 'tainted' }]);
+    assert.deepEqual(changes, []);
 
     const after = await lookup(A.agent, { aliases: person('e3'), scope: 'refund.issue' }, STRENGTHS);
     assert.equal(after.determinations[0]?.code, CODES.refusalTainted,
