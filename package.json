@@ -26,6 +26,7 @@
     "audit": "npm audit --omit=dev --audit-level=high",
     "mint": "tsx scripts/mint.ts",
     "keygen:pq": "tsx scripts/keygen-pq.ts",
+    "anchor:roots": "tsx scripts/anchor-roots.ts",
     "conformance": "tsx scripts/conformance.ts && node scripts/conformance-verifier.mjs",
     "dev:worker": "tsx watch src/worker/main.ts",
     "start:worker": "node dist/worker/main.js",
