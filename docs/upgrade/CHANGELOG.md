@@ -1041,3 +1041,31 @@ signature.
 **The boot log** now states whether the crypto module runs in FIPS mode
 and whether the runtime can issue the second signature, for the auditor
 reading it.
+
+## Prior authorization, and the appeal on the record · 12 September 2026
+
+**A second programme.** `src/programmes/prior_auth.ts` (seed:
+`scripts/seed-prior-auth.ts`): eight sources with their admissibility,
+seventeen catalogued facts including a delivery guard on the request for
+information, one ruleset, six rules for lumbar MRI, step therapy, the
+procedural path and the expedited path, every criterion a literal with a
+citation and every citation `TODO(legal-confirm)`. Written up in
+`docs/programmes/prior_auth.md`. The integration test walks an
+authorization, a denial and its remedy, the procedural denial behind the
+guard, an expedited request meeting its 72-hour clock, authorization units
+as a permit with twelve uses, the notice, and the three findings.
+
+**Finding 1, fixed here: resistance arrives as an appeal.** In benefits a
+refused person comes back and the gate counts it; in prior authorization
+nobody comes back that way, and the provider's portal session is wide.
+The quadrant was blind to the one signal this domain has. `appeal.ts`
+(migration 025, `POST /v1/seals/:id/appeal`): an appeal is an event on the
+refusal it contests, recorded by whoever received it; the quadrant and the
+estimate count a determination with an appeal as contested, and report
+`appealed`. Not a ruling: the ruling is the adjudication family.
+
+**Findings 2 and 3, recorded.** A criterion satisfiable only by time and
+care ("six weeks of conservative therapy") needs a third mutability kind
+beside the person's and fixed (B4); the derived facts (weeks of therapy,
+months since imaging) are committed as numbers without their derivation
+(B3), the same finding as SNAP's from a second programme.

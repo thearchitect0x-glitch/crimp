@@ -5,8 +5,7 @@ import { authorized } from '../app.js';
 import {
   attestBody, sealBody, lookupBody, clawBody, cohortBody, placeBody, mergeBody,
   carveOutBody, mintKeyBody, windowQuery, errors, rulesetBody, ruleBody, closeRuleBody, catalogueBody,
-  clockBody, findingsQuery, sourceBody, decisionBody,
-} from '../schemas.js';
+  clockBody, findingsQuery, sourceBody, decisionBody, appealBody } from '../schemas.js';
 import {
   clawFromWire, factFromWire, sealToWire, lookupToWire,
   sourcesToWire, quadrantToWire, estimateToWire, cliffsToWire, keyToWire,
@@ -18,6 +17,7 @@ import { attest } from '../../domain/attest.js';
 import { seal, lookup, exercise, claw } from '../../domain/seal.js';
 import { sourceReliability, quadrant, cliffs, quietErrorEstimate } from '../../domain/insight.js';
 import { inclusionOf } from '../../domain/transparency.js';
+import { recordAppeal, type AppealChannel } from '../../domain/appeal.js';
 import { declareCohort, placeInCohort } from '../../domain/cohort.js';
 import { mergeSubjects, carveOut } from '../../domain/merge.js';
 import { proof, disclosure, disclosures } from '../../domain/record.js';
@@ -387,6 +387,15 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       occurred_at: d.occurredAt.toISOString(),
     })) };
   });
+
+  /** An appeal, on the record. Contestation for the domains where nobody comes back through the gate. */
+  app.post<{ Params: { id: string }; Body: { channel: string; reference?: string | null; filed_at?: string | null } }>(
+    '/seals/:id/appeal', { schema: { body: appealBody, response: errors } }, async (req) => {
+      const p = await authorized(req, 'seals:write');
+      const out = await recordAppeal(p, { sealId: req.params.id, channel: req.body.channel as AppealChannel,
+        reference: req.body.reference ?? null, filedAt: req.body.filed_at ? new Date(req.body.filed_at) : null });
+      return { seal_id: out.sealId, filed_at: out.filedAt.toISOString() };
+    });
 
   /* ── Claw ────────────────────────────────────────────────────────── */
   app.post<{

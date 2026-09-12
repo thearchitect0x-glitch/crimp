@@ -372,3 +372,16 @@ export const windowQuery = {
   additionalProperties: false,
   properties: { days: { type: 'string', pattern: '^[0-9]{1,3}$' } },
 } as const;
+
+/** POST /v1/seals/:id/appeal — an appeal, on the record of the refusal it contests. */
+export const appealBody = {
+  type: 'object',
+  required: ['channel'],
+  additionalProperties: false,
+  properties: {
+    channel: { type: 'string', enum: ['member', 'representative', 'provider', 'external_review', 'other'] },
+    // The institution's own reference. Opaque; never a subject identifier.
+    reference: { type: ['string', 'null'], maxLength: 128 },
+    filed_at: { type: ['string', 'null'], format: 'date-time' },
+  },
+} as const;

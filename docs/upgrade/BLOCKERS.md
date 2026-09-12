@@ -122,3 +122,19 @@ note follows the notice.
 remedies or show them under a heading; and the default mutability of an
 uncatalogued fact (recommended: `actionable`, so nothing is hidden by
 omission).
+
+## Addendum from the prior-authorization configuration · 12 September 2026
+
+- **B3 recurs.** Weeks of conservative therapy and months since prior
+  imaging are derived by the payer's claims engine; the record commits to
+  the numbers without their derivation. Two programmes finding this
+  independently makes it a property of the format. The provisional
+  specification (§15) describes derivation provenance; the product does not
+  yet carry it.
+- **B4 needs a third kind.** "Six weeks of conservative therapy" is
+  satisfiable only by time and care: neither mutable by the person nor
+  fixed. The mutability attribute should be `person | time | fixed`, and
+  the notice should say when a time-mutable criterion will be met.
+- **Resolved here:** an appeal is contestation (`appeal.ts`, migration 025);
+  the quadrant no longer needs a person to come back through the gate to
+  see resistance. See docs/programmes/prior_auth.md.

@@ -240,6 +240,7 @@ export function quadrantToWire(q: QuadrantCounts): Record<string, unknown> {
       zero: { examined: q.attempts.zero.examined, lapsed: q.attempts.zero.lapsed },
       some: { examined: q.attempts.some.examined, lapsed: q.attempts.some.lapsed },
     },
+    appealed: q.appealed,
   };
 }
 

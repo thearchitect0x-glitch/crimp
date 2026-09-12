@@ -119,6 +119,8 @@ export interface QuadrantCounts {
    * needs the people who asked never.
    */
   attempts: { zero: { examined: number; lapsed: number }; some: { examined: number; lapsed: number } };
+  /** Determinations with an appeal on their record. An appeal is contestation; in prior authorization it is the only kind there is. */
+  appealed: number;
 }
 
 /**
@@ -145,12 +147,13 @@ export async function quadrant(
   db: Db, workspaceId: string, days = 90,
 ): Promise<QuadrantCounts> {
   const { rows } = await db.query<{
-    id: string; state: string; attempts: string | null; sessions: string | null;
+    id: string; state: string; attempts: string | null; sessions: string | null; appealed: boolean;
   }>(
     `WITH wide AS (${WIDE_SESSIONS_SQL.replace('$WS', '$1').replace('$DAYS', '$3').replace('$N', '$4')})
      SELECT s.id, s.state,
             COALESCE(sum(p.attempts), 0)                  AS attempts,
-            count(p.*) FILTER (WHERE p.declared)          AS sessions
+            count(p.*) FILTER (WHERE p.declared)          AS sessions,
+            EXISTS (SELECT 1 FROM seal_events e WHERE e.seal_id = s.id AND e.kind = 'appealed') AS appealed
        FROM seals s
        LEFT JOIN pressure p
          ON p.seal_id = s.id
@@ -167,13 +170,18 @@ export async function quadrant(
     normal: 0, contestedAndCorrect: 0, quietError: 0, wrongAndResisted: 0,
     examined: rows.length,
     attempts: { zero: { examined: 0, lapsed: 0 }, some: { examined: 0, lapsed: 0 } },
+    appealed: 0,
   };
 
   for (const r of rows) {
+    // Pressure, or an appeal. Either is the person (or someone for them)
+    // contesting the determination; the appeal is the form that domain has
+    // where nobody comes back through the gate.
     const pressed = tierOf({
       attempts: Number(r.attempts ?? 0),
       sessions: Number(r.sessions ?? 0),
-    }) !== 'none';
+    }) !== 'none' || r.appealed;
+    if (r.appealed) out.appealed++;
     // `lapsed` is the premise failing. `clawed` is a person overruling, which
     // is a different event and deliberately not counted as the system being
     // wrong — somebody decided, and that decision is on the record.
@@ -183,7 +191,7 @@ export async function quadrant(
     else if (failed) out.quietError++;
     else if (pressed) out.contestedAndCorrect++;
     else out.normal++;
-    const bucket = Number(r.attempts ?? 0) === 0 ? out.attempts.zero : out.attempts.some;
+    const bucket = Number(r.attempts ?? 0) === 0 && !r.appealed ? out.attempts.zero : out.attempts.some;
     bucket.examined++;
     if (failed) bucket.lapsed++;
   }
@@ -237,12 +245,13 @@ export async function quietErrorEstimate(
   db: Db, workspaceId: string, days = 90, opts: { minFoughtLapses?: number } = {},
 ): Promise<QuietErrorEstimate> {
   const minimum = opts.minFoughtLapses ?? ESTIMATE_MIN_FOUGHT_LAPSES;
-  const { rows } = await db.query<{ state: string; attempts: string | null; detail: Record<string, unknown> | null }>(
+  const { rows } = await db.query<{ state: string; attempts: string | null; appealed: boolean; detail: Record<string, unknown> | null }>(
     `WITH wide AS (${WIDE_SESSIONS_SQL.replace('$WS', '$1').replace('$DAYS', '$3').replace('$N', '$4')})
      SELECT s.state,
             (SELECT sum(p.attempts) FROM pressure p WHERE p.seal_id = s.id
                AND p.last_at > now() - ($3 || ' days')::interval
                AND p.session NOT IN (SELECT session FROM wide)) AS attempts,
+            EXISTS (SELECT 1 FROM seal_events e WHERE e.seal_id = s.id AND e.kind = 'appealed') AS appealed,
             (SELECT e.detail FROM seal_events e WHERE e.seal_id = s.id AND e.kind = 'lapsed'
               ORDER BY e.occurred_at DESC LIMIT 1) AS detail
        FROM seals s
@@ -252,7 +261,7 @@ export async function quietErrorEstimate(
   const cell = () => ({ n: 0, lapsed: 0, lapsedViaFeed: 0, lapsedViaSelf: 0, unattributed: 0 });
   const zero = cell(); const fought = cell();
   for (const r of rows) {
-    const c = Number(r.attempts ?? 0) === 0 ? zero : fought;
+    const c = Number(r.attempts ?? 0) === 0 && !r.appealed ? zero : fought;
     c.n++;
     if (r.state !== 'lapsed') continue;
     c.lapsed++;
