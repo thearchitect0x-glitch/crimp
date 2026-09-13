@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
         env:
           POSTGRES_USER: crimp
           POSTGRES_PASSWORD: crimp
@@ -22,13 +22,18 @@ jobs:
           --health-cmd "pg_isready -U crimp"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with: { node-version: '24', cache: npm }
       - run: npm ci
       - name: Typecheck (src, test, scripts)
         run: npm run typecheck
+      - name: Reproducible build
+        # Two clean builds from two different checkout paths must be
+        # byte-identical and carry nothing specific to the machine. A build
+        # that differs by path cannot be checked by anyone but its builder.
+        run: bash scripts/verify-reproducible.sh
       - name: Unit tests
         run: npm run test:unit
       - name: Migrations apply to an empty database
@@ -59,14 +64,14 @@ jobs:
   reuse:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Every file declares its licence
-        uses: fsfe/reuse-action@v5
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5  # v6.0.0
 
   dco:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with: { fetch-depth: 0 }
       - name: Every commit is signed off
         run: |

@@ -463,7 +463,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     schema: { body: placeBody, response: errors },
   }, async (req, reply) => {
     const p = await authorized(req, 'cohorts:write');
-    const out = await placeInCohort(p, {
+    await placeInCohort(p, {
       aliases: req.body.aliases,
       cohort: req.body.cohort,
       band: req.body.band,

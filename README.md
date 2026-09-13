@@ -3,6 +3,13 @@
 
 # Crimp
 
+[![CI](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/ci.yml/badge.svg)](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/codeql.yml/badge.svg)](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/thearchitect0x-glitch/crimp/badge)](https://scorecard.dev/viewer/?uri=github.com/thearchitect0x-glitch/crimp)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![NIST SSDF](https://img.shields.io/badge/NIST%20SSDF-conformance-informational)](docs/SSDF.md)
+[![DCO](https://img.shields.io/badge/DCO-1.1-informational)](CONTRIBUTING.md#certificate-of-origin)
+
 **A decision gate for AI agents.** An agent does not tell Crimp what it decided —
 it submits the rule it is applying and the facts it is applying it to. Crimp
 evaluates the rule, derives the outcome, and seals the rule *before the outcome
@@ -225,6 +232,7 @@ npm run dev:db:down           # stop the local Postgres
 | [Handover](docs/HANDOVER.md) | What to know in the first hour, and what must stay true |
 | [Restore rehearsal](docs/RESTORE_REHEARSAL.md) | The drill, and the rule that the maintainer does not help |
 | [Releasing](docs/RELEASING.md) | How a release is cut, and how to verify one |
+| [NIST SSDF](docs/SSDF.md) | The secure development practices, mapped to NIST SP 800-218, with the gaps stated |
 | [Contributing](CONTRIBUTING.md) | DCO, coding standards, and the testing policy |
 | [Security policy](SECURITY.md) | How to report a vulnerability, and what is out of scope |
 | [Code of conduct](CODE_OF_CONDUCT.md) | What is expected |

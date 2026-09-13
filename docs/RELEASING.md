@@ -39,6 +39,20 @@ There is no key to import and no keyserver to trust. The attestation is a
 Sigstore certificate bound to the GitHub OIDC identity of the workflow run that
 produced the file, recorded in a public transparency log.
 
+Every release also carries the attestation beside the archive, for verifiers
+that do not use GitHub and for OpenSSF Scorecard, which looks for it there:
+
+| Asset | What it is |
+|---|---|
+| `crimp-vX.Y.Z.tar.gz.sigstore.json` | The Sigstore bundle: the signature, its certificate, and the transparency log entry |
+| `crimp-vX.Y.Z.tar.gz.intoto.jsonl` | The in-toto provenance statement, as a DSSE envelope |
+
+```bash
+gh attestation verify crimp-v0.1.0.tar.gz \
+  --bundle crimp-v0.1.0.tar.gz.sigstore.json \
+  --repo thearchitect0x-glitch/crimp
+```
+
 To check the archive is byte-for-byte what was published:
 
 ```bash

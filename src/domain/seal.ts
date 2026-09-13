@@ -24,7 +24,7 @@ import {
 import { evaluate } from './evaluate.js';
 import { validateScope, ancestors, covers } from './scope.js';
 import {
-  validateClawRule, mayClaw, isAuthority, TIME_BOUNDS, QUORUM_WINDOW_SECONDS,
+  validateClawRule, mayClaw, TIME_BOUNDS, QUORUM_WINDOW_SECONDS,
   type Authority, type ClawRule,
 } from './authority.js';
 import { meetsFloor, type Admissibility } from './admissibility.js';

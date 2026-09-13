@@ -232,10 +232,16 @@ instances do not share a counter.
 
 ## 5. Supply chain
 
-`npm ci` from a committed lockfile. CI runs typecheck, unit, integration and
-end-to-end tests against a real Postgres, a production dependency audit, CodeQL
-with `security-and-quality`, a REUSE licence check, and a DCO gate — all on
-every push and pull request. `main` carries a ruleset with **no bypass actors**:
+`npm ci` from a committed lockfile. Every GitHub Action is pinned to a full
+commit SHA, and every container base image and the CI database image by digest;
+Dependabot proposes updates to all three weekly, through review. CI runs
+typecheck, a reproducible-build check (two builds from two checkout paths must be
+byte-identical), unit, integration and end-to-end tests against a real Postgres,
+the conformance vectors, property-based tests, a production dependency audit,
+CodeQL with `security-and-quality`, a REUSE licence check, and a DCO gate — all
+on every push and pull request. OpenSSF Scorecard reads the result weekly.
+Secret scanning and push protection are enabled. The practices are mapped to NIST
+SP 800-218 in [docs/SSDF.md](docs/SSDF.md), with the gaps stated. `main` carries a ruleset with **no bypass actors**:
 every change needs a pull request and an approving review from somebody other
 than its author, the maintainer included, verified by attempting a direct push
 and being refused.
