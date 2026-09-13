@@ -77,7 +77,7 @@ describe('rendering', () => {
     assert.equal(clauseText({ label: 'state', op: 'in', value: ['CA', 'NV'], polarity: 'direct' }, L), 'state is one of "CA", "NV"');
     // A negated clause is said with the opposite operator, which is exact: the
     // grammar is total over a typed fact, so "not more than" IS "at most".
-    assert.equal(clauseText({ label: 'flag', op: 'eq', value: true, polarity: 'negated' }, L), 'flag is not true');
+    assert.equal(clauseText({ label: 'flag', op: 'eq', value: true, polarity: 'negated' }, L), 'flag is false');
     assert.equal(clauseText({ label: 'income', op: 'gt', value: 2000, polarity: 'negated' }, L), 'income is at most 2000');
   });
 

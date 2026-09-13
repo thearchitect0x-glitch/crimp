@@ -26,7 +26,7 @@
  * deployment on top of this projection. They are not guessed here.
  */
 import type { Notice } from '../../domain/notice.js';
-import { clauseText, LABELS_EN, type Labels } from '../../domain/notice.js';
+import { clauseText, remedyLines, LABELS_EN, type Labels } from '../../domain/notice.js';
 
 export const CRIMP = 'https://crimp.deimoscore.com/fhir';
 export const SYSTEMS = {
@@ -78,8 +78,7 @@ export function toClaimResponse(n: Notice, L: Labels = LABELS_EN): Json {
   }
   const processNote: Json[] = [];
   if (n.remedy && n.remedy.sets.length > 0) {
-    processNote.push({ number: 1, type: 'display', text: `${L.remedy}: ${n.remedy.sets.map((set) =>
-      set.map((c) => c.constraints.map((k) => `${n.labels[c.fact] ?? c.fact} ${k.truth === 'true' ? (L.op[k.op] ?? k.op) : `not ${L.op[k.op] ?? k.op}`} ${JSON.stringify(k.value)}`).join(` ${L.and} `)).join(`; ${L.and} `)).join(` ${L.or} `)}` });
+    processNote.push({ number: 1, type: 'display', text: `${L.remedy}: ${remedyLines(n, L).join(` ${L.or} `)}` });
   }
   processNote.push({ number: processNote.length + 1, type: 'display', text: `${L.appeal}: ${n.appeal.text} ${L.appealBy} ${n.appeal.days} ${L.days}. ${L.authority}: ${n.appeal.authority}` });
 

@@ -734,6 +734,49 @@ console, fixed with brace matching, and the page verified again by hand.
 
 **Tests.** 432 → 445 (4 site unit, 4 verifier-page unit, 2 e2e, 3 notice).
 
+## The SNAP configuration · 10 September 2026
+
+**What it is.** `src/programmes/snap.ts`: seven sources with their
+programme, twenty-four catalogued facts with the descriptions the notice
+prints, one ruleset, ten rule versions — every threshold a literal with its
+citation, every number an FY 2026 federal figure marked
+`TODO(legal-confirm)`. `scripts/seed-snap.ts` applies it; the integration
+test walks a grant, a gross-income denial and its remedy, a procedural
+denial behind the Notice-of-Missed-Interview guard, expedited service met
+on its seven-day clock, the work requirement across the H.R. 1 change (two
+versions of one rule, resolved by `as_of`), and the notice. Written up in
+`docs/programmes/snap.md`.
+
+**Four findings, two of them blockers.**
+1. **Arithmetic is outside the gate** (B3). Net income, expedited
+   criterion (iii) and age are computations the grammar cannot carry; they
+   arrive as derived facts, and the record commits to their digests but
+   not their derivation. The income *tests* are exact by enumerating
+   household size (40 of 64 nodes). Recommended: name the deriving engine
+   on the attestation before widening the grammar.
+2. **Enumeration stops at twelve members**, stated in config.
+3. **The remedy names facts a person cannot change** (B4): "household of
+   five" is a valid remedy and not advice. Proposed: a `mutability`
+   attribute on the catalogue, ordering the notice, record unchanged.
+4. **Ex parte is Medicaid's.** SNAP requires the interview (7 CFR
+   273.2(e)(2)); this ruleset declares no ex parte rule, records
+   `not_declared` on every procedural seal, and relies on cap-01's
+   delivery guard for the NOMI.
+
+**Two things the configuration broke, fixed here.** The citation grammar
+refused compound citations (`7 CFR 273.9(a)(1); 7 CFR 273.10(e)(1)(i)(A)`)
+on two counts: no semicolon lists, and paragraph designators in lowercase
+only — CFR alternates case by level. Now a list, each part optionally
+annotated ("as amended by Pub. L. 119-21 §10102"), both cases. And the
+notice printed the remedy one line per *cell* — four lines of a dozen
+clauses for "gross income at most $3,483". `remedyLines` collapses cells on
+one fact into their union interval, summarises an enumeration by its
+complement ("is not one of 1, 2, 3, 4"), and flips a negated boolean ("is
+true", not "is not false"). Rendering only; the record is exact and
+unchanged; the FHIR fixture regenerated deliberately.
+
+**Tests.** 445 → 453.
+
 ## Security sweep · 10 September 2026
 
 Asked to sweep for holes while the pull requests wait. Read as an attacker
@@ -967,3 +1010,62 @@ to start in that state, and the tests skip with the reason where the
 runtime lacks it.
 
 **Tests.** 458 → 468.
+
+## The record's date, without the issuer's key · 11 September 2026
+
+Round four. The post-quantum signature protects who; nothing protected
+when. A verifier in 2038 may not trust a 2026 key at all.
+
+**The transparency anchor.** Every sealed core's digest is now kept
+(`seals.core_sha256`, signed or not). Once a day the pass folds each
+workspace's closed day into an RFC 6962 Merkle root and the workspace
+roots into one global root (`transparency.ts`, migration 024). The global
+roots are published at `/.well-known/crimp-roots.json`; a record's
+inclusion proof is at `GET /v1/seals/:id/inclusion`; the verifier walks
+core → workspace root → global root and checks it against a published
+list (`--roots`). An operator anchors a global root to a public timestamp
+and records the anchor once; it is never replaced. The tree is over roots,
+so it names no tenant.
+
+**The verifier's policy.** `--require-pq`: a verifier that will no longer
+accept an Ed25519-only record can say so, and its absence becomes a
+failure. The post-quantum check now states the honest reason first in a
+browser (no node:crypto) before any key lookup.
+
+**Independently verified.** Our ML-DSA-65 and Ed25519 signatures over a
+real sealed core verify under Homebrew OpenSSL 3.6.3, a separate build
+from the OpenSSL 3.5.5 inside Node, and fail there on a one-bit change to
+the message. Sizes match FIPS 204: 1 952-byte public key, 3 309-byte
+signature.
+
+**The boot log** now states whether the crypto module runs in FIPS mode
+and whether the runtime can issue the second signature, for the auditor
+reading it.
+
+## Prior authorization, and the appeal on the record · 12 September 2026
+
+**A second programme.** `src/programmes/prior_auth.ts` (seed:
+`scripts/seed-prior-auth.ts`): eight sources with their admissibility,
+seventeen catalogued facts including a delivery guard on the request for
+information, one ruleset, six rules for lumbar MRI, step therapy, the
+procedural path and the expedited path, every criterion a literal with a
+citation and every citation `TODO(legal-confirm)`. Written up in
+`docs/programmes/prior_auth.md`. The integration test walks an
+authorization, a denial and its remedy, the procedural denial behind the
+guard, an expedited request meeting its 72-hour clock, authorization units
+as a permit with twelve uses, the notice, and the three findings.
+
+**Finding 1, fixed here: resistance arrives as an appeal.** In benefits a
+refused person comes back and the gate counts it; in prior authorization
+nobody comes back that way, and the provider's portal session is wide.
+The quadrant was blind to the one signal this domain has. `appeal.ts`
+(migration 025, `POST /v1/seals/:id/appeal`): an appeal is an event on the
+refusal it contests, recorded by whoever received it; the quadrant and the
+estimate count a determination with an appeal as contested, and report
+`appealed`. Not a ruling: the ruling is the adjudication family.
+
+**Findings 2 and 3, recorded.** A criterion satisfiable only by time and
+care ("six weeks of conservative therapy") needs a third mutability kind
+beside the person's and fixed (B4); the derived facts (weeks of therapy,
+months since imaging) are committed as numbers without their derivation
+(B3), the same finding as SNAP's from a second programme.

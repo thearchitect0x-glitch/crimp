@@ -8,6 +8,8 @@
  * migration runner holds a transaction-scoped advisory lock, so the losers wait
  * and then find nothing left to do.
  */
+import { getFips } from 'node:crypto';
+import { pqSupported } from '../lib/signing.js';
 import { buildApp } from './app.js';
 import { config, assertProductionSafety } from '../lib/config.js';
 import { migrate } from '../db/migrate.js';
@@ -18,6 +20,11 @@ import { closePool } from '../db/pool.js';
 
 assertProductionSafety();
 assertRuntimeFiles();
+// For the auditor reading the boot log: whether the crypto module runs in
+// FIPS mode, and whether this runtime can issue the post-quantum signature.
+console.log(JSON.stringify({ level: 'info', at: new Date().toISOString(), msg: 'crypto',
+  fips_mode: getFips() === 1, openssl: process.versions.openssl,
+  ml_dsa_65: pqSupported(), second_signature: config.signingKeyPq !== null }));
 
 const app = buildApp();
 

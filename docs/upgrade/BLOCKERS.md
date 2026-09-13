@@ -69,3 +69,72 @@ than a clock the sweep watches — which is the stronger form.
 
 **Recorded meanwhile:** nothing. No config entry, because a definition
 nothing starts is a dead entry.
+
+## B3 · Arithmetic in the grammar (found by the SNAP configuration)
+
+**What the configuration found:** SNAP's net income test (gross less the
+7 CFR 273.9(d) deductions), expedited criterion (iii) (income plus liquid
+resources against shelter costs) and age from a date of birth are
+arithmetic, and the grammar has none — no operators, no fact-to-fact
+comparison — by design. Each arrives as a *derived fact* the state's
+benefit engine computed. The record commits to the derived value's digest
+and not to its derivation, so an examiner verifies the test and takes the
+arithmetic on the attester's word. For net income, that is where SNAP's
+payment errors live.
+
+**Two options, with their costs:**
+
+1. **Bounded arithmetic in the format.** Linear expressions over facts with
+   literal coefficients, and fact-to-fact comparison, as new node kinds.
+   A §9 widening: every implementation carries it forever, the constant-
+   conclusion check and the remedy's cell partition must be extended to
+   it, and the conformance suite grows. In return the deductions are in the
+   record and re-runnable.
+2. **Name the deriving engine.** A catalogue attribute on a derived fact —
+   `derived_by: "<engine> <version>"` — carried onto the attestation and
+   the record's `facts[]`, so the record says *which* computation produced
+   the value even if not *how*. No format change beyond one optional
+   field; the engine's own audit is where the arithmetic is checked.
+
+**Recommended:** 2 first. It is a catalogue attribute and an optional
+record field, it names the accountable component, and it keeps the
+grammar a grammar. Revisit 1 only if a buyer's auditors require the
+deductions to be re-runnable from the record itself — and then as a 0.3
+format decision, not a patch.
+
+## B4 · Actionability in the remedy (found by the SNAP configuration)
+
+**What the configuration found:** the remedy for a gross-income denial
+correctly lists a larger household as a way out, and the notice prints
+*"Number of people in the SNAP household is at least 5."* Mathematically
+true; not advice. The remedy has no notion of which facts a person can
+change.
+
+**Proposal:** a `mutability` attribute on catalogued facts —
+`actionable` (income, a verification, a returned form), `circumstantial`
+(household size, age — they change, but not on request), `fixed`
+(identity). The *record* is unchanged: the remedy stays exact and
+complete. The *notice* orders remedies by mutability and prints the
+circumstantial ones, if at all, under a separate heading. The FHIR process
+note follows the notice.
+
+**Decision needed:** whether the notice should omit circumstantial
+remedies or show them under a heading; and the default mutability of an
+uncatalogued fact (recommended: `actionable`, so nothing is hidden by
+omission).
+
+## Addendum from the prior-authorization configuration · 12 September 2026
+
+- **B3 recurs.** Weeks of conservative therapy and months since prior
+  imaging are derived by the payer's claims engine; the record commits to
+  the numbers without their derivation. Two programmes finding this
+  independently makes it a property of the format. The provisional
+  specification (§15) describes derivation provenance; the product does not
+  yet carry it.
+- **B4 needs a third kind.** "Six weeks of conservative therapy" is
+  satisfiable only by time and care: neither mutable by the person nor
+  fixed. The mutability attribute should be `person | time | fixed`, and
+  the notice should say when a time-mutable criterion will be met.
+- **Resolved here:** an appeal is contestation (`appeal.ts`, migration 025);
+  the quadrant no longer needs a person to come back through the gate to
+  see resistance. See docs/programmes/prior_auth.md.

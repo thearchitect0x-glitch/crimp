@@ -21,7 +21,7 @@ const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith('--'));
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 if (!file) {
-  console.error('usage: node spec/verify-cli.mjs record.json [--values values.json] [--keys keys.json]');
+  console.error('usage: node spec/verify-cli.mjs record.json [--values values.json] [--keys keys.json] [--roots roots.json] [--require-pq]');
   process.exit(2);
 }
 const read = (f) => JSON.parse(readFileSync(f, 'utf8'));
@@ -30,7 +30,9 @@ const held = opt('--values') ? read(opt('--values')) : {};
 const keysFile = opt('--keys') ? read(opt('--keys')) : null;
 const keys = keysFile === null ? undefined : (Array.isArray(keysFile) ? keysFile : keysFile.keys);
 
-const { steps, ok } = await verify(det, held, { keys });
+const rootsFile = opt('--roots') ? read(opt('--roots')) : null;
+const roots = rootsFile === null ? undefined : (Array.isArray(rootsFile) ? rootsFile : rootsFile.roots);
+const { steps, ok } = await verify(det, held, { keys, roots, requirePq: args.includes('--require-pq') });
 for (const s of steps) {
   const mark = s.ok === true ? 'ok  ' : s.ok === false ? 'FAIL' : 'skip';
   console.log(`${mark}  ${s.step.padEnd(24)} ${s.detail}`);

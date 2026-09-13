@@ -27,7 +27,7 @@ import { ApiError } from '../lib/errors.js';
 import { requireScope, type Principal } from './auth.js';
 import { proof, disclosure, type Proof } from './record.js';
 import type { DisclosedReason, Reason } from './explain.js';
-import type { Remedy, Constraint } from './remedy.js';
+import type { Remedy, Constraint, Correction } from './remedy.js';
 import { loadCatalogue, type Catalogue } from './catalogue.js';
 import { CLOCKS } from './clocks.config.js';
 import { PROGRAMMES, programmeOf, type AppealRights } from './notice.config.js';
@@ -145,7 +145,7 @@ export interface Labels {
   inForce: string; why: string; facts: string; source: string; remedy: string; remedyAny: string;
   remedyAll: string; clocks: string; appeal: string; appealBy: string; days: string;
   observed: string; needed: string; notCase: string; and: string; or: string; unknownValue: string;
-  reference: string; verify: string; underReview: string; checkAt: string;
+  reference: string; verify: string; underReview: string; checkAt: string; between: string;
   op: Record<string, string>;
 }
 
@@ -161,6 +161,7 @@ export const LABELS_EN: Labels = {
   underReview: 'This decision is under review following a ruling on the rule it applied. '
     + 'It still stands until it is changed, and you will be told if it is.',
   checkAt: 'Check it at',
+  between: 'is between',
   op: { eq: 'is', ne: 'is not', lt: 'is less than', lte: 'is at most', gt: 'is more than',
     gte: 'is at least', in: 'is one of', nin: 'is not one of' },
 };
@@ -190,6 +191,10 @@ const COMPLEMENT: Record<string, string> = {
 
 function phrase(label: string, op: string, value: unknown, negate: boolean, L: Labels): string {
   if (!negate) return `${label} ${L.op[op] ?? op} ${fmt(value)}`;
+  // A boolean has two values: "not false" IS "true", and the page says so.
+  if (typeof value === 'boolean' && (op === 'eq' || op === 'ne')) {
+    return `${label} ${L.op[op] ?? op} ${fmt(!value)}`;
+  }
   const c = COMPLEMENT[op];
   return c !== undefined ? `${label} ${L.op[c] ?? c} ${fmt(value)}`
     : `${L.notCase} ${label} ${L.op[op] ?? op} ${fmt(value)}`;
@@ -202,6 +207,112 @@ export function clauseText(r: { label: string; op: string; value: unknown; polar
 
 function constraintText(label: string, k: Constraint, L: Labels): string {
   return phrase(label, k.op, k.value, k.truth !== 'true', L);
+}
+
+/* ── Remedies on the page ────────────────────────────────────────────────
+ * The record's remedy is exact: one set per CELL, and an enumerated income
+ * test has a cell between every pair of thresholds. Printed as-is, "gross
+ * income at most $3,483" becomes four lines of a dozen clauses each. The
+ * page collapses them: sets over the same facts are grouped, each ordered
+ * fact's cells are turned into intervals, and adjacent intervals are
+ * joined. The record is untouched; this is how it is READ.
+ */
+
+interface Interval { lo: number; hi: number }
+const INF = Number.POSITIVE_INFINITY;
+
+/** The interval an ordered fact must lie in for every constraint to hold, or null if the constraints are not all ordered. */
+function intervalOf(constraints: Constraint[]): Interval | null {
+  let lo = -INF, hi = INF;
+  for (const k of constraints) {
+    if (typeof k.value !== 'number') return null;
+    const v = k.value, t = k.truth === 'true';
+    switch (k.op) {
+      case 'gt':  if (t) lo = Math.max(lo, v + 1); else hi = Math.min(hi, v); break;
+      case 'gte': if (t) lo = Math.max(lo, v); else hi = Math.min(hi, v - 1); break;
+      case 'lt':  if (t) hi = Math.min(hi, v - 1); else lo = Math.max(lo, v); break;
+      case 'lte': if (t) hi = Math.min(hi, v); else lo = Math.max(lo, v + 1); break;
+      case 'eq':  if (t) { lo = Math.max(lo, v); hi = Math.min(hi, v); } else return null; break;
+      default: return null;
+    }
+  }
+  return lo <= hi ? { lo, hi } : null;
+}
+
+function joinIntervals(xs: Interval[]): Interval[] {
+  const sorted = [...xs].sort((a, b) => a.lo - b.lo);
+  const out: Interval[] = [];
+  for (const x of sorted) {
+    const last = out[out.length - 1];
+    if (last && x.lo <= last.hi + 1) last.hi = Math.max(last.hi, x.hi);
+    else out.push({ ...x });
+  }
+  return out;
+}
+
+function intervalText(label: string, i: Interval, L: Labels): string {
+  if (i.lo === i.hi) return `${label} ${L.op['eq']} ${i.lo}`;
+  if (i.lo === -INF) return `${label} ${L.op['lte']} ${i.hi}`;
+  if (i.hi === INF) return `${label} ${L.op['gte']} ${i.lo}`;
+  return `${label} ${L.between} ${i.lo} ${L.and} ${i.hi}`;
+}
+
+function summariseEnumeration(label: string, cells: Constraint[][], L: Labels): string | null {
+  const literals = new Set<number | string>();
+  for (const cell of cells) {
+    for (const k of cell) {
+      if (k.op !== 'eq' || (typeof k.value !== 'number' && typeof k.value !== 'string')) return null;
+      literals.add(k.value);
+    }
+  }
+  if (literals.size < 2) return null;
+  const inPoints = new Set<number | string>();
+  let catchAll = false;
+  for (const cell of cells) {
+    const trues = cell.filter((k) => k.truth === 'true');
+    if (trues.length === 0) catchAll = true;
+    else for (const k of trues) inPoints.add(k.value as number | string);
+  }
+  const sortNum = (xs: Array<number | string>): Array<number | string> =>
+    [...xs].sort((a, b) => (typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b))));
+  if (catchAll) {
+    const out = sortNum([...literals].filter((v) => !inPoints.has(v)));
+    return out.length === 0 ? null : `${label} ${L.op['nin']} ${out.map(fmt).join(', ')}`;
+  }
+  return `${label} ${L.op['in']} ${sortNum([...inPoints]).map(fmt).join(', ')}`;
+}
+
+/** One line per group of sets over the same facts. */
+export function remedyLines(n: Notice, L: Labels): string[] {
+  if (!n.remedy) return [];
+  const groups = new Map<string, Correction[][]>();
+  for (const set of n.remedy.sets) {
+    const key = set.map((c) => c.fact).join('\u0000');
+    groups.set(key, [...(groups.get(key) ?? []), set]);
+  }
+  const lines: string[] = [];
+  for (const sets of groups.values()) {
+    const facts = sets[0]!.map((c) => c.fact);
+    const parts = facts.map((fact, i) => {
+      const label = n.labels[fact] ?? fact;
+      const cells = sets.map((set) => set[i]!.constraints);
+      const intervals = cells.map(intervalOf);
+      if (intervals.every((x) => x !== null)) {
+        return joinIntervals(intervals as Interval[]).map((x) => intervalText(label, x, L)).join(` ${L.or} `);
+      }
+      // An enumeration — every constraint an `eq` against a number or string,
+      // as a rule over household size is. The union of its cells is a set:
+      // the points that are in, or, if the catch-all cell is in, everything
+      // except the points that are out. "is not one of 1, 2, 3, 4" is exact.
+      const enumerated = summariseEnumeration(label, cells, L);
+      if (enumerated !== null) return enumerated;
+      // Otherwise each distinct cell in words, once.
+      const texts = [...new Set(cells.map((ks) => ks.map((k) => constraintText(label, k, L)).join(` ${L.and} `)))];
+      return texts.join(` ${L.or} `);
+    });
+    lines.push(parts.join(`; ${L.and} `));
+  }
+  return lines;
 }
 
 const date = (iso: string): string => iso.slice(0, 10);
@@ -233,12 +344,10 @@ export function renderText(n: Notice, L: Labels = LABELS_EN): string {
   }
   if (n.remedy && n.remedy.sets.length > 0) {
     out.push('', `${L.remedy}:`);
-    const lead = n.remedy.sets.length > 1 ? L.remedyAny : n.remedy.sets[0]!.length > 1 ? L.remedyAll : '';
+    const lines = remedyLines(n, L);
+    const lead = lines.length > 1 ? L.remedyAny : n.remedy.sets[0]!.length > 1 ? L.remedyAll : '';
     if (lead !== '') out.push(lead);
-    n.remedy.sets.forEach((set, i) => {
-      const parts = set.map((c) => c.constraints.map((k) => constraintText(n.labels[c.fact] ?? c.fact, k, L)).join(` ${L.and} `));
-      out.push(`${n.remedy!.sets.length > 1 ? `${i + 1}. ` : '- '}${parts.join(`; ${L.and} `)}`);
-    });
+    lines.forEach((line, i) => out.push(`${lines.length > 1 ? `${i + 1}. ` : '- '}${line}`));
   }
   if (n.clocks.length > 0) {
     out.push('', `${L.clocks}:`);
@@ -281,10 +390,10 @@ export function renderHtml(n: Notice, L: Labels = LABELS_EN): string {
       `${esc(f.label)} <small>(${esc(L.source)}: ${esc(f.source)}, ${esc(date(f.assertedAt))})</small>`)));
   }
   if (n.remedy && n.remedy.sets.length > 0) {
-    const lead = n.remedy.sets.length > 1 ? L.remedyAny : n.remedy.sets[0]!.length > 1 ? L.remedyAll : '';
+    const lines = remedyLines(n, L);
+    const lead = lines.length > 1 ? L.remedyAny : n.remedy.sets[0]!.length > 1 ? L.remedyAll : '';
     parts.push(`<h2>${esc(L.remedy)}</h2>` + (lead ? `<p>${esc(lead)}</p>` : '')
-      + `<ol>${n.remedy.sets.map((set) => `<li>${esc(set.map((c) =>
-        c.constraints.map((k) => constraintText(n.labels[c.fact] ?? c.fact, k, L)).join(` ${L.and} `)).join(`; ${L.and} `))}</li>`).join('')}</ol>`);
+      + `<ol>${lines.map((line) => `<li>${esc(line)}</li>`).join('')}</ol>`);
   }
   if (n.clocks.length > 0) {
     parts.push(`<h2>${esc(L.clocks)}</h2>` + li(n.clocks.map((c) =>

@@ -197,6 +197,20 @@ export function buildApp(): FastifyInstance {
     return { keys: sg === null ? [] : sg.publishedKeys() };
   });
 
+  /**
+   * The daily global Merkle roots over every sealed core, newest first. No
+   * auth, no tenant: the tree is over workspace roots, so nothing here says
+   * who the tenants are or how many records each made. This is the value a
+   * stranger checks an inclusion proof against, and the value an operator
+   * anchors to a public timestamp.
+   */
+  app.get('/.well-known/crimp-roots.json', async (_req, reply) => {
+    const { publishedRoots, TRANSPARENCY_ALGORITHM } = await import('../domain/transparency.js');
+    const { getPool } = await import('../db/pool.js');
+    reply.header('cache-control', 'public, max-age=600');
+    return { algorithm: TRANSPARENCY_ALGORITHM, roots: await publishedRoots(getPool()) };
+  });
+
   void app.register(registerRoutes, { prefix: '/v1' });
 
   /**

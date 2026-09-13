@@ -47,6 +47,17 @@ describe('verifier · post-quantum signature', () => {
     assert.equal(r.steps.find((s: { step: string }) => s.step === 'signature')?.ok, true);
   });
 
+  test('a verifier may require the second signature, and then its absence is a failure', async () => {
+    const keys = [new Signer(SEED).published()];
+    const r = await verify(signed, {}, { keys, requirePq: true });
+    const step = r.steps.find((s: { step: string }) => s.step === 'signature · post-quantum');
+    assert.equal(step?.ok, false);
+    assert.match(step?.detail, /requires one/);
+    assert.equal(r.ok, false);
+    const lenient = await verify(signed, {}, { keys });
+    assert.equal(lenient.ok, true, 'without the policy, absent is not a finding');
+  });
+
   test('the site serves the same verifier', () => {
     assert.equal(readFileSync('web/spec/verifier.mjs', 'utf8'), readFileSync('spec/verifier.mjs', 'utf8'));
   });

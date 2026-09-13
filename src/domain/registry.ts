@@ -49,22 +49,36 @@ export const COMMIT_AUTHORITY = 'operator';
 /**
  * A citation, validated for shape and stored as written.
  *
- * Accepts the two federal forms an examiner will actually look up — CFR and
- * USC — and a bounded free form for state law and programme manuals, because
- * the alternative is refusing citations this codebase has never seen. What is
+ * One or more provisions separated by semicolons. Each is a CFR or USC
+ * citation — the two forms an examiner will actually look up — optionally
+ * followed by an annotation ("as amended by Pub. L. 119-21 §10102"), or a
+ * bounded free form for state law and programme manuals, because the
+ * alternative is refusing citations this codebase has never seen. What is
  * NOT accepted is the empty string, which is how "we will add the citation
  * later" becomes a determination nobody can trace to a law.
+ *
+ * The SNAP configuration widened this from one provision to a list: real
+ * rules cite two.
  */
-const CITATION = /^(\d{1,2} CFR \d{1,4}(\.\d{1,4})?(\([a-z0-9]{1,4}\))*|\d{1,2} U\.?S\.?C\.? §? ?\d{1,5}[a-z]?(\([a-z0-9]{1,4}\))*|[A-Za-z][A-Za-z0-9 .,§()/&'\-]{2,199})$/;
+// Paragraph designators alternate case by level — (a)(1)(i)(A)(1)(i) — so
+// the class is both cases; the SNAP configuration cited 273.10(e)(1)(i)(A).
+const CFR = String.raw`\d{1,2} CFR \d{1,4}(\.\d{1,4})?(\([A-Za-z0-9]{1,4}\))*`;
+const USC = String.raw`\d{1,2} U\.?S\.?C\.? §? ?\d{1,5}[a-z]?(\([A-Za-z0-9]{1,4}\))*`;
+const ANNOTATION = String.raw`( [A-Za-z(][A-Za-z0-9 .,§()/&'\-]{0,119})?`;
+const FREE = String.raw`[A-Za-z][A-Za-z0-9 .,§()/&'\-]{2,199}`;
+const CITATION_PART = new RegExp(`^(?:(?:${CFR}|${USC})${ANNOTATION}|${FREE})$`);
 
 export function validateCitation(s: unknown): string {
-  if (typeof s !== 'string' || !CITATION.test(s.trim())) {
+  const parts = typeof s === 'string' ? s.split(';').map((x) => x.trim()) : [];
+  const joined = parts.join('; ');
+  if (parts.length === 0 || joined.length > 200 || !parts.every((x) => CITATION_PART.test(x))) {
     throw new ApiError(400, 'invalid_citation',
-      'legal_authority must be a CFR or USC citation, or a state-law reference of 3 to 200 '
-      + 'characters. A rule with no traceable authority is a determination nobody can appeal.',
+      'legal_authority must be one or more CFR or USC citations (each optionally annotated) or state-law '
+      + 'references of 3 to 200 characters, separated by semicolons. A rule with no traceable authority is '
+      + 'a determination nobody can appeal.',
       { received: s });
   }
-  return s.trim();
+  return joined;
 }
 
 export interface RuleRef {

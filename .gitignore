@@ -6,3 +6,5 @@ coverage/
 !.env.example
 *.log
 .DS_Store
+# Local tooling for the desktop app; never part of the product.
+.claude/
