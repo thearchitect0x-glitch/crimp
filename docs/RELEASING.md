@@ -75,6 +75,15 @@ Sigstore has nothing to store, nothing to leak and nothing to lose. Ratchet
 reaches the same conclusion by a different route: it publishes to npm with
 `--provenance`, which is the same machinery.
 
+**The tag is signed anyway, and nothing depends on it.** The maintainer's git
+signs every annotated tag with an Ed25519 SSH key, so `v0.1.0` carries a
+signature GitHub reports as verified. That is a second, independent check for
+anyone who wants one. A release still verifies completely without it, and a
+successor who does not hold that key can cut the next release with an unsigned
+tag and lose nothing the attestation provides. Because signing is forced in that
+configuration, a tag needs a message: `git tag -a vX.Y.Z -m "…"`, not a bare
+`git tag vX.Y.Z`, which fails with *no tag message?*.
+
 ## What provenance proves, and what it does not
 
 It answers **which workflow, at which commit, built this file**.
