@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+#
+# OpenSSF Scorecard.
+#
+# Publishes an automated supply-chain score and, with publish_results, the
+# badge in the README. The badge reads what the repository does rather than
+# what it says: review on every change, pinned actions and images, SAST, a
+# dependency updater, a security policy, signed releases.
+#
+# On push to main and weekly. The score moves on repository settings and
+# release practice more than on any one commit.
+name: scorecard
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '43 5 * * 1'
+  push:
+    branches: [main]
+permissions: read-all
+
+jobs:
+  analysis:
+    name: analyse
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload the SARIF so findings show in the Security tab
+      id-token: write          # publish the result so the badge resolves
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+
+      # v2.4.4 pulls its container from ghcr.io. Older tags pull from a
+      # gcr.io project whose billing is disabled and fail before reading a file.
+      - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc  # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938  # v4.37.9
+        with:
+          sarif_file: results.sarif

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+#
+# Dependency updates.
+#
+# Weekly and grouped on purpose. A daily stream of single bumps trains a
+# reviewer to approve without reading, and every change here still needs an
+# approving review from somebody other than its author. Security advisories
+# arrive separately and immediately through GitHub's own alerts.
+#
+# Three ecosystems, because three things are pinned: npm packages by the
+# lockfile, GitHub Actions by commit SHA, and container base images by digest.
+# A pin nobody updates is a vulnerability with a date on it; this is what
+# keeps the pins moving.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      production: { dependency-type: production }
+      development: { dependency-type: development }
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }

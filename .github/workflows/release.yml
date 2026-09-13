@@ -39,7 +39,7 @@ jobs:
       attestations: write    # record the provenance
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
         env:
           POSTGRES_USER: crimp
           POSTGRES_PASSWORD: crimp
@@ -49,11 +49,13 @@ jobs:
           --health-cmd "pg_isready -U crimp"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with: { fetch-depth: 0 }
 
-      - uses: actions/setup-node@v5
-        with: { node-version: '22', cache: npm }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with: { node-version: '24', cache: npm }
+        # 24, as in CI and the image. Node 22 has no ML-DSA, so a release built
+        # on it would skip the post-quantum tests the same commit passed in CI.
 
       - run: npm ci
 
@@ -71,6 +73,11 @@ jobs:
         run: npm run test:e2e
         env:
           DATABASE_URL: postgres://crimp:crimp@localhost:5434/crimp
+      - name: Conformance vectors
+        run: npm run conformance
+      - name: Property-based tests
+        run: npm run fuzz
+        env: { FUZZ_RUNS: '20000' }
       - name: Production dependency audit
         run: npm run audit
 
@@ -95,9 +102,22 @@ jobs:
           echo "ARCHIVE=$name" >> "$GITHUB_ENV"
 
       - name: Attest what was built
-        uses: actions/attest-build-provenance@v3
+        id: attest
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f  # v3.2.0
         with:
           subject-path: ${{ env.ARCHIVE }}
+
+      # The attestation also lives in GitHub's attestation store, but a verifier
+      # without GitHub, and OpenSSF Scorecard, look for it beside the release.
+      # The Sigstore bundle is the signature; the DSSE envelope inside it, one
+      # per line, is the in-toto provenance.
+      - name: Attach the signature and provenance to the release
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE" "$ARCHIVE.sigstore.json"
+          jq -c '.dsseEnvelope' "$BUNDLE" > "$ARCHIVE.intoto.jsonl"
+          test -s "$ARCHIVE.intoto.jsonl" && grep -q payloadType "$ARCHIVE.intoto.jsonl"
 
       - name: Publish the release
         env:
@@ -106,7 +126,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            --notes-file - "$ARCHIVE" "$ARCHIVE.sha256" <<NOTES
+            --notes-file - "$ARCHIVE" "$ARCHIVE.sha256" "$ARCHIVE.sigstore.json" "$ARCHIVE.intoto.jsonl" <<NOTES
 
           ## Verifying this release
 
@@ -116,6 +136,12 @@ jobs:
 
           \`\`\`
           gh attestation verify $ARCHIVE --repo $GITHUB_REPOSITORY
+          \`\`\`
+
+          Or offline, against the bundle attached here:
+
+          \`\`\`
+          gh attestation verify $ARCHIVE --bundle $ARCHIVE.sigstore.json --repo $GITHUB_REPOSITORY
           \`\`\`
 
           That answers *which workflow, at which commit, built this file*. It
