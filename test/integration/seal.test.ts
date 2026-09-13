@@ -42,7 +42,6 @@ async function setup(A: Actors, tag: string, opts: { delivered?: boolean; refund
 describe('seal', () => {
   test('creates a determination when the rule holds', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'a1');
     const out = await seal(A.agent, { idempotencyKey: 'idem-a1', aliases: person('a1'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE, claw: CLAW,
@@ -55,7 +54,6 @@ describe('seal', () => {
 
   test('records what the seal rested on, with source and admissibility', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'a2');
     const out = await seal(A.agent, { idempotencyKey: 'idem-a2', aliases: person('a2'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE, claw: CLAW,
@@ -72,7 +70,6 @@ describe('seal', () => {
 
   test('a rule that does not hold creates nothing — and that is not an error', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'a3', { refunds: 9 });   // prior_refunds_90d < 3 is false
     const out = await seal(A.agent, { idempotencyKey: 'idem-a3', aliases: person('a3'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE, claw: CLAW,
@@ -83,7 +80,6 @@ describe('seal', () => {
 
   test('refuses to seal on facts the agent never gathered', async () => {
     const A = await actors();
-    const ws = A.ws;
     await attest(A.agent, { aliases: person('a4'),
       facts: [{ fact: 'carrier.delivered', type: 'bool', value: false, source: 'carrier_api' }] },
     STRENGTHS);
@@ -94,7 +90,6 @@ describe('seal', () => {
 
   test('refuses a rule that ignores a fact class policy requires', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'a5');
     await refuses(() => seal(A.agent, { idempotencyKey: 'idem-a5', aliases: person('a5'), scope: 'refund.issue',
       disposition: 'bind', rule: { fact: 'carrier.delivered', op: 'eq', value: false }, claw: CLAW, requiredFacts: ['prior_refunds_90d'],
@@ -103,7 +98,6 @@ describe('seal', () => {
 
   test('an agent cannot declare a claw rule beyond an operator', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'a6');
     await refuses(() => seal(A.agent, { idempotencyKey: 'idem-a6', aliases: person('a6'), scope: 'refund.issue',
       disposition: 'bind', rule: RULE,
@@ -123,7 +117,6 @@ describe('lookup', () => {
 
   test('a bind refuses, and a broader seal covers a narrower action', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'b1');
     await seal(A.agent, { idempotencyKey: 'idem-b1', aliases: person('b1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
@@ -137,7 +130,6 @@ describe('lookup', () => {
 
   test('a narrow seal does not bind a broader action', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'b2');
     await seal(A.agent, { idempotencyKey: 'idem-b2', aliases: person('b2'), scope: 'refund.issue.goodwill',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
@@ -148,7 +140,6 @@ describe('lookup', () => {
 
   test('a fresh alias presenting a known card is still bound', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'b3');
     await seal(A.agent, { idempotencyKey: 'idem-b3', aliases: person('b3'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
@@ -203,7 +194,6 @@ describe('lookup', () => {
 
   test('concurrent callers cannot both win the last use', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'b5');
     await seal(A.operator, { idempotencyKey: 'idem-b5', aliases: person('b5'), scope: 'goodwill.credit',
       disposition: 'permit', rule: RULE, maxUses: 1,
@@ -230,7 +220,6 @@ describe('lookup', () => {
 describe('pressure', () => {
   test('a refusal is counted; a clear check is not', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'c1');
     const s = await seal(A.agent, { idempotencyKey: 'idem-c1', aliases: person('c1'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
@@ -247,7 +236,6 @@ describe('pressure', () => {
 
   test('distinct sessions are what separate probing from persistence', async () => {
     const A = await actors();
-    const ws = A.ws;
     await setup(A, 'c2');
     const s = await seal(A.agent, { idempotencyKey: 'idem-c2', aliases: person('c2'), scope: 'refund',
       disposition: 'bind', rule: RULE, claw: CLAW }, STRENGTHS);
