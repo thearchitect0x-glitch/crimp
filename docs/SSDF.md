@@ -76,13 +76,15 @@ requires two-factor authentication for everyone who contributes code.
 Sigstore: [`release.yml`](../.github/workflows/release.yml) attests the source
 archive with a certificate bound to the workflow run and commit, and attaches the
 Sigstore bundle and the in-toto provenance to the release beside the archive and
-its checksum. There is no signing key to escrow, leak or lose.
+its checksum. The release itself needs no signing key to escrow, leak or lose.
+The release tag is additionally signed with the maintainer's Ed25519 SSH key,
+which GitHub reports as verified; nothing depends on that second signature.
 [`docs/RELEASING.md`](RELEASING.md) gives the verification command. *No SLSA
 level is claimed.*
 
 **PS.3 — Archive and protect each release.** Every release is a tag on a public
-repository with generated notes, a checksum and its attestation. **Gap:** no
-release has yet been cut, and no SBOM is attached.
+repository with generated notes, a checksum and its attestation. The first, [v0.1.0](https://github.com/thearchitect0x-glitch/crimp/releases/tag/v0.1.0),
+was published on 13 September 2026. **Gap:** no SBOM is attached.
 
 The records Crimp issues are protected separately from its source: each is signed
 with Ed25519 and, where configured, a second ML-DSA-65 (FIPS 204) signature;
@@ -145,7 +147,7 @@ microphone and camera; production adds HSTS. Per-key responses are `no-store`.
 
 **RV.1 — Identify vulnerabilities on an ongoing basis.** Dependabot, CodeQL,
 Scorecard, secret scanning and the production dependency audit, as above.
-Private reporting through GitHub Security Advisories, as `SECURITY.md` directs. **Gap:** private vulnerability reporting is not switched on in the repository settings, so the link in `SECURITY.md` depends on it being enabled.
+Private reporting through GitHub Security Advisories, as `SECURITY.md` directs, with private vulnerability reporting enabled on the repository since 13 September 2026.
 
 **RV.2 — Assess, prioritise, remediate.** [`SECURITY.md`](../SECURITY.md) commits
 to a response within 72 hours and a first assessment within 7 days, and credits
@@ -164,8 +166,7 @@ fails without the fix, as [`CONTRIBUTING.md`](../CONTRIBUTING.md) requires.
 | PO.2 | Two people can act; one decides. |
 | PO.4 | Coverage floors are enforced locally, not yet in CI. |
 | PO.5 | No documented hardening standard for developer workstations. |
-| PS.3 | No release cut yet; no SBOM attached. |
+| PS.3 | No SBOM attached to releases. |
 | PW.6 | `tini` installed without a pinned version. |
 | PW.9 | No `Content-Security-Policy` header. |
-| RV.1 | Private vulnerability reporting is not enabled in repository settings. |
 | RV.3 | Root cause analysis is per defect, not periodic. |
