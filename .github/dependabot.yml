@@ -25,7 +25,27 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    groups:
+      # init, analyze and upload-sarif are three entry points of one action at
+      # one version. Split across three pull requests they merge one at a time,
+      # and in between the workflow runs mismatched halves of CodeQL.
+      codeql:
+        patterns: ['github/codeql-action*']
+    ignore:
+      # v4 is a wrapper over actions/attest and needs `artifact-metadata: write`,
+      # which release.yml does not grant. The job only runs on a tag, so the bump
+      # would pass every check and fail at the next release. Upgrade it by hand,
+      # with the permission, not by an automatic pull request.
+      - dependency-name: actions/attest-build-provenance
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    ignore:
+      # A new Node major changes the runtime underneath CI, which tests on the
+      # version setup-node installs. Digest updates within the same major arrive
+      # automatically; a major moves in one deliberate change across the image,
+      # CI and the release workflow together.
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
