@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- Copyright 2026 Deimos AI LLC -->
 
-# Crimp
+<h1 align="center">
+  <img src="docs/assets/banner.svg" alt="crimp — a decision gate for AI agents" width="860">
+</h1>
 
 [![CI](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/ci.yml/badge.svg)](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/codeql.yml/badge.svg)](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/codeql.yml)
