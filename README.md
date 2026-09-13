@@ -6,6 +6,7 @@
 [![CI](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/ci.yml/badge.svg)](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/codeql.yml/badge.svg)](https://github.com/thearchitect0x-glitch/crimp/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/thearchitect0x-glitch/crimp/badge)](https://scorecard.dev/viewer/?uri=github.com/thearchitect0x-glitch/crimp)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14613/badge)](https://www.bestpractices.dev/projects/14613)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![NIST SSDF](https://img.shields.io/badge/NIST%20SSDF-conformance-informational)](docs/SSDF.md)
 [![DCO](https://img.shields.io/badge/DCO-1.1-informational)](CONTRIBUTING.md#certificate-of-origin)
