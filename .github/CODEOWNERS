@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+#
+# Who is asked to review.
+#
+# Both people who can approve a change own every file. GitHub never requests a
+# review from a pull request's own author, so a change by either of them asks
+# the other, and a pull request opened by Dependabot asks both.
+#
+# This is a request, not a gate. The ruleset on main already requires an
+# approving review from somebody other than the last pusher and does not require
+# a code owner's review, so this file changes who is notified and nothing about
+# what may merge. It exists because Dependabot's pull requests request no
+# reviewer at all, and two of them sat unseen in nobody's queue.
+* @thearchitect0x-glitch @mlimano5
