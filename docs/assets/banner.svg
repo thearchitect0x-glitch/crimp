@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1220 340" width="1220" height="340" role="img" aria-label="crimp — a decision gate for AI agents">
+  <!-- SPDX-License-Identifier: Apache-2.0 -->
+  <!-- Copyright 2026 Deimos AI LLC -->
+  <title>crimp — a decision gate for AI agents</title>
+
+  <!-- Painted explicitly. GitHub renders a README in the viewer's theme, and a
+       transparent banner borrows whichever ground it lands on. The pair is the
+       favicon's: the one ground the brand already paints itself. -->
+  <rect width="1220" height="340" fill="#0B0D0E"/>
+
+  <!-- The mark, exactly web/brand/mark.svg on its 48-unit grid, transformed and
+       never redrawn: same paths, same 3.4 / 2.6 / 3.2 strokes, same half-opacity
+       strands. One colour, as the brand rules require; hierarchy comes from
+       opacity, not from a second hue. -->
+  <g transform="translate(92 74) scale(4)" fill="none" stroke="#F2F4F5" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke-width="3.4">
+      <path d="M7 11 H16 C20.5 11 21 19 24 19 C27 19 27.5 11 32 11 H41"/>
+      <path d="M7 37 H16 C20.5 37 21 29 24 29 C27 29 27.5 37 32 37 H41"/>
+      <path d="M7 11 V37"/><path d="M41 11 V37"/>
+    </g>
+    <g opacity="0.5">
+      <path d="M12 17 Q20 24 24 24" stroke-width="2.6"/>
+      <path d="M12 31 Q20 24 24 24" stroke-width="2.6"/>
+      <path d="M24 24 H36" stroke-width="3.2"/>
+    </g>
+  </g>
+
+  <!-- The wordmark is lowercase, in logo.svg's face, weight and tracking ratio. -->
+  <text x="336" y="172" fill="#F2F4F5"
+        font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+        font-size="104" font-weight="600" letter-spacing="-3.5">crimp</text>
+
+  <text x="340" y="234" fill="#F2F4F5" fill-opacity="0.62"
+        font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+        font-size="30">A decision gate for AI agents.</text>
+
+  <line x1="340" y1="264" x2="1140" y2="264" stroke="#F2F4F5" stroke-opacity="0.14" stroke-width="1"/>
+
+  <!-- 83 characters at 16px against a 0.62em monospace advance is 823px, ending
+       at 1163 with room before the edge. Measured, not assumed. -->
+  <text x="340" y="298" fill="#F2F4F5" fill-opacity="0.5" xml:space="preserve"
+        font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="16" letter-spacing="0.3">sealed before the outcome<tspan fill-opacity="0.35">  ·  </tspan>unknown never seals<tspan fill-opacity="0.35">  ·  </tspan>measured without an appeal</text>
+</svg>

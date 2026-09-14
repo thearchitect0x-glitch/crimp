@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="crimp — a decision gate for AI agents">
+  <!-- SPDX-License-Identifier: Apache-2.0 -->
+  <!-- Copyright 2026 Deimos AI LLC -->
+  <title>crimp — a decision gate for AI agents</title>
+
+  <rect width="1280" height="640" fill="#0B0D0E"/>
+
+  <!-- web/brand/mark.svg on its 48-unit grid, centred: 48 x 4.5 = 216. -->
+  <g transform="translate(532 92) scale(4.5)" fill="none" stroke="#F2F4F5" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke-width="3.4">
+      <path d="M7 11 H16 C20.5 11 21 19 24 19 C27 19 27.5 11 32 11 H41"/>
+      <path d="M7 37 H16 C20.5 37 21 29 24 29 C27 29 27.5 37 32 37 H41"/>
+      <path d="M7 11 V37"/><path d="M41 11 V37"/>
+    </g>
+    <g opacity="0.5">
+      <path d="M12 17 Q20 24 24 24" stroke-width="2.6"/>
+      <path d="M12 31 Q20 24 24 24" stroke-width="2.6"/>
+      <path d="M24 24 H36" stroke-width="3.2"/>
+    </g>
+  </g>
+
+  <text x="640" y="418" fill="#F2F4F5" text-anchor="middle"
+        font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+        font-size="112" font-weight="600" letter-spacing="-3.8">crimp</text>
+
+  <text x="640" y="488" fill="#F2F4F5" fill-opacity="0.62" text-anchor="middle"
+        font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+        font-size="32">A decision gate for AI agents.</text>
+
+  <line x1="330" y1="526" x2="950" y2="526" stroke="#F2F4F5" stroke-opacity="0.14" stroke-width="1"/>
+
+  <text x="640" y="570" fill="#F2F4F5" fill-opacity="0.5" text-anchor="middle" xml:space="preserve"
+        font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="19">sealed before the outcome<tspan fill-opacity="0.35">  ·  </tspan>unknown never seals<tspan fill-opacity="0.35">  ·  </tspan>measured without an appeal</text>
+</svg>
