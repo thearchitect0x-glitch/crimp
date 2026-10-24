@@ -243,4 +243,4 @@ npm run dev:db:down           # stop the local Postgres
 A sibling to [Ratchet](https://ratchetgate.com), which gates *actions*. Crimp
 gates *conclusions*. Neither requires the other.
 
-Apache-2.0. Built by [Deimos](https://deimos.mx).
+Apache-2.0. Built by [Deimos AI LLC](https://www.deimoscore.com/crimp/).
