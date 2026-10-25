@@ -56,10 +56,11 @@ on any branch, so a workflow planted on a branch could attest a file of its own.
 `--signer-workflow` and `--source-ref` accept only `release.yml` running for
 that tag, and `--deny-self-hosted-runners` only GitHub's own runners.
 
-This strict check needs gh 2.102.0 or later (`gh --version`). Earlier versions
-accept the same flags but match them loosely: `--signer-workflow` against only
-the start of the signing certificate's identity, and `--source-ref` ignoring
-case, so a workflow or a tag with a look-alike name could pass.
+This strict check needs gh 2.102.0 or later (`gh --version`). From 2.68.0 to
+2.101.x, gh accepts the same flags but matches them loosely: `--signer-workflow`
+against only the start of the signing certificate's identity, and `--source-ref`
+ignoring case, so a workflow or a tag with a look-alike name could pass. Older
+versions refuse the command (`--source-ref` arrived in 2.68.0), which fails safe.
 
 There is no key to import and no keyserver to trust. The attestation is a
 Sigstore certificate bound to the GitHub OIDC identity of the workflow run that
