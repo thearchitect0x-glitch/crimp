@@ -33,6 +33,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: release     # waits for a maintainer's approval (Settings → Environments → release; v* tags only)
     permissions:
       contents: write        # create the release
       id-token: write        # what lets Sigstore issue a keyless certificate
@@ -135,13 +136,17 @@ jobs:
           none to lose or leak.
 
           \`\`\`
-          gh attestation verify $ARCHIVE --repo $GITHUB_REPOSITORY
+          gh attestation verify $ARCHIVE --repo $GITHUB_REPOSITORY \\
+            --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml --source-ref refs/tags/$GITHUB_REF_NAME \\
+            --deny-self-hosted-runners
           \`\`\`
 
           Or offline, against the bundle attached here:
 
           \`\`\`
-          gh attestation verify $ARCHIVE --bundle $ARCHIVE.sigstore.json --repo $GITHUB_REPOSITORY
+          gh attestation verify $ARCHIVE --bundle $ARCHIVE.sigstore.json --repo $GITHUB_REPOSITORY \\
+            --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml --source-ref refs/tags/$GITHUB_REF_NAME \\
+            --deny-self-hosted-runners
           \`\`\`
 
           That answers *which workflow, at which commit, built this file*. It

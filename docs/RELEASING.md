@@ -5,7 +5,7 @@
 
 ## How to cut one
 
-A release is a tag. Everything else is automatic.
+A release is a tag and one approval. Everything else is automatic.
 
 ```bash
 # 1. Set the version. It must match the tag exactly; CI refuses otherwise.
@@ -23,17 +23,27 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The tag push runs the full suite — typecheck, unit, integration, end-to-end
-against a real Postgres, and a production dependency audit — then builds a
-source archive, attests it, and publishes the release. **If any of that fails,
-no release appears.** A release is the one artifact somebody might run without
-reading it first.
+The tag push starts the release job, which waits in the `release` environment
+until a maintainer approves it: open the run under Actions and choose *Review
+deployments*. Only `v*` tags may use that environment. Once approved, the job
+runs the full suite — typecheck, unit, integration, end-to-end against a real
+Postgres, and a production dependency audit — then builds a source archive,
+attests it, and publishes the release. **If any of that fails, no release
+appears.** A release is the one artifact somebody might run without reading it
+first.
 
 ## How to verify one
 
 ```bash
-gh attestation verify crimp-v0.1.0.tar.gz --repo thearchitect0x-glitch/crimp
+gh attestation verify crimp-v0.1.0.tar.gz --repo thearchitect0x-glitch/crimp \
+  --signer-workflow thearchitect0x-glitch/crimp/.github/workflows/release.yml --source-ref refs/tags/v0.1.0 \
+  --deny-self-hosted-runners
 ```
+
+`--repo` alone accepts an attestation made by any workflow in this repository,
+on any branch, so a workflow planted on a branch could attest a file of its own.
+`--signer-workflow` and `--source-ref` accept only `release.yml` running for
+that tag, and `--deny-self-hosted-runners` only GitHub's own runners.
 
 There is no key to import and no keyserver to trust. The attestation is a
 Sigstore certificate bound to the GitHub OIDC identity of the workflow run that
@@ -50,7 +60,9 @@ that do not use GitHub and for OpenSSF Scorecard, which looks for it there:
 ```bash
 gh attestation verify crimp-v0.1.0.tar.gz \
   --bundle crimp-v0.1.0.tar.gz.sigstore.json \
-  --repo thearchitect0x-glitch/crimp
+  --repo thearchitect0x-glitch/crimp \
+  --signer-workflow thearchitect0x-glitch/crimp/.github/workflows/release.yml --source-ref refs/tags/v0.1.0 \
+  --deny-self-hosted-runners
 ```
 
 To check the archive is byte-for-byte what was published:
