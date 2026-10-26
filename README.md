@@ -51,19 +51,31 @@ authority, no appeal, nobody won an argument. A fact changed.
 
 ## The measurement this exists for
 
-Medicare Advantage publishes the only large-scale public data on how often an
-automated adverse decision turns out to be wrong. In 2022 it denied **7.4%** of
-prior authorization requests, about **10%** of those denials were appealed, and
-**83.2%** of the appeals were overturned.[^kff]
+In 2024, Medicare Advantage insurers fully or partially denied **7.7%** of 52.8
+million prior authorization requests. About one denial in nine (**11.5%**) was
+appealed to the insurer, and **80.7%** of those appeals reversed the denial in
+whole or in part.[^kff]
 
-Five in six of the decisions somebody fought were wrong. Nobody can tell you the
-rate among the other ~90%, because if nobody appealed, nobody looked. Every
-existing measurement of wrongful denial is computed only on the population that
-fought back — systematically the better-resourced one.
+A reversal does not by itself prove the first decision was wrong: some appeals
+succeed because documentation was added. But for the nine in ten denials nobody
+appeals, those figures say nothing.
 
-[^kff]: KFF analysis of CMS data for 2022. These figures move year to year and
-    the denial, appeal and overturn rates each vary widely between insurers;
-    quote the year with the number.
+Some public programmes do check denials nobody appealed. SNAP quality control,
+the Labor Department's audits of denied unemployment claims and Social
+Security's disability denial reviews each re-examine a small sample by hand,
+well after the fact.[^samples] None of them says whether a decision was
+automated, and none checks every decision as it stands. That is the gap Crimp
+is built for: every determination re-checked whenever a fact under it changes,
+whether or not anyone complains.
+
+[^kff]: KFF analysis of CMS Part C reporting data, January 2026. The comparable
+    2022 figures were 7.4%, 9.9% and 83.2%. The rates vary widely between
+    insurers; quote the year with the number.
+
+[^samples]: SNAP case and procedural error rate (7 CFR 275.13), DOL Benefit
+    Accuracy Measurement, SSA targeted denial review, and HHS OIG report
+    OEI-09-18-00260, which found 13% of sampled Medicare Advantage prior
+    authorization denials met Medicare coverage rules.
 
 Crimp has two correction channels, and the difference between them is the point:
 
